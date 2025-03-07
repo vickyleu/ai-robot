@@ -37,24 +37,24 @@ C++桥接模块是设备控制层的重要组成部分，负责通过Kotlin/Nati
 ### 目录结构
 ```
 cpp-bridge/
-├── src/              # C++源代码
-│   ├── ros/          # ROS相关实现
-│   └── unitree/      # Unitree相关实现
-├── include/          # 头文件
-├── kotlin/           # Kotlin/Native绑定
+├── ros/              # ROS相关实现
+├── unitree/          # Unitree相关实现
 └── cmake/            # CMake配置文件
 ```
 
 ### 编译和构建
 1. 配置CMake：
    ```bash
-   cmake -B build -S .
+   cmake -S . -B build
    ```
-
-2. 编译：
+2. 构建项目：
    ```bash
    cmake --build build
    ```
+
+### 注意事项
+- 确保CMake和编译器版本兼容
+- 正确配置ROS和Unitree SDK环境
 
 ## 使用示例
 

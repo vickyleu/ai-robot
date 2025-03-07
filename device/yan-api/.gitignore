@@ -1,0 +1,7 @@
+**/.gradle/
+.kotlin/
+.idea/
+build/
+src/nativeInterop/cpp/build/
+src/nativeInterop/cpp/cmake-build-debug/
+src/nativeInterop/cpp/.idea/

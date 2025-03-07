@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<decision-list>
+    <!--Configuration Chinese, identification, synthetic use "com.ubtrobot.speech.demo"-->
+    <decision>
+        <if>
+            <!--Language replacement language service-->
+            <language name="en-rUS" />
+        </if>
+        <then>
+            <route-service>
+                <!--
+                    notice: If you do not need to replace, please comment out the corresponding module
+                    package: "Your app package name"
+                    service: No need to modify />
+                    -->
+                <!-- If you need to replace speech recognition -->
+                <parameter-group
+                    package="com.ubtrobot.speech.demo"
+                    service="speech.recognition" />
+                <!-- If you need to replace speech synthesis -->
+                <parameter-group
+                    package="com.ubtrobot.speech.demo"
+                    service="speech.synthesis" />
+                <!-- If you need to replace semantic understanding -->
+                <parameter-group
+                    package="com.ubtrobot.speech.demo"
+                    service="speech.understanding" />
+            </route-service>
+        </then>
+    </decision>
+</decision-list>

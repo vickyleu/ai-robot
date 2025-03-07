@@ -56,5 +56,5 @@ interface DeviceFactory {
     /**
      * 创建设备实例
      */
-    fun createDevice(deviceId: String, name: String): Device
+    fun createDevice(): Device
 }

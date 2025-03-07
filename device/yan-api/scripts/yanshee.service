@@ -1,0 +1,16 @@
+[Unit]
+Description=Yanshee Robot Service
+After=network.target
+
+[Service]
+Type=simple
+User=pi
+ExecStart=/usr/local/bin/yanshee
+WorkingDirectory=/usr/local/bin
+StandardOutput=journal
+StandardError=journal
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

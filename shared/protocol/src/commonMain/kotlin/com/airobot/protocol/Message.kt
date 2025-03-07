@@ -1,7 +1,6 @@
 package com.airobot.protocol
 
 import kotlinx.datetime.Clock
-
 /**
  * 消息类型
  */

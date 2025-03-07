@@ -48,28 +48,15 @@ cruzr/
 - Kotlin 1.8+
 - Gradle 8.0+
 
-### 配置说明
-1. 确保Android SDK已正确配置
-2. 在项目根目录的`settings.gradle.kts`中包含本模块
-3. 在使用模块的`build.gradle.kts`中添加依赖
+### 构建说明
+1. 在Android Studio中打开项目
+2. 同步Gradle项目
+3. 运行或调试应用
 
-### 使用示例
-
-```kotlin
-// 初始化设备
-val cruzrDevice = CruzrDevice()
-
-// 连接设备
-cruzrDevice.connect()
-
-// 执行动作
-cruzrDevice.performAction(ActionType.MOVE_FORWARD)
-
-// 监听状态
-cruzrDevice.status.collect { status ->
-    // 处理状态更新
-}
-```
+## 注意事项
+- 确保Android SDK和Cruzr SDK版本兼容
+- 正确处理设备连接和断开事件
+- 遵循Cruzr设备操作规范
 
 ## 错误处理
 

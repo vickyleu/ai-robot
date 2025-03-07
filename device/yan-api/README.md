@@ -3,6 +3,25 @@
 ## 模块简介
 
 YAN API模块是设备控制层的标准化接口实现，提供了与YAN协议兼容的机器人控制接口。该模块封装了底层通信细节，提供高级别的设备控制和状态管理功能。
+https://yandev.ubtrobot.com/#/zh/api?api=YanAPI 接口文档
+本地接口文档在src/nativeMain/resources/README.md
+
+通过将yan 的python模块生成cython, 当前模块改为C++实现, 头文件为src/pythonMain/python/cpp/YanAPI.h
+原restful接口文档在src/nativeMain/resources/README.md
+部分接口名会带_value后缀, 比原文档多一个后缀, 请以c++文档为准
+
+机器人内部python
+```shell
+pi@raspberrypi:~ $ whereis python
+python: /usr/bin/python3.5-config /usr/bin/python2.7-coverage /usr/bin/python2.7 \
+/usr/bin/python2.7-config /usr/bin/python /usr/bin/python3.5m /usr/bin/python3.5 \
+/usr/bin/python3.5m-config /usr/lib/python2.7 /usr/lib/python3.5 /usr/lib/python2.6 \
+/etc/python2.7 /etc/python /etc/python3.5 /usr/local/lib/python2.7 /usr/local/lib/python3.5 \
+/usr/include/python2.7 /usr/include/python3.5m /usr/include/python3.5 \
+/usr/share/python /usr/share/man/man1/python.1.gz
+
+
+```
 
 ## 功能特性
 
@@ -35,8 +54,6 @@ YAN API模块是设备控制层的标准化接口实现，提供了与YAN协议�
 ```
 yan-api/
 ├── src/
-│   ├── commonMain/     # 跨平台共享代码
-│   ├── jvmMain/       # JVM平台实现
 │   └── nativeMain/    # Native平台实现
 └── test/              # 测试代码
 ```

@@ -1,0 +1,25 @@
+version: '3.8'
+
+services:
+  raspberrypi3-vnc:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "5991:5901"
+      - "223:22"
+    security_opt:
+      - seccomp=./custom-seccomp.json  # 自定义seccomp
+    environment:
+      - USER=root
+    cap_add:
+      - SYS_PTRACE
+    privileged: true
+    sysctls:
+      - kernel.yama.ptrace_scope=0  # 允许所有进程调试
+    volumes:
+      - vnc_data:/root/.vnc
+    restart: unless-stopped
+
+volumes:
+  vnc_data:

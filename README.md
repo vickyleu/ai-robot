@@ -1,5 +1,11 @@
 # AI Robot 项目
+# 删除 JAR 和 POM 的缓存目录
 
+rm -rf ~/.gradle/caches/modules-2/files-2.1/com.vickyleu.ktor/ktor-client-curl*
+# 清理元数据缓存（关键！）
+rm -rf ~/.gradle/caches/modules-2/metadata-2.*/descriptors/com.vickyleu.ktor/ktor-client-curl*
+
+./gradlew build --refresh-dependencies --no-build-cache
 ## 项目简介
 
 AI Robot是一个集成了多种设备控制协议的智能机器人控制系统，通过统一的接口实现对不同类型机器人的控制和管理。
