@@ -1,0 +1,37 @@
+version: '3.8'
+
+services:
+  ai-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"  # HTTP服务
+      - "50051:50051"  # gRPC服务
+    environment:
+      - DIFY_API_KEY=app-rWWaeSNUwtZ0Rce5iTWn1Res
+      - DIFY_API_ENDPOINT=http://192.168.0.7
+      - REDIS_ADDR=redis:6379
+      - REDIS_PASSWORD=
+      - REDIS_DB=0
+    depends_on:
+      - redis
+    networks:
+      - ai-network
+
+  redis:
+    image: redis:7.2-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    command: redis-server --appendonly yes
+    networks:
+      - ai-network
+
+volumes:
+  redis-data:
+
+networks:
+  ai-network:
+    driver: bridge 

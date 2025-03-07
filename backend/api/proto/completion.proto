@@ -1,0 +1,42 @@
+syntax = "proto3";
+
+package completion;
+
+import "google/protobuf/struct.proto";
+import "google/protobuf/wrappers.proto";
+option go_package = "github.com/ai-generation/api/proto";
+
+// CompletionService 定义了AI生成服务的gRPC接口
+service CompletionService {
+  // GetCompletion 处理AI生成请求
+  rpc GetCompletion (CompletionRequest) returns (CompletionResponse) {}
+}
+
+// CompletionRequest 定义了请求参数
+message CompletionRequest {
+  string query = 1;
+  map<string, string> inputs = 2;
+  string user = 3;
+  optional string response_mode = 4;
+}
+
+// CompletionResponse 定义了响应结果
+message CompletionResponse {
+  google.protobuf.Int32Value code = 1 [json_name = "code"];
+  google.protobuf.StringValue msg = 2 [json_name = "msg"];
+  google.protobuf.Value data = 3 [json_name = "data"];
+}
+
+// CompletionData 定义了响应的具体数据
+message CompletionData {
+  string event = 1;
+  string task_id = 2;
+  string id = 3;
+  string message_id = 4;
+  string conversation_id = 5;
+  string mode = 6;
+  google.protobuf.Struct answer = 7;
+  string created_at = 8;
+  map<string, string> metadata = 9;
+  map<string, string> outputs = 10;
+}
