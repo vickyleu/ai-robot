@@ -6,6 +6,7 @@ plugins {
 
 
 kotlin {
+    applyDefaultHierarchyTemplate()
 //    js(IR) {
 //        browser()
 //        binaries.executable()
@@ -13,7 +14,7 @@ kotlin {
     androidTarget()
     jvm()
 
-    /*// Apple
+    // Apple
     iosX64()
     iosArm64()
     iosSimulatorArm64()
@@ -23,17 +24,17 @@ kotlin {
     macosArm64()
     macosX64()
     // Apple
-
-    linuxArm64()
     linuxX64()
 
-    mingwX64()*/
+    mingwX64()
 
     sourceSets {
         commonMain {
             dependencies {
-                implementation(project.dependencies.enforcedPlatform(libs.wire.bom))
+                api(project.dependencies.enforcedPlatform(libs.wire.bom))
                 api(libs.wire.runtime)
+                implementation(libs.wire.schema)
+                implementation(libs.wire.grpc.client)
             }
         }
         jsMain.dependencies {
@@ -41,28 +42,29 @@ kotlin {
             api(libs.wire.grpc.client.js)
         }
         androidMain.dependencies {
-            api(libs.wire.schema)
-            api(libs.wire.grpc.client)
+            api(libs.wire.schema.jvm)
+            api(libs.wire.grpc.client.jvm)
         }
 
         jvmMain.dependencies {
             api(libs.wire.schema.jvm)
             api(libs.wire.grpc.client.jvm)
         }
-//        appleMain.dependencies {
-//            api(libs.squareup.wire.schema)
-//            api(libs.squareup.wire.grpc.client)
-//        }
-//
-//
-//        linuxX64Main.dependencies {
-//            api(libs.wire.schema.linuxx64)
-//            api(libs.wire.grpc.client.linuxx64)
-//        }
-//        mingwX64Main.dependencies {
-//            api("com.squareup.wire:wire-schema-mingwx64:5.3.1")
-//            api("com.squareup.wire:wire-grpc-client-mingwx64:5.3.1")
-//        }
+        appleMain.dependencies {
+            api(libs.squareup.wire.schema)
+            api(libs.squareup.wire.grpc.client)
+        }
+
+
+        linuxX64Main.dependencies {
+            api(libs.wire.schema.linuxx64)
+            api(libs.wire.grpc.client.linuxx64)
+        }
+
+        mingwX64Main.dependencies {
+            api(libs.wire.schema.mingwx64)
+            api(libs.wire.grpc.client.mingwx64)
+        }
 
     }
 }

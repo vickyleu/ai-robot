@@ -9,25 +9,34 @@ plugins {
 }
 
 kotlin {
+    applyDefaultHierarchyTemplate()
     androidTarget()
-    js(IR) {
-        browser()
-        binaries.executable()
-    }
+//    js(IR) {
+//        browser()
+//        binaries.executable()
+//    }
 //    @OptIn(ExperimentalWasmDsl::class)
 //    wasmJs {
 //        browser()
 //        binaries.executable()
 //    }
+    iosX64()
+    iosArm64()
+    iosSimulatorArm64()
+    tvosX64()
+    tvosArm64()
+    macosArm64()
+    macosX64()
+
     jvm()
     linuxX64()
-    linuxArm64()
+//    linuxArm64()
 //    mingwX64()
 
     sourceSets {
         commonMain.dependencies {
             implementation(projects.shared.core)
-//            implementation(projects.shared.protobufCodegen)
+            implementation(projects.shared.protobufCodegen)
             implementation(libs.kotlinx.serialization.json)
             implementation(libs.ktor.client.content.negotiation)
             implementation(libs.ktor.serialization.kotlinx.json)
@@ -35,6 +44,8 @@ kotlin {
             implementation(libs.kotlinx.rpc.krpc.serialization.json)
             implementation(libs.kotlinx.rpc.krpc.client)
             implementation(libs.kotlinx.rpc.krpc.server)
+
+            implementation(libs.wire.grpc.client)
         }
 
         androidMain.dependencies {

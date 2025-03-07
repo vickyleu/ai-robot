@@ -1,14 +1,15 @@
 package com.airobot.protocol.completion
 
-import io.grpc.ManagedChannel
-import io.grpc.ManagedChannelBuilder
-import io.grpc.ProxyParameters
-import io.grpc.ProxyType
+import com.squareup.wire.GrpcClient
+import completion.CompletionRequest
+import completion.CompletionResponse
+import completion.CompletionServiceClient
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.IO
 import kotlinx.coroutines.withContext
 
 /**
- * CompletionService的gRPC客户端
+ * CompletionService的gRPC客户端,使用wire通信
  */
 class CompletionClient(
     private val host: String,
@@ -16,25 +17,18 @@ class CompletionClient(
     private val proxyHost: String? = null,
     private val proxyPort: Int? = null
 ) {
-    private val channel: ManagedChannel by lazy {
-        val builder = ManagedChannelBuilder.forAddress(host, port)
-            .usePlaintext()
-        
-        if (proxyHost != null && proxyPort != null) {
-            builder.proxyDetector { _, targetServerAddress, _ ->
-                ProxyParameters.newBuilder()
-                    .setHost(proxyHost)
-                    .setPort(proxyPort)
-                    .setProxyType(ProxyType.HTTP)
-                    .build()
+    private val client: GrpcClient by lazy {
+        /*GrpcClient()
+            .apply {
+                if (proxyHost != null && proxyPort != null) {
+                    proxy(ProxyConfig(proxyHost, proxyPort))
+                }
             }
-        }
-        
-        builder.build()
+            .build()*/
     }
     
-    private val stub: CompletionServiceGrpcKt.CompletionServiceCoroutineStub by lazy {
-        CompletionServiceGrpcKt.CompletionServiceCoroutineStub(channel)
+    private val service: CompletionServiceClient by lazy {
+        CompletionServiceClient(client, host, port)
     }
     
     /**
@@ -46,20 +40,20 @@ class CompletionClient(
         user: String,
         responseMode: String? = null
     ): CompletionResponse = withContext(Dispatchers.IO) {
-        val request = CompletionRequest.newBuilder()
-            .setQuery(query)
-            .putAllInputs(inputs)
-            .setUser(user)
-            .apply { responseMode?.let { setResponseMode(it) } }
-            .build()
-            
-        stub.getCompletion(request)
+        val request = CompletionRequest(
+            query = query,
+            inputs = inputs,
+            user = user,
+            response_mode = responseMode
+        )
+        
+        service.GetCompletion().execute(request)
     }
     
     /**
      * 关闭客户端连接
      */
     fun shutdown() {
-        channel.shutdown()
+//        client.shutdown()
     }
 }
