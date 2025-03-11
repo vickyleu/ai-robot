@@ -1,4 +1,5 @@
 import org.jetbrains.kotlin.gradle.ExperimentalWasmDsl
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
     alias(libs.plugins.kotlin.multiplatform)
@@ -8,17 +9,22 @@ plugins {
 }
 
 kotlin {
+    jvmToolchain(17)
     applyDefaultHierarchyTemplate()
-    androidTarget()
-//    js(IR) {
-//        browser()
-//        binaries.executable()
-//    }
-//    @OptIn(ExperimentalWasmDsl::class)
-//    wasmJs {
-//        browser()
-//        binaries.executable()
-//    }
+    androidTarget{
+        compilerOptions {
+            jvmTarget = JvmTarget.JVM_17
+        }
+    }
+    js(IR) {
+        browser()
+        binaries.executable()
+    }
+    @OptIn(ExperimentalWasmDsl::class)
+    wasmJs {
+        browser()
+        binaries.executable()
+    }
     iosX64()
     iosArm64()
     iosSimulatorArm64()
@@ -29,8 +35,7 @@ kotlin {
 
     jvm()
     linuxX64()
-//    linuxArm64()
-//    mingwX64()
+    linuxArm64()
 
     sourceSets {
         commonMain.dependencies {
@@ -55,4 +60,5 @@ android {
     defaultConfig {
         minSdk = 24
     }
+
 }

@@ -30,7 +30,10 @@ kotlin {
 
             // Kotlin/JS 运行时
 
+            implementation(libs.kotlin.js.html)
             implementation(libs.kotlin.js.wrappers)
+            implementation(libs.kotlin.popper)
+            implementation(libs.kotlin.remix.run.router)
             implementation(libs.kotlin.extensions)
 
 
@@ -54,6 +57,22 @@ kotlin {
             // Kotlinx
             implementation(libs.kotlinx.coroutines.core)
             implementation(libs.kotlinx.serialization.json)
+
+            // 依赖
+            implementation(npm("@types/node", "22.13.10"))
+
+            implementation(npm("dagre-d3", "^0.6.4"))
+
+            implementation(npm("clsx", "^2.0.0"))
+            implementation(npm("react-draggable", "^4.4.4"))
+            implementation(npm("react-dropzone", "^14.2.1"))
+            implementation(npm("react-mosaic-component", "^6.1.0"))
+            implementation(npm("react-error-boundary", "^2.2.2"))
+            implementation(npm("ace-builds", "1.28.0"))
+            implementation(npm("react-ace", "10.1.0"))
+            implementation(npm("markdown-it", "~11.0.0"))
+
+            implementation(devNpm("webpack-bundle-analyzer", "4.10.2"))
         }
     }
 }

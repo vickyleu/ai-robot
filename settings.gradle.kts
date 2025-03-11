@@ -8,12 +8,16 @@ enableFeaturePreview("TYPESAFE_PROJECT_ACCESSORS")
 
 // GO 后端
 include(":backend")
+include(":shared")
 // 核心模块
 include(":shared:core")
 // 协议模块
 include(":shared:protocol")
-// 协议模块 - 代码生成
-include(":shared:protobuf-codegen")
+// 协议模块 - 代码生成 停止在共享代码中使用grpc, 目前没有KMM 通用方案
+include(":shared:generator")
+include(":shared:generator:protobuf-codegen")
+include(":shared:generator:service-gen")
+
 // Web 前端
 include(":web")
 // 设备端
@@ -57,6 +61,8 @@ pluginManagement {
             maven(url = "https://maven.pkg.jetbrains.space/kotlin/p/kotlin/dev"){
                 isAllowInsecureProtocol = true
             }
+            maven("https://maven.pkg.jetbrains.space/public/p/krpc/grpc")
+
         }
     }
 }
@@ -73,65 +79,102 @@ dependencyResolutionManagement {
         maven{
             isAllowInsecureProtocol = true
             setUrl("https://repo1.maven.org/maven2")
+            mavenContent {
+                excludeGroupByRegex("org.jetbrains.*rpc*")
+            }
         }
         maven{
             isAllowInsecureProtocol = true
             setUrl("https://plugins.gradle.org/m2")
+            mavenContent {
+//                excludeGroupByRegex("org.jetbrains.*rpc*")
+            }
         }
         google {
             isAllowInsecureProtocol = true
             content {
                 includeGroupByRegex(".*google.*")
                 includeGroupByRegex(".*android.*")
+                excludeGroupByRegex("org.jetbrains.*")
             }
         }
         maven("https://packages.jetbrains.team/maven/p/firework/dev") {
             isAllowInsecureProtocol = true
             mavenContent {
-                includeVersionByRegex("org.jetbrains.*", ".*", ".*firework.*")
+                excludeGroupByRegex("org.jetbrains.*rpc*")
             }
         }
         maven {
             setUrl("https://jitpack.io")
             isAllowInsecureProtocol = true
+            mavenContent {
+                excludeGroupByRegex("org.jetbrains.*")
+            }
         }
 
         maven{
             setUrl("http://maven.aliyun.com/nexus/content/repositories/releases/")
             isAllowInsecureProtocol = true
+            mavenContent {
+                excludeGroupByRegex("org.jetbrains.*")
+            }
         }
         maven(url = "https://maven.aliyun.com/repository/public"){
             isAllowInsecureProtocol = true
+            mavenContent {
+                excludeGroupByRegex("org.jetbrains.*")
+            }
         }
         maven {
             setUrl("https://maven.aliyun.com/repository/public/")
             isAllowInsecureProtocol = true
+            mavenContent {
+                excludeGroupByRegex("org.jetbrains.*")
+            }
         }
         maven {
             setUrl("https://maven.aliyun.com/nexus/content/repositories/jcenter/")
             isAllowInsecureProtocol = true
+            mavenContent {
+                excludeGroupByRegex("org.jetbrains.*")
+            }
         }
         maven {
             setUrl("https://maven.pkg.jetbrains.space/public/p/compose/dev")
             isAllowInsecureProtocol = true
+            mavenContent {
+                excludeGroupByRegex("org.jetbrains.*rpc*")
+            }
         }
 
         maven {
             setUrl("https://dl.bintray.com/kotlin/kotlin-dev")
             isAllowInsecureProtocol = true
+            mavenContent {
+                excludeGroupByRegex("org.jetbrains.*")
+            }
         }
         maven {
             setUrl("https://dl.bintray.com/kotlin/kotlin-eap")
             isAllowInsecureProtocol = true
+            mavenContent {
+                excludeGroupByRegex("org.jetbrains.*rpc*")
+            }
         }
 
         maven("https://maven.pkg.jetbrains.space/kotlin/p/wasm/experimental"){
             isAllowInsecureProtocol = true
+            mavenContent {
+                excludeGroupByRegex("org.jetbrains.*rpc*")
+            }
         }
         maven(url = "https://maven.pkg.jetbrains.space/kotlin/p/kotlin/dev"){
             isAllowInsecureProtocol = true
+            mavenContent {
+                excludeGroupByRegex("org.jetbrains.*rpc*")
+            }
         }
-
+        maven("https://maven.pkg.jetbrains.space/public/p/krpc/grpc")
         ivy {
             name = "Node.js"
             setUrl("https://nodejs.org/dist")

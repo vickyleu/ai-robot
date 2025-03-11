@@ -17,7 +17,6 @@ plugins {
     alias(libs.plugins.kotlin.rpc) apply false
     alias(libs.plugins.jetbrains.kotlin.jvm) apply false
     alias(libs.plugins.protobuf) apply false
-    alias(libs.plugins.wire) apply false
 }
 subprojects {
     this.layout.buildDirectory.set(

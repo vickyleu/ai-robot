@@ -1,9 +1,12 @@
 [versions]
 kotlin = "2.1.10"
-kotlin-rpc = "0.5.1"
+#noinspection GradleDependency
+kotlin-grpc = "0.5.1-grpc-39"
+kotlinPopper = "2.11.8-pre.792"
+kotlinRemixRunRouter = "2025.1.6-1.21.0"
 pbandk = "0.14.3"
 protobuf = "0.9.4"
-protobuf-protoc = "4.29.3"
+protoc = "4.29.3"
 agp = "8.9.0"
 compose = "1.7.8"
 node = "22.0.0"
@@ -16,24 +19,27 @@ ktorClientAndroid = "2.3.6"
 lifecycleViewmodelKtx = "2.8.7"
 serialization = "1.8.0"
 datetime = "0.6.1"
+kotlin-js-html = "0.10.1"
 #noinspection GradleDependency
-kotlin-wrappers = "2025.3.4"
-wire = "5.3.1"
+kotlin-wrappers = "2025.3.9"
 kotlin-extensions = "1.0.1-pre.823"
-kotlin-react = "2025.3.6-19.0.0"
+kotlin-react = "2025.3.9-19.0.0"
+kotlin-mui = "2025.3.9-5.16.14"
 #noinspection GradleDependency
 kotlin-router = "2025.1.6-6.28.0"
-kotlin-mui = "5.14.12-pre.638"
-jetbrainsKotlinJvm = "2.1.10"
 
 [libraries]
-
+google-protobuf-java = { module = "com.google.protobuf:protobuf-java", version.ref = "protoc" }
+google-protoc = { module = "com.google.protobuf:protoc", version.ref = "protoc" }
+kotlin-popper = { module = "org.jetbrains.kotlin-wrappers:kotlin-popper", version.ref = "kotlinPopper" }
+kotlin-remix-run-router = { module = "org.jetbrains.kotlin-wrappers:kotlin-remix-run-router", version.ref = "kotlinRemixRunRouter" }
+kotlinx-rpc-bom = { module = "org.jetbrains.kotlinx:kotlinx-rpc-bom", version.ref = "kotlin-grpc" }
+kotlinx-rpc-grpc-core = { module = "org.jetbrains.kotlinx:kotlinx-rpc-grpc-core"}
 node = { module = "org.nodejs:node", version.ref = "node" }
-pbandk-runtime = { module = "pro.streem.pbandk:pbandk-runtime", version.ref = "pbandk" }
-protobuf-protoc = { module = "com.google.protobuf:protoc", version.ref = "protobuf-protoc" }
-squareup-wire-grpc-client = { module = "com.squareup.wire:wire-grpc-client" }
-squareup-wire-schema = { module = "com.squareup.wire:wire-schema" }
 
+
+pbandk-runtime = { module = "pro.streem.pbandk:pbandk-runtime", version.ref = "pbandk" }
+pbandk-gen = { module = "pro.streem.pbandk:protoc-gen-pbandk-jvm", version = "0.14.3:jvm8@jar"}
 
 yarn = { module = "com.yarnpkg:yarn", version.ref = "yarn" }
 androidx-lifecycle-viewmodel-ktx = { module = "androidx.lifecycle:lifecycle-viewmodel-ktx", version.ref = "lifecycleViewmodelKtx" }
@@ -53,53 +59,41 @@ ktor-client-websockets = { module = "io.ktor:ktor-client-websockets", version.re
 ktor-client-content-negotiation = { module = "io.ktor:ktor-client-content-negotiation", version.ref = "ktor" }
 ktor-serialization-kotlinx-json = { module = "io.ktor:ktor-serialization-kotlinx-json", version.ref = "ktor" }
 
-kotlinx-rpc-krpc-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-rpc-krpc-serialization-json", version.ref = "kotlin-rpc" }
-kotlinx-rpc-krpc-client = { module = "org.jetbrains.kotlinx:kotlinx-rpc-krpc-client", version.ref = "kotlin-rpc" }
-kotlinx-rpc-krpc-server = { module = "org.jetbrains.kotlinx:kotlinx-rpc-krpc-server", version.ref = "kotlin-rpc" }
+kotlin-js-html = { group = "org.jetbrains.kotlinx", name = "kotlinx-html-js", version.ref = "kotlin-js-html" }
+
+kotlinx-rpc-krpc-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-rpc-krpc-serialization-json"}
+kotlinx-rpc-krpc-client = { module = "org.jetbrains.kotlinx:kotlinx-rpc-krpc-client"}
+kotlinx-rpc-krpc-server = { module = "org.jetbrains.kotlinx:kotlinx-rpc-krpc-server" }
 
 kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "coroutines" }
 kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "serialization" }
 kotlinx-datetime = { module = "org.jetbrains.kotlinx:kotlinx-datetime", version.ref = "datetime" }
 
 kotlin-js-wrappers-bom = { module = "org.jetbrains.kotlin-wrappers:kotlin-wrappers-bom", version.ref = "kotlin-wrappers" }
-wire-bom = { module = "com.squareup.wire:wire-bom", version.ref = "wire" }
-wire-grpc-client = { module = "com.squareup.wire:wire-grpc-client" }
-wire-grpc-client-js = { module = "com.squareup.wire:wire-grpc-client-js", version.ref = "wire" }
-wire-grpc-client-jvm = { module = "com.squareup.wire:wire-grpc-client-jvm", version.ref = "wire" }
-wire-grpc-client-mingwx64 = { module = "com.squareup.wire:wire-grpc-client-mingwx64", version.ref = "wire" }
-wire-schema-mingwx64 = { module = "com.squareup.wire:wire-schema-mingwx64", version.ref = "wire" }
-wire-grpc-client-linuxx64 = { module = "com.squareup.wire:wire-grpc-client-linuxx64", version.ref = "wire" }
-wire-runtime = { module = "com.squareup.wire:wire-runtime" }
-wire-schema = { module = "com.squareup.wire:wire-schema" }
-wire-schema-js = { module = "com.squareup.wire:wire-schema-js", version.ref = "wire" }
-wire-schema-jvm = { module = "com.squareup.wire:wire-schema-jvm", version.ref = "wire" }
-wire-schema-linuxx64 = { module = "com.squareup.wire:wire-schema-linuxx64", version.ref = "wire" }
-
 
 
 kotlin-js-wrappers = { module = "org.jetbrains.kotlin-wrappers:kotlin-js" }
 kotlin-extensions = { module = "org.jetbrains.kotlin-wrappers:kotlin-extensions", version.ref = "kotlin-extensions" }
 kotlin-react = { module = "org.jetbrains.kotlin-wrappers:kotlin-react", version.ref = "kotlin-react" }
 kotlin-react-dom = { module = "org.jetbrains.kotlin-wrappers:kotlin-react-dom", version.ref = "kotlin-react" }
-kotlin-emotion = { module = "org.jetbrains.kotlin-wrappers:kotlin-emotion" }
+kotlin-emotion = { module = "org.jetbrains.kotlin-wrappers:kotlin-emotion"}
 kotlin-react-router = { module = "org.jetbrains.kotlin-wrappers:kotlin-react-router", version.ref = "kotlin-router" }
 kotlin-react-router-dom = { module = "org.jetbrains.kotlin-wrappers:kotlin-react-router-dom", version.ref = "kotlin-router" }
-kotlin-mui = { module = "org.jetbrains.kotlin-wrappers:kotlin-mui", version.ref = "kotlin-mui" }
-kotlin-mui-icons = { module = "org.jetbrains.kotlin-wrappers:kotlin-mui-icons", version.ref = "kotlin-mui" }
+kotlin-mui = { module = "org.jetbrains.kotlin-wrappers:kotlin-mui-material",version.ref="kotlin-mui" }
+kotlin-mui-icons = { module = "org.jetbrains.kotlin-wrappers:kotlin-mui-icons-material" ,version.ref="kotlin-mui"}
 
 [plugins]
 kotlin-multiplatform = { id = "org.jetbrains.kotlin.multiplatform", version.ref = "kotlin" }
 kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
 kotlin-js = { id = "org.jetbrains.kotlin.js", version.ref = "kotlin" }
 kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
-kotlin-rpc = { id = "org.jetbrains.kotlinx.rpc.plugin", version.ref = "kotlin-rpc" }
+kotlin-rpc = { id = "org.jetbrains.kotlinx.rpc.plugin",version.ref="kotlin-grpc"}
 protobuf = { id = "com.google.protobuf", version.ref = "protobuf" }
-wire = { id = "com.squareup.wire", version.ref = "wire" }
 android-application = { id = "com.android.application", version.ref = "agp" }
 android-library = { id = "com.android.library", version.ref = "agp" }
 jetbrains-compose = { id = "org.jetbrains.compose", version.ref = "compose" }
 jetbrains-compose-compiler = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
-jetbrains-kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "jetbrainsKotlinJvm" }
+jetbrains-kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
 
 [bundles]
 ktor-client = ["ktor-client-core", "ktor-client-cio", "ktor-client-websockets", "ktor-client-content-negotiation", "ktor-serialization-kotlinx-json"]
