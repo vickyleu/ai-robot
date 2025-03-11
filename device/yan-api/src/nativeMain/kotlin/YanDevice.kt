@@ -16,4 +16,6 @@ class YanDevice {
 
     fun getStatus(): Map<String, Any> {
         // 实现获取设备状态的逻辑
- 
+        return emptyMap()
+    }
+}

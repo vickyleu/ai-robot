@@ -3,11 +3,13 @@ package com.airobot.device.cppbridge.unitree.state
 class UnitreeState {
 
     fun getCurrentState(): Map<String, Any> {
-        // 实现获取当前状态的逻辑
-        return emptyMap()
+        // 模拟获取当前状态
+        println("Getting current state")
+        return mapOf("mode" to "active", "battery" to 80)
     }
 
     fun updateState(newState: Map<String, Any>) {
-        // 实现更新状态的逻辑
+        // 更新状态
+        println("Updating state to: $newState")
     }
 } 
