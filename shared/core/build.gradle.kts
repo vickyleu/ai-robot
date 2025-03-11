@@ -39,6 +39,7 @@ kotlin {
 
     sourceSets {
         commonMain.dependencies {
+            implementation(projects.shared.protocol)
             implementation(libs.kotlinx.coroutines.core)
             api(libs.ktor.client.core)
             api(libs.kotlinx.datetime)

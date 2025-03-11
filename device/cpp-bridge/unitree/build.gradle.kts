@@ -21,19 +21,15 @@ kotlin {
             }
         }
     }
-    
+
     sourceSets {
-        val commonMain by getting {
-            dependencies {
-                implementation(projects.shared.core)
-                implementation(projects.shared.protocol)
-            }
+        commonMain.dependencies {
+            implementation(projects.shared.core)
+            implementation(projects.shared.protocol)
         }
-        
-        val linuxX64Main by getting {
-            dependencies {
-                // 平台特定依赖
-            }
+
+        linuxX64Main.dependencies {
+            // 平台特定依赖
         }
     }
 }

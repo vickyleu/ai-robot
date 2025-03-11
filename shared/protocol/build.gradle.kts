@@ -45,7 +45,7 @@ kotlin {
         commonMain.configure {
             kotlin.srcDir("$projectDir/generated/commonMain")
             dependencies {
-                implementation(projects.shared.core)
+
                 implementation(projects.shared.generator.protobufCodegen)
                 implementation(libs.kotlinx.serialization.json)
                 implementation(libs.ktor.client.content.negotiation)
