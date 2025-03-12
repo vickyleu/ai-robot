@@ -6,12 +6,15 @@ import com.ubtrobot.Robot
 import com.ubtrobot.locomotion.LocomotionManager
 import com.ubtrobot.power.PowerManager
 import com.ubtrobot.sensor.SensorManager
+import com.ubtrobot.speech.RecognitionOption
+import com.ubtrobot.speech.RecognitionOption.MODE_CONTINUOUS
+import com.ubtrobot.speech.RecognitionProgress
+import com.ubtrobot.speech.SpeakingVoice
 import com.ubtrobot.speech.SpeechManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.launch
 import org.json.JSONObject
 
 /**
@@ -352,17 +355,17 @@ class CruzrBridge(private val context: Context) {
     // 语音合成相关参数
     private val _isSpeaking = MutableStateFlow(false)
     val isSpeaking: StateFlow<Boolean> = _isSpeaking
-    
+
     private val _speakingProgress = MutableStateFlow(0)
     val speakingProgress: StateFlow<Int> = _speakingProgress
-    
+
     // 语音识别相关参数
     private val _isRecognizing = MutableStateFlow(false)
     val isRecognizing: StateFlow<Boolean> = _isRecognizing
-    
+
     private val _recognitionResult = MutableStateFlow<String?>(null)
     val recognitionResult: StateFlow<String?> = _recognitionResult
-    
+
     /** 语音合成
      * @param text 要播放的文本内容
      * @param language 语言代码 (如"zh-CN")
@@ -375,27 +378,27 @@ class CruzrBridge(private val context: Context) {
                 Log.e(TAG, "设备未连接，无法执行语音合成")
                 throw IllegalStateException("设备未连接，无法执行语音合成")
             }
-            
+
             _isSpeaking.value = true
             _speakingProgress.value = 0
-            
+
             // 使用SpeechManager进行语音合成
             speechManager.speak(text, language)
-                .progress { progress -> 
+                .progress { progress ->
                     Log.d(TAG, "语音合成进度: ${progress.progress}")
                     _speakingProgress.value = progress.progress
                 }
-                .done { 
+                .done {
                     Log.d(TAG, "语音合成完成")
                     _isSpeaking.value = false
                     _speakingProgress.value = 100
                 }
-                .fail { e -> 
+                .fail { e ->
                     Log.e(TAG, "语音合成失败: ${e.message}")
                     _errorCode.value = ERROR_SPEECH_FAILED
                     _isSpeaking.value = false
                 }
-            
+
             Log.d(TAG, "语音合成请求已发送")
         } catch (e: Exception) {
             Log.e(TAG, "语音合成异常", e)
@@ -404,7 +407,7 @@ class CruzrBridge(private val context: Context) {
             throw RuntimeException("语音合成异常: ${e.message}", e)
         }
     }
-    
+
     /** 停止语音合成
      */
     fun stopSpeak() {
@@ -414,18 +417,18 @@ class CruzrBridge(private val context: Context) {
                 Log.e(TAG, "设备未连接，无法停止语音合成")
                 throw IllegalStateException("设备未连接，无法停止语音合成")
             }
-            
+
             speechManager.stopSpeak()
             _isSpeaking.value = false
             _speakingProgress.value = 0
-            
+
             Log.d(TAG, "语音合成已停止")
         } catch (e: Exception) {
             Log.e(TAG, "停止语音合成异常", e)
             throw RuntimeException("停止语音合成异常: ${e.message}", e)
         }
     }
-    
+
     /** 获取可用的语音列表
      */
     fun getSpeakingVoiceList(): List<SpeakingVoice> {
@@ -435,14 +438,14 @@ class CruzrBridge(private val context: Context) {
                 Log.e(TAG, "设备未连接，无法获取语音列表")
                 throw IllegalStateException("设备未连接，无法获取语音列表")
             }
-            
+
             return speechManager.getSpeakingVoiceList()
         } catch (e: Exception) {
             Log.e(TAG, "获取语音列表异常", e)
             throw RuntimeException("获取语音列表异常: ${e.message}", e)
         }
     }
-    
+
     /** 开始语音识别
      * @param mode 识别模式 (单次/连续)
      * @param timeoutMillis 超时时间 (3000-60000ms)
@@ -454,38 +457,43 @@ class CruzrBridge(private val context: Context) {
                 Log.e(TAG, "设备未连接，无法开始语音识别")
                 throw IllegalStateException("设备未连接，无法开始语音识别")
             }
-            
+
             _isRecognizing.value = true
             _recognitionResult.value = null
-            
-            val option = RecognitionOption.Builder()
-                .setMode(mode)
+
+            val option = RecognitionOption.Builder(
+                RecognitionOption.Builder(MODE_CONTINUOUS)
+                    .setTimeoutMillis(timeoutMillis)
+//                    .setUnderstandingOption()
+                    .build()
+            )
                 .setTimeoutMillis(timeoutMillis)
                 .build()
-            
+
             speechManager.startRecognizing(option)
-                .progress { progress -> 
+                .progress { progress ->
                     when (progress.type) {
                         RecognitionProgress.PROGRESS_RECOGNITION_TEXT_RESULT -> {
                             Log.d(TAG, "识别结果: ${progress.textResult}")
                             _recognitionResult.value = progress.textResult
                         }
+
                         RecognitionProgress.PROGRESS_RECOGNIZING -> {
                             Log.d(TAG, "识别音量: ${progress.decibel}")
                         }
                     }
                 }
-                .done { result -> 
+                .done { result ->
                     Log.d(TAG, "语音识别完成: ${result.text}")
                     _recognitionResult.value = result.text
                     _isRecognizing.value = false
                 }
-                .fail { e -> 
+                .fail { e ->
                     Log.e(TAG, "语音识别失败: ${e.message}")
                     _errorCode.value = ERROR_SPEECH_FAILED
                     _isRecognizing.value = false
                 }
-            
+
             Log.d(TAG, "语音识别请求已发送")
         } catch (e: Exception) {
             Log.e(TAG, "开始语音识别异常", e)
@@ -494,7 +502,7 @@ class CruzrBridge(private val context: Context) {
             throw RuntimeException("开始语音识别异常: ${e.message}", e)
         }
     }
-    
+
     /** 停止语音识别
      */
     fun stopRecognizing() {
@@ -504,44 +512,16 @@ class CruzrBridge(private val context: Context) {
                 Log.e(TAG, "设备未连接，无法停止语音识别")
                 throw IllegalStateException("设备未连接，无法停止语音识别")
             }
-            
+
             speechManager.stopRecognizing()
             _isRecognizing.value = false
-            
+
             Log.d(TAG, "语音识别已停止")
         } catch (e: Exception) {
             Log.e(TAG, "停止语音识别异常", e)
             throw RuntimeException("停止语音识别异常: ${e.message}", e)
         }
     }
-
-    // 注意：这里删除了重复定义的getDeviceStatus、startStatusMonitor和stopStatusMonitor方法
-    // 这些方法在文件中已经定义过，不需要重复定义
-
-    /** 停止语音播放
-     */
-    fun stopSpeak() {
-        try {
-            Log.d(TAG, "停止语音播放")
-            if (!_isConnected.value) {
-                Log.e(TAG, "设备未连接，无法停止语音播放")
-                throw IllegalStateException("设备未连接，无法停止语音播放")
-            }
-
-            if (stopSpeakNative()) {
-                Log.d(TAG, "停止语音播放成功")
-            } else {
-                Log.e(TAG, "停止语音播放失败")
-                throw RuntimeException("停止语音播放失败")
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "停止语音播放异常", e)
-            throw RuntimeException("停止语音播放异常", e)
-        }
-    }
-
-    // 注意：这里删除了重复定义的getDeviceStatus、startStatusMonitor和stopStatusMonitor方法
-    // 这些方法在文件中已经定义过，不需要重复定义
 
     /** 设置音量
      * @param volume 音量大小 (0-100)
@@ -570,9 +550,6 @@ class CruzrBridge(private val context: Context) {
     }
 
     // ===== 舵机控制服务 (ServoService) =====
-
-    // 注意：这里删除了重复定义的getDeviceStatus、startStatusMonitor和stopStatusMonitor方法
-    // 这些方法在文件中已经定义过，不需要重复定义
 
     /** 控制关节运动
      * @param jointId 关节ID
@@ -606,8 +583,6 @@ class CruzrBridge(private val context: Context) {
         }
     }
 
-    // 注意：这里删除了重复定义的getDeviceStatus、startStatusMonitor和stopStatusMonitor方法
-    // 这些方法在文件中已经定义过，不需要重复定义
 
     /** 重置关节位置
      * @param jointId 关节ID
@@ -638,10 +613,6 @@ class CruzrBridge(private val context: Context) {
     }
 
     // ===== 导航服务 (NavigationService) =====
-
-    // 注意：这里删除了重复定义的getDeviceStatus、startStatusMonitor和stopStatusMonitor方法
-    // 这些方法在文件中已经定义过，不需要重复定义
-
     /** 导航到指定位置
      * @param x X坐标
      * @param y Y坐标
@@ -674,9 +645,6 @@ class CruzrBridge(private val context: Context) {
         }
     }
 
-    // 注意：这里删除了重复定义的getDeviceStatus、startStatusMonitor和stopStatusMonitor方法
-    // 这些方法在文件中已经定义过，不需要重复定义
-
     /** 获取当前位置
      * @return 包含x和y坐标的Map
      */
@@ -703,9 +671,6 @@ class CruzrBridge(private val context: Context) {
         }
     }
 
-    // 注意：这里删除了重复定义的getDeviceStatus、startStatusMonitor和stopStatusMonitor方法
-    // 这些方法在文件中已经定义过，不需要重复定义
-
     /** 停止导航
      */
     fun stopNavigation() {
@@ -729,9 +694,6 @@ class CruzrBridge(private val context: Context) {
     }
 
     // ===== 情感服务 (EmotionService) =====
-
-    // 注意：这里删除了重复定义的getDeviceStatus、startStatusMonitor和stopStatusMonitor方法
-    // 这些方法在文件中已经定义过，不需要重复定义
 
     /** 设置情感表现
      * @param type 情感类型 (如开心、悲伤等)
@@ -761,8 +723,6 @@ class CruzrBridge(private val context: Context) {
         }
     }
 
-    // 注意：这里删除了重复定义的getDeviceStatus、startStatusMonitor和stopStatusMonitor方法
-    // 这些方法在文件中已经定义过，不需要重复定义
 
     /** 播放情感动画
      * @param name 动画名称
@@ -794,8 +754,6 @@ class CruzrBridge(private val context: Context) {
 
     // ===== 传感器服务 (SensorService) =====
 
-    // 注意：这里删除了重复定义的getDeviceStatus、startStatusMonitor和stopStatusMonitor方法
-    // 这些方法在文件中已经定义过，不需要重复定义
 
     /** 获取传感器数据
      * @param type 传感器类型
@@ -821,8 +779,6 @@ class CruzrBridge(private val context: Context) {
         }
     }
 
-    // 注意：这里删除了重复定义的getDeviceStatus、startStatusMonitor和stopStatusMonitor方法
-    // 这些方法在文件中已经定义过，不需要重复定义
 
     /** 启用传感器
      * @param type 传感器类型
@@ -852,8 +808,6 @@ class CruzrBridge(private val context: Context) {
         }
     }
 
-    // 注意：这里删除了重复定义的getDeviceStatus、startStatusMonitor和stopStatusMonitor方法
-    // 这些方法在文件中已经定义过，不需要重复定义
 
     /** 禁用传感器
      * @param type 传感器类型
@@ -885,8 +839,6 @@ class CruzrBridge(private val context: Context) {
 
     // ===== 电源管理服务 (PowerService) =====
 
-    // 注意：这里删除了重复定义的getDeviceStatus、startStatusMonitor和stopStatusMonitor方法
-    // 这些方法在文件中已经定义过，不需要重复定义
 
     /** 获取电池电量
      * @return 电池电量百分比 (0-100)
@@ -909,8 +861,6 @@ class CruzrBridge(private val context: Context) {
         }
     }
 
-    // 注意：这里删除了重复定义的getDeviceStatus、startStatusMonitor和stopStatusMonitor方法
-    // 这些方法在文件中已经定义过，不需要重复定义
 
     /** 获取充电状态
      * @return 是否正在充电
@@ -933,8 +883,6 @@ class CruzrBridge(private val context: Context) {
         }
     }
 
-    // 注意：这里删除了重复定义的getDeviceStatus、startStatusMonitor和stopStatusMonitor方法
-    // 这些方法在文件中已经定义过，不需要重复定义
 
     /** 开始充电
      */
@@ -960,8 +908,6 @@ class CruzrBridge(private val context: Context) {
         }
     }
 
-    // 注意：这里删除了重复定义的getDeviceStatus、startStatusMonitor和stopStatusMonitor方法
-    // 这些方法在文件中已经定义过，不需要重复定义
 
     /** 停止充电
      */
@@ -989,8 +935,6 @@ class CruzrBridge(private val context: Context) {
 
     // ===== 灯光控制服务 (LightService) =====
 
-    // 注意：这里删除了重复定义的getDeviceStatus、startStatusMonitor和stopStatusMonitor方法
-    // 这些方法在文件中已经定义过，不需要重复定义
 
     /** 设置灯光
      * @param position 灯光位置
@@ -1024,8 +968,6 @@ class CruzrBridge(private val context: Context) {
         }
     }
 
-    // 注意：这里删除了重复定义的getDeviceStatus、startStatusMonitor和stopStatusMonitor方法
-    // 这些方法在文件中已经定义过，不需要重复定义
 
     /** 关闭指定位置的灯光
      * @param position 灯光位置
@@ -1348,8 +1290,6 @@ class CruzrBridge(private val context: Context) {
     private external fun stopStatusMonitorNative()
 
     // 语音服务原生方法
-    private external fun speakNative(paramsJson: String): Boolean
-    private external fun stopSpeakNative(): Boolean
     private external fun setVolumeNative(paramsJson: String): Boolean
 
     // 舵机控制服务原生方法

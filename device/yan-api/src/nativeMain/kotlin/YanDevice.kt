@@ -13,6 +13,17 @@ class YanDevice(
     override val deviceId: String,
     override val name: String
 ) : Device {
+    // 系统服务
+    private val locomotionService = YanLocomotionService()
+    private val speechService = YanSpeechService()
+    private val servoService = YanServoService()
+    private val navigationService = YanNavigationService()
+    private val emotionService = YanEmotionService()
+    private val sensorService = YanSensorService()
+    private val powerService = YanPowerService()
+    private val lightService = YanLightService()
+    private val skillManager = YanSkillManager()
+    private val diagnosisService = YanDiagnosisService()
     override val type: DeviceType = DeviceType.YAN
     
     private val _status = MutableStateFlow(DeviceStatus.DISCONNECTED)
@@ -98,6 +109,83 @@ class YanDevice(
      */
     fun onStatusUpdate(callback: (Map<String, Any>) -> Unit) {
         statusManager.setStatusCallback(callback)
+    }
+
+    // 运动控制
+    suspend fun move(speed: Int, direction: String) {
+        locomotionService.move(speed, direction)
+    }
+
+    suspend fun stop() {
+        locomotionService.stop()
+    }
+
+    // 语音服务
+    suspend fun speak(text: String, language: String = "zh-CN") {
+        speechService.speak(text, language)
+    }
+
+    suspend fun stopSpeak() {
+        speechService.stopSpeak()
+    }
+
+    // 舵机控制
+    suspend fun moveJoint(jointId: String, angle: Float) {
+        servoService.moveJoint(jointId, angle)
+    }
+
+    suspend fun resetJoint(jointId: String) {
+        servoService.resetJoint(jointId)
+    }
+
+    // 导航服务
+    suspend fun navigateTo(x: Float, y: Float) {
+        navigationService.navigateTo(x, y)
+    }
+
+    suspend fun getPosition(): Pair<Float, Float> {
+        return navigationService.getPosition()
+    }
+
+    // 情感服务
+    suspend fun setEmotion(type: String) {
+        emotionService.setEmotion(type)
+    }
+
+    suspend fun playAnimation(name: String) {
+        emotionService.playAnimation(name)
+    }
+
+    // 传感器服务
+    suspend fun getSensorData(type: String): Map<String, Any> {
+        return sensorService.getSensorData(type)
+    }
+
+    // 电源管理
+    suspend fun getBatteryLevel(): Int {
+        return powerService.getBatteryLevel()
+    }
+
+    suspend fun isCharging(): Boolean {
+        return powerService.isCharging()
+    }
+
+    // 灯光控制
+    suspend fun setLight(position: String, color: Int) {
+        lightService.setLight(position, color)
+    }
+
+    suspend fun turnOffLight(position: String) {
+        lightService.turnOff(position)
+    }
+
+    // 技能管理
+    suspend fun loadSkill(skillId: String) {
+        skillManager.loadSkill(skillId)
+    }
+
+    suspend fun startSkill(skillId: String, params: Map<String, Any>) {
+        skillManager.startSkill(skillId, params)
     }
 }
 

@@ -4,6 +4,10 @@
 
 YAN API模块是设备控制层的标准化接口实现，提供了与YAN协议兼容的机器人控制接口。该模块封装了底层通信细节，提供高级别的设备控制和状态管理功能。
 https://yandev.ubtrobot.com/#/zh/api?api=YanAPI 接口文档
+本地接口文档在src/nativeMain/resources/README.md
+
+
+
 ## 功能特性
 
 ### 1. 设备控制
@@ -35,8 +39,6 @@ https://yandev.ubtrobot.com/#/zh/api?api=YanAPI 接口文档
 ```
 yan-api/
 ├── src/
-│   ├── commonMain/     # 跨平台共享代码
-│   ├── jvmMain/       # JVM平台实现
 │   └── nativeMain/    # Native平台实现
 └── test/              # 测试代码
 ```

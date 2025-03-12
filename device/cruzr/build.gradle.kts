@@ -21,10 +21,26 @@ kotlin {
 
         androidMain.dependencies {
             // 导入jar包和aar文件, 例如: libs下面的jar包和aar文件
-//            implementation(fileTree(mapOf("include" to "*.jar", "dir" to "libs")))
             implementation(fileTree("libs") {
                 include("*.jar", "*.aar")
             })
+
+            /****************************************************************/
+            //The following are the other dependencies required to use google
+            implementation(libs.grpc.okhttp)
+            implementation(libs.grpc.stub)
+            implementation(libs.grpc.api)
+            implementation(libs.retrofit)
+            implementation(libs.converter.gson)
+            implementation(libs.okhttp)
+            implementation(libs.logging.interceptor)
+            implementation(libs.gson)
+
+            implementation(libs.google.auth.library.oauth2.http)
+            implementation(libs.google.cloud.texttospeech)
+            implementation(libs.google.cloud.speech)
+            implementation(libs.grpc.google.cloud.speech.v1)
+
         }
     }
 }

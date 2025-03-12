@@ -1,0 +1,6 @@
+headers = YanAPI.h
+package = yanapi
+linkerOpts = -L/path/to/library -lyanapi
+
+# Example function export
+# fun my_function(): Unit
