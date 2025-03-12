@@ -19,7 +19,7 @@ ktorClientAndroid = "2.3.6"
 lifecycleViewmodelKtx = "2.8.7"
 serialization = "1.8.0"
 datetime = "0.6.1"
-kotlin-js-html = "0.10.1"
+kotlin-js-html = "0.11.0"
 #noinspection GradleDependency
 kotlin-wrappers = "2025.3.9"
 kotlin-extensions = "1.0.1-pre.823"

@@ -1,6 +1,6 @@
 plugins {
-    kotlin("multiplatform")
-    id("com.android.library")
+    alias(libs.plugins.kotlin.multiplatform)
+    alias(libs.plugins.android.application)
 }
 
 kotlin {
@@ -20,23 +20,34 @@ kotlin {
         }
 
         androidMain.dependencies {
-            // Android特定依赖
-//                implementation(libs.androidx.core.ktx)
+            // 导入jar包和aar文件, 例如: libs下面的jar包和aar文件
+//            implementation(fileTree(mapOf("include" to "*.jar", "dir" to "libs")))
+            implementation(fileTree("libs") {
+                include("*.jar", "*.aar")
+            })
         }
     }
 }
 
 android {
     namespace = "com.airobot.device.cruzr"
-    compileSdk = 34
+    compileSdk = 35
 
     defaultConfig {
         minSdk = 25
         targetSdk = 33
     }
 
+    // 忽略默认的resources目录,只使用Android自带的res目录
+    sourceSets.getByName("main").resources.exclude("src/androidMain/resources")
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
+    }
+    dependencies{
+        compileOnly(fileTree("libs") {
+            include("*.jar", "*.aar")
+        })
     }
 }

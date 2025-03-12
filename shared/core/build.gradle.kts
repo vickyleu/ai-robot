@@ -6,6 +6,7 @@ plugins {
 //    alias(libs.plugins.jetbrains.compose)
 //    alias(libs.plugins.jetbrains.compose.compiler)
     alias(libs.plugins.android.library)
+    alias(libs.plugins.kotlin.serialization)
 }
 
 kotlin {
@@ -40,17 +41,18 @@ kotlin {
     sourceSets {
         commonMain.dependencies {
             implementation(projects.shared.protocol)
-            implementation(libs.kotlinx.coroutines.core)
+            api(libs.kotlinx.coroutines.core)
+            api(libs.kotlinx.serialization.json)
             api(libs.ktor.client.core)
             api(libs.kotlinx.datetime)
         }
 
         androidMain.dependencies {
-            implementation(libs.ktor.client.android)
+            api(libs.ktor.client.android)
         }
 
         jsMain.dependencies {
-            implementation(libs.ktor.client.js)
+            api(libs.ktor.client.js)
         }
     }
 }
