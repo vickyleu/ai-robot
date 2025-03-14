@@ -50,7 +50,7 @@ kotlin {
                 implementation(libs.kotlinx.serialization.json)
                 implementation(libs.ktor.client.content.negotiation)
                 implementation(libs.ktor.serialization.kotlinx.json)
-
+                implementation(libs.kotlinx.datetime)
                 implementation(project.dependencies.enforcedPlatform(libs.kotlinx.rpc.bom))
                 // gRPC 多平台支持
                 implementation(libs.kotlinx.rpc.krpc.serialization.json)

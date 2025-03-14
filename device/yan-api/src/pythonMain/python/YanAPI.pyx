@@ -1,12 +1,8 @@
-# cython: language_level=3
 # coding=UTF-8
-
 ''' 本代码是对Yanshee中RESTful API的封装。
 消息格式请参考 "http://[robotIP]:9090/v1/ui"。
 这是一个开源的API，祝大家玩得开心。
 '''
-
-# 导入必要的Cython声明
 import cython
 from io import StringIO
 import sys
@@ -35,11 +31,11 @@ ip = "127.0.0.1"
 headers = {'Content-Type': 'application/json'}
 nest_asyncio.apply()
 
-def get_ip_address(ifname):
+cdef public  get_ip_address(ifname):
     s = socket(AF_INET, SOCK_DGRAM)
     return inet_ntoa(fcntl.ioctl(s.fileno(), 0x8915, struct.pack('256s', ifname[:15]))[20:24])
 
-def yan_api_init(robot_ip: str):
+cdef public  yan_api_init(robot_ip: str):
     """初始化sdk
 
     Args:
@@ -53,7 +49,7 @@ def yan_api_init(robot_ip: str):
     logging.basicConfig(level=logging.ERROR,format="%(asctime)s %(funcName)s %(levelname)s %(message)s",datefmt = '%Y-%m-%d  %H:%M:%S %a')
 
 
-def get_robot_battery_info():
+cpdef public  get_robot_battery_info():
     """获得机器人电量信息
 
     Returns:
@@ -76,7 +72,7 @@ def get_robot_battery_info():
     res = json.loads(str(response.content.decode("utf-8")))
     return res
 
-def get_robot_battery_value():
+cpdef  public  get_robot_battery_value():
     """获得机器人电量百分比
 
     Returns:
@@ -94,7 +90,7 @@ def get_robot_battery_value():
         return -1
 
 
-def get_robot_fall_management_state():
+cpdef  public  get_robot_fall_management_state():
     """获得机器人摔倒管理状态
 
     Returns:
@@ -117,7 +113,7 @@ def get_robot_fall_management_state():
     return res
 
 
-def set_robot_fall_management_state(enable: bool):
+cpdef  public  set_robot_fall_management_state(enable: bool):
     """设置机器人摔倒管理开关
 
     Args:
@@ -141,7 +137,7 @@ def set_robot_fall_management_state(enable: bool):
     return res
 
 
-def get_robot_language():
+cpdef   public get_robot_language():
     """获取机器人语言
 
     Returns:
@@ -164,7 +160,7 @@ def get_robot_language():
     return res
 
 
-def set_robot_language(language: str):
+cpdef  public  set_robot_language(language: str):
     """设置机器人语言
 
     Args:
@@ -202,7 +198,7 @@ def __get_robot_led_info():
         logging.error("error code = %d msg = %s",res.get("code",-1),res.get("msg",""))
         return RobotLedInfo()
 
-def get_button_led_color_value():
+cpdef  public  get_button_led_color_value():
     """返回机器人胸口按钮灯颜色
 
     Returns:
@@ -212,7 +208,7 @@ def get_button_led_color_value():
     return __get_robot_led_info().buttonLedColor
 
 
-def get_button_led_mode_value():
+cpdef   public get_button_led_mode_value():
     """返回机器人胸口按钮灯点亮模式
 
     Returns:
@@ -222,7 +218,7 @@ def get_button_led_mode_value():
     return __get_robot_led_info().buttonLedMode
 
 
-def get_eye_led_color_value():
+cpdef   public get_eye_led_color_value():
     """返回机器人眼睛LED颜色
 
     Returns:
@@ -232,7 +228,7 @@ def get_eye_led_color_value():
 
     return __get_robot_led_info().eyeLedColor
 
-def get_eye_led_mode_value():
+cpdef  public  get_eye_led_mode_value():
     """返回机器人眼睛LED点亮模式
 
     Returns:
@@ -242,7 +238,7 @@ def get_eye_led_mode_value():
 
     return __get_robot_led_info().eyeLedMode
 
-def get_robot_led():
+cpdef   public get_robot_led():
     """获取机器人灯效
 
     Returns:
@@ -268,7 +264,7 @@ def get_robot_led():
     return res
 
 
-def set_robot_led(type: str, color: str, mode: str):
+cpdef   public set_robot_led(type: str, color: str, mode: str):
     """设置机器人灯效
 
     Args:
@@ -294,7 +290,7 @@ def set_robot_led(type: str, color: str, mode: str):
     return res
 
 
-def sync_set_led(type: str, color: str, mode: str):
+cpdef   public sync_set_led(type: str, color: str, mode: str):
     """设置机器人灯效,设置完成后返回
 
     Args:
@@ -316,7 +312,7 @@ def sync_set_led(type: str, color: str, mode: str):
     return True
 
 
-def get_robot_version_info_value(type:str):
+cpdef   public get_robot_version_info_value(type:str):
     """获取机器人版本信息
     Args:
         type（str): 指定的模块，取值范围如下：core/servo/sn
@@ -337,7 +333,7 @@ def get_robot_version_info_value(type:str):
         logging.error("error code = %d msg = %s",res.get("code",-1),res.get("msg",""))
         return ""
 
-def get_robot_version_info(type: str):
+cpdef  public  get_robot_version_info(type: str):
     """获取机器人版本信息
 
     Args:
@@ -365,7 +361,7 @@ def get_robot_version_info(type: str):
     res = json.loads(str(response.content.decode("utf-8")))
     return res
 
-def get_robot_mode():
+cpdef  public  get_robot_mode():
     """获取机器人运行模式
 
     Note:
@@ -393,7 +389,7 @@ def get_robot_mode():
     return res
 
 
-def get_robot_volume_value():
+cpdef  public  get_robot_volume_value():
     """获得机器人音量
     Returns:
         int: 机器人音量 返回-1表示获取失败
@@ -406,7 +402,7 @@ def get_robot_volume_value():
         return -1
     return res["data"]["volume"] if isinstance(res["data"]["volume"], int) else -1
 
-def get_robot_volume():
+cpdef  public  get_robot_volume():
     """获得机器人音量
 
     Returns:
@@ -428,7 +424,7 @@ def get_robot_volume():
     res = json.loads(str(response.content.decode("utf-8")))
     return res
 
-def set_robot_volume_value(volume: int):
+cpdef   public set_robot_volume_value(volume: int):
     """设置机器人音量
 
     Args:
@@ -447,7 +443,7 @@ def set_robot_volume_value(volume: int):
         logging.error("error code = %d msg = %s",res.get("code",-1),res.get("msg",""))
     return (__resIsSuccess(res))
 
-def set_robot_volume(volume: int):
+cpdef   public set_robot_volume(volume: int):
     """设置机器人音量
 
     Args:
@@ -470,7 +466,7 @@ def set_robot_volume(volume: int):
     res = json.loads(str(response.content.decode("utf-8")))
     return res
 
-def get_joystick_buttons_list():
+cpdef   public get_joystick_buttons_list():
     """获得手柄按键信息
 
     Returns:
@@ -520,7 +516,7 @@ def get_joystick_buttons_list():
     res = json.loads(str(response.content.decode("utf-8")))
     return res
 
-def get_joystick_buttons_list_value():
+cpdef  public  get_joystick_buttons_list_value():
     """获得手柄按键信息结果
 
     Returns:
@@ -567,7 +563,7 @@ def get_joystick_buttons_list_value():
 
 ######media########
 
-def delete_media_music(name: str):
+cpdef   public delete_media_music(name: str):
     """删除音乐文件
 
     只能删除用户上传的文件 /home/pi/Document/music
@@ -593,7 +589,7 @@ def delete_media_music(name: str):
     return res
 
 
-def get_media_music_state():
+cpdef  public  get_media_music_state():
     """获取机器人音乐播放状态
 
     Returns:
@@ -616,7 +612,7 @@ def get_media_music_state():
     return res
 
 
-def upload_media_music(filePath: str):
+cpdef   public upload_media_music(filePath: str):
     """上传音乐文件
 
     上传到 /home/pi/Documents/music
@@ -642,7 +638,7 @@ def upload_media_music(filePath: str):
     res = json.loads(str(response.content.decode("utf-8")))
     return res
 
-def start_play_music(name: str = ""):
+cpdef   start_play_music(name: str = ""):
     """播放音乐
 
     Note:
@@ -663,7 +659,7 @@ def start_play_music(name: str = ""):
     """
     return __control_media_music(operation='start',name=name)
 
-def stop_play_music():
+cpdef  public  stop_play_music():
     """停止播放音乐
 
     Returns:
@@ -679,7 +675,7 @@ def stop_play_music():
     return __control_media_music(operation='stop')
 
 
-def __control_media_music(operation: str, name: str = ""):
+def   __control_media_music(operation: str, name: str = ""):
     """播放/停止音乐
 
     Note:
@@ -709,7 +705,7 @@ def __control_media_music(operation: str, name: str = ""):
     return res
 
 
-def get_media_music_list():
+cpdef   public get_media_music_list():
     """获取音乐列表
 
     可以获得所有内置和用户上传的音乐列表
@@ -733,7 +729,7 @@ def get_media_music_list():
     return res
 
 
-def sync_play_music(name: str = ""):
+cpdef   sync_play_music(name: str = ""):
     """播放音乐，播放完成后返回
 
     Returns:
@@ -755,7 +751,7 @@ def sync_play_music(name: str = ""):
 ####motions####
 
 
-def delete_motion(name: str):
+cpdef  public  delete_motion(name: str):
     """删除动作文件
 
     删除在/home/pi/Documents/motions目录下的用户文件
@@ -783,7 +779,7 @@ def delete_motion(name: str):
     return res
 
 
-def get_current_motion_play_state():
+cpdef   public get_current_motion_play_state():
     """获得当前动作文件执行状态
 
     Returns:
@@ -806,7 +802,7 @@ def get_current_motion_play_state():
     res = json.loads(str(response.content.decode("utf-8")))
     return res
 
-def get_current_layer_motion_play_state():
+cpdef   public get_current_layer_motion_play_state():
     """获得当前动作文件执行状态
 
     Returns:
@@ -829,7 +825,7 @@ def get_current_layer_motion_play_state():
     res = json.loads(str(response.content.decode("utf-8")))
     return res
 
-def __control_motion_play_state(operation: str = "start", name: str = "reset", direction: str = "", speed: str = "normal", repeat: int = 1, timestamp: int = 0, version: str = "v1"):
+def   __control_motion_play_state(operation: str = "start", name: str = "reset", direction: str = "", speed: str = "normal", repeat: int = 1, timestamp: int = 0, version: str = "v1"):
     """机器人动作控制
 
     Args:
@@ -864,7 +860,7 @@ def __control_motion_play_state(operation: str = "start", name: str = "reset", d
     res = json.loads(str(response.content.decode("utf-8")))
     return res
 
-def start_play_motion(name: str = "reset", direction: str = "", speed: str = "normal", repeat: int = 1, timestamp: int = 0,version: str="v1"):
+cpdef   start_play_motion(name: str = "reset", direction: str = "", speed: str = "normal", repeat: int = 1, timestamp: int = 0,version: str="v1"):
     """开始执行动作
 
     Args:
@@ -894,7 +890,7 @@ def start_play_motion(name: str = "reset", direction: str = "", speed: str = "no
     """
     return __control_motion_play_state(operation = "start", name = name, direction = direction, speed = speed, repeat = repeat, timestamp = timestamp, version = version)
 
-def pause_play_motion(name: str = "",timestamp: int = 0,version: str ="v1"):
+cpdef   pause_play_motion(name: str = "",timestamp: int = 0,version: str ="v1"):
     """暂停动作执行
 
     Args:
@@ -917,7 +913,7 @@ def pause_play_motion(name: str = "",timestamp: int = 0,version: str ="v1"):
     """
     return __control_motion_play_state(name = name,operation = "pause",timestamp = timestamp,version = version)
 
-def resume_play_motion(name: str = "",timestamp: int = 0,version: str ="v1"):
+cpdef   resume_play_motion(name: str = "",timestamp: int = 0,version: str ="v1"):
     """恢复动作执行
 
     Args:
@@ -940,7 +936,7 @@ def resume_play_motion(name: str = "",timestamp: int = 0,version: str ="v1"):
     """
     return __control_motion_play_state(name = name,operation = "resume",timestamp = timestamp,version = version)
 
-def stop_play_motion(name: str = "",timestamp: int = 0,version: str ="v1"):
+cpdef   stop_play_motion(name: str = "",timestamp: int = 0,version: str ="v1"):
     """停止动作执行
 
     Args:
@@ -964,7 +960,7 @@ def stop_play_motion(name: str = "",timestamp: int = 0,version: str ="v1"):
     return __control_motion_play_state(name = name,operation = "stop",timestamp = timestamp,version = version)
 
 
-def sync_play_motion(name: str = "reset", direction: str = "", speed: str = "normal", repeat: int = 1,version: str = "v1"):
+cpdef   sync_play_motion(name: str = "reset", direction: str = "", speed: str = "normal", repeat: int = 1,version: str = "v1"):
     """开始执行动作，执行完成后返回
 
     Args:
@@ -997,7 +993,7 @@ def sync_play_motion(name: str = "reset", direction: str = "", speed: str = "nor
 
 
 
-def upload_motion(filePath: str):
+cpdef  public  upload_motion(filePath: str):
     """上传动作文件
 
     上传动作文件到 /home/pi/Documents/motions 目录
@@ -1023,12 +1019,12 @@ def upload_motion(filePath: str):
     res = json.loads(str(response.content.decode("utf-8")))
     return res
 
-def get_motion_list_value():
+cpdef   public get_motion_list_value():
     """获取动作文件列表
 
     Returns:
            List:
-           e.g::
+           e.g::              
     [A, B, C, D, E, F ,G]
     """
     motions_url = basic_url+"motions/list"
@@ -1048,7 +1044,7 @@ def get_motion_list_value():
         motion.append(item['name'].rsplit('.', 1)[0])
     return motion
 
-def get_motion_list():
+cpdef  public get_motion_list():
     """获取动作文件列表
 
     Returns:
@@ -1108,7 +1104,7 @@ def get_motion_list():
     return res
 
 
-def control_motion_gait(speed_v: int = 0, speed_h: int = 0, steps: int = 0, period: int = 1, wave: bool = False):
+cpdef   control_motion_gait(speed_v: int = 0, speed_h: int = 0, steps: int = 0, period: int = 1, wave: bool = False):
     """机器人步态动作控制
 
     Args:
@@ -1144,7 +1140,7 @@ def control_motion_gait(speed_v: int = 0, speed_h: int = 0, steps: int = 0, peri
     return res
 
 
-def get_motion_gait_state():
+cpdef  public    get_motion_gait_state():
     """获取机器人步态执行状态
 
     Returns:
@@ -1189,7 +1185,7 @@ def get_motion_gait_state():
     return res
 
 
-def exit_motion_gait():
+cpdef  public  exit_motion_gait():
     """退出机器人步态执行
 
     机器人将从下蹲转为站立复位状态
@@ -1212,7 +1208,7 @@ def exit_motion_gait():
     return res
 
 
-def sync_do_motion_gait(speed_v: int = 0, speed_h: int = 0, steps: int = 0, period: int = 1, wave: bool = False):
+cpdef   sync_do_motion_gait(speed_v: int = 0, speed_h: int = 0, steps: int = 0, period: int = 1, wave: bool = False):
     """机器人步态动作控制,执行完成后返回
 
     Args:
@@ -1238,7 +1234,7 @@ def sync_do_motion_gait(speed_v: int = 0, speed_h: int = 0, steps: int = 0, peri
     loop.run_until_complete(tasks)
     return True
 ####aprilTag
-def get_aprilTag_recognition_status():
+cpdef   public get_aprilTag_recognition_status():
     """查询aprilTag 识别状态
 
     Returns:
@@ -1267,7 +1263,7 @@ def get_aprilTag_recognition_status():
     return res
 
 PaprilTagStream = None
-def start_aprilTag_recognition(tags: List,enableStream: bool = False):
+cpdef   start_aprilTag_recognition(tags: List,enableStream: bool = False):
     """开启aprilTag识别
     Args:
         tags:需要识别的apriltag id 及 size
@@ -1310,7 +1306,7 @@ def start_aprilTag_recognition(tags: List,enableStream: bool = False):
         PaprilTagStream.start()
     return res
 
-def __openStreamWindow(windowName,url,ip_addr:str = ip):
+def   __openStreamWindow(windowName,url,ip_addr:str = ip):
     camera = cv2.VideoCapture(url)
     ret = camera.isOpened()
     counter = 0
@@ -1358,7 +1354,7 @@ def __openStreamWindow(windowName,url,ip_addr:str = ip):
         cv2.destroyAllWindows()
         cv2.waitKey(1)
 
-def __stop_aprilTag_recognition():
+def   __stop_aprilTag_recognition():
     """关闭aprilTag识别
     Returns:
            Dict:
@@ -1380,7 +1376,7 @@ def __stop_aprilTag_recognition():
     res = json.loads(str(response.content.decode("utf-8")))
     return res
 
-def stop_aprilTag_recognition():
+cpdef  public  stop_aprilTag_recognition():
     """关闭aprilTag识别
     Returns:
            Dict:
@@ -1398,7 +1394,7 @@ def stop_aprilTag_recognition():
         PaprilTagStream = None
     return res
 ####QR code
-def get_QR_code_recognition_status():
+cpdef  public  get_QR_code_recognition_status():
     """查询二维码 识别状态
 
     Returns:
@@ -1422,7 +1418,7 @@ def get_QR_code_recognition_status():
     return res
 
 PqrStream = None
-def start_QR_code_recognition(enableStream: bool = False):
+cpdef   start_QR_code_recognition(enableStream: bool = False):
     """开启二维码识别
     Args:
         timeOut:最大等待时间 单位（秒）传0表示永久等待
@@ -1433,7 +1429,7 @@ def start_QR_code_recognition(enableStream: bool = False):
                     code:integer (int32)返回码，0表示正常
                     msg:string提示信息
                 }
-
+        
     """
     motion_url = basic_url + "visions/QR"
     param = {
@@ -1459,7 +1455,7 @@ def start_QR_code_recognition(enableStream: bool = False):
         PqrStream.start()
     return res
 
-def stop_QR_code_recognition():
+cpdef   public stop_QR_code_recognition():
     """关闭二维码识别
     Returns:
            Dict:
@@ -1482,7 +1478,7 @@ def stop_QR_code_recognition():
         PqrStream = None
     return res
 
-def sync_do_QR_code_recognition(timeOut:int = 8):
+cpdef   sync_do_QR_code_recognition(timeOut:int = 8):
     """开启二维码识别,识别到或超时后返回
     Args:
         timeOut:最大等待时间 单位（秒）小于等于0表示永久等待
@@ -1508,7 +1504,7 @@ def sync_do_QR_code_recognition(timeOut:int = 8):
     return tasks.result()
 
 ####ObjectTracking####
-def get_object_tracking_status():
+cpdef   public get_object_tracking_status():
     """获取物体跟踪工作状态
 
     Returns:
@@ -1527,7 +1523,7 @@ def get_object_tracking_status():
         logging.error("error code = %d msg = %s",res.get("code",-1),res.get("msg",""))
     return res
 
-def start_object_tracking(name: str = "", width: int = 0, height: int = 0):
+cpdef   start_object_tracking(name: str = "", width: int = 0, height: int = 0):
     """开启物体跟踪
     Args:
         name: 指定特定跟踪物体， wukong, yanshee, rubik_cube, orange, red_apple, 可不指定
@@ -1562,7 +1558,7 @@ def start_object_tracking(name: str = "", width: int = 0, height: int = 0):
         logging.error("error code = %d msg = %s",res.get("code",-1),res.get("msg",""))
     return res
 
-def stop_object_tracking():
+cpdef  public  stop_object_tracking():
     """关闭物体跟踪
     Returns:
            e.g::
@@ -1582,7 +1578,7 @@ def stop_object_tracking():
     return res
 
 
-def config_object_tracking(track_timeout: int, detect_timeout: int):
+cpdef   config_object_tracking(track_timeout: int, detect_timeout: int):
     """配置物体跟踪
     Args:
         track_timeout: 跟丢物体超时时间, 单位为s, 1 - 100，系统默认为 5s
@@ -1606,7 +1602,7 @@ def config_object_tracking(track_timeout: int, detect_timeout: int):
     return res
 
 ####Servos####
-def get_servo_angle_value(name:str):
+cpdef   public get_servo_angle_value(name:str):
     """查询舵机角度值
 
     一次可以查询一个舵机角度值
@@ -1671,7 +1667,7 @@ def get_servo_angle_value(name:str):
 
 
 
-def get_servos_angles(names: List[str]):
+cpdef   public get_servos_angles(names: List[str]):
     """查询舵机角度值
 
     一次可以查询一个或者多个舵机角度值
@@ -1759,7 +1755,7 @@ def get_servos_angles(names: List[str]):
     return res
 
 
-def set_servos_angles(angles: Dict[str, int], runtime: int = 200):
+cpdef   set_servos_angles(angles: Dict[str, int], runtime: int = 200):
     """设置舵机角度值
 
     一次可以设置一个或者多个舵机角度值
@@ -1822,7 +1818,7 @@ def set_servos_angles(angles: Dict[str, int], runtime: int = 200):
     res = json.loads(str(response.content.decode("utf-8")))
     return res
 
-def set_servos_angles_layers(data: Dict[str,Dict[int,int]]):
+cpdef   public set_servos_angles_layers(data: Dict[str,Dict[int,int]]):
     """设置舵机角度值
 
     一次可以设置一个或者多个舵机角度值
@@ -1867,7 +1863,7 @@ def set_servos_angles_layers(data: Dict[str,Dict[int,int]]):
     res = json.loads(str(response.content.decode("utf-8")))
     return res
 
-def sync_set_servo_rotate(angles: Dict[str, int], runtime: int = 200):
+cpdef   sync_set_servo_rotate(angles: Dict[str, int], runtime: int = 200):
     """设置舵机角度值,设置完成后返回
 
     Args:
@@ -1932,7 +1928,7 @@ def sync_set_servo_rotate(angles: Dict[str, int], runtime: int = 200):
     return res
 
 
-def get_servos_mode(names: List[str]):
+cpdef  public  get_servos_mode(names: List[str]):
     """查询舵机工作模式
 
     一次可以查询一个或者多个舵机工作模式
@@ -2008,7 +2004,7 @@ def get_servos_mode(names: List[str]):
     return res
 
 
-def set_servos_mode(mode: str, servos: List[str]):
+cpdef   public set_servos_mode(mode: str, servos: List[str]):
     """设置舵机工作模式
 
     包括两种模式：工作和可编程。舵机被设置成可编程状态之后，就变成掉电可回读状态。一次可以设置一个或者多个舵机。
@@ -2042,7 +2038,7 @@ def set_servos_mode(mode: str, servos: List[str]):
 
 ####Sensors####
 
-def sensor_calibration(id: int):
+cpdef  public  sensor_calibration(id: int):
     """传感器校准
 
     目前只支持运动传感器（gyro）校准
@@ -2063,7 +2059,7 @@ def sensor_calibration(id: int):
     """
     __set_sensors(operation="Calibrate",type = "gyro",id=id)
 
-def __set_sensors(operation: str, id: int, type: str, value: int = 0):
+def   __set_sensors(operation: str, id: int, type: str, value: int = 0):
     """传感器设置(校准或修改地址)
 
     目前只支持运动传感器（gyro）校准
@@ -2104,7 +2100,7 @@ def __set_sensors(operation: str, id: int, type: str, value: int = 0):
     res = json.loads(str(response.content.decode("utf-8")))
     return res
 
-def get_sensors_list_value():
+cpdef   public get_sensors_list_value():
     """获取所有传感器的列表(便利方法)
 
     Returns:
@@ -2131,7 +2127,7 @@ def get_sensors_list_value():
     return sensorsName
 
 
-def get_sensors_list():
+cpdef   public get_sensors_list():
     """获取所有传感器的列表
 
     Returns:
@@ -2160,7 +2156,7 @@ def get_sensors_list():
     res = json.loads(str(response.content.decode("utf-8")))
     return res
 
-def get_sensors_environment_value():
+cpdef  public  get_sensors_environment_value():
     """获取环境传感器值(便利方法)
 
     Returns:
@@ -2184,7 +2180,7 @@ def get_sensors_environment_value():
         return "not connected to sensor."
     return values[0]
 
-def get_sensors_environment():
+cpdef   public get_sensors_environment():
     """获取环境传感器值
 
     Note:
@@ -2218,7 +2214,7 @@ def get_sensors_environment():
     return res
 
 
-def get_sensors_gyro():
+cpdef  public  get_sensors_gyro():
     """获取九轴陀螺仪运动传感器值
 
     Returns:
@@ -2256,7 +2252,7 @@ def get_sensors_gyro():
     res = json.loads(str(response.content.decode("utf-8")))
     return res
 
-def get_sensors_infrared_value():
+cpdef  public  get_sensors_infrared_value():
     """获取红外距离传感器值(便利方法)
 
     Returns:
@@ -2271,7 +2267,7 @@ def get_sensors_infrared_value():
         return "not connected to sensor."
     return values[0]["value"]
 
-def get_sensors_infrared(id: List[int] = None, slot: List[int] = None):
+cpdef   get_sensors_infrared(id: List[int] = None, slot: List[int] = None):
     """获取红外距离传感器值
 
     Args:
@@ -2314,7 +2310,7 @@ def get_sensors_infrared(id: List[int] = None, slot: List[int] = None):
     res = json.loads(str(response.content.decode("utf-8")))
     return res
 
-def get_sensors_pressure_value():
+cpdef  public  get_sensors_pressure_value():
     """读取机器人压力传感器值(便利方法)
 
     Returns:
@@ -2329,7 +2325,7 @@ def get_sensors_pressure_value():
         return "not connected to sensor."
     return values[0]["value"]
 
-def get_sensors_pressure(id: List[int] = None, slot: List[int] = None):
+cpdef   get_sensors_pressure(id: List[int] = None, slot: List[int] = None):
     """读取机器人身上的压力传感器值
 
     Args:
@@ -2372,7 +2368,7 @@ def get_sensors_pressure(id: List[int] = None, slot: List[int] = None):
     res = json.loads(str(response.content.decode("utf-8")))
     return res
 
-def get_sensors_touch_value():
+cpdef   public  get_sensors_touch_value():
     """获取触摸传感器值(便利方法)
 
     Returns:
@@ -2387,7 +2383,7 @@ def get_sensors_touch_value():
         return "not connected to sensor."
     return values[0]["value"]
 
-def get_sensors_touch(id: int = None, slot: List[int] = None):
+cpdef   get_sensors_touch(id: int = None, slot: List[int] = None):
     """获取触摸传感器值
 
     Args:
@@ -2430,7 +2426,7 @@ def get_sensors_touch(id: int = None, slot: List[int] = None):
     res = json.loads(str(response.content.decode("utf-8")))
     return res
 
-def get_sensors_ultrasonic_value():
+cpdef   public get_sensors_ultrasonic_value():
     """获取超声传感器值(便利方法)
 
     Returns:
@@ -2445,7 +2441,7 @@ def get_sensors_ultrasonic_value():
         return "not connected to sensor."
     return values[0]["value"]
 
-def get_sensors_ultrasonic(id=None, slot=None):
+cpdef   get_sensors_ultrasonic(id=None, slot=None):
     """获取超声传感器值
 
     Args:
@@ -2491,7 +2487,7 @@ def get_sensors_ultrasonic(id=None, slot=None):
 ####Voice####
 
 
-def stop_voice_asr():
+cpdef   public stop_voice_asr():
     """停止语音识别服务
 
     Returns:
@@ -2511,7 +2507,7 @@ def stop_voice_asr():
     return res
 
 
-def get_voice_asr_state():
+cpdef  public  get_voice_asr_state():
     """获取语义理解工作状态
 
     Returns:
@@ -2541,7 +2537,7 @@ def get_voice_asr_state():
     return res
 
 
-def start_voice_asr(continues=False, timestamp=0):
+cpdef   start_voice_asr(continues=False, timestamp=0):
     """开始语义理解
 
     当语义理解(单次/多次)处于工作状态时，需要先停止当前的语义理解。
@@ -2568,7 +2564,7 @@ def start_voice_asr(continues=False, timestamp=0):
     res = json.loads(str(response.content.decode("utf-8")))
     return res
 
-def sync_do_voice_asr_value():
+cpdef  public  sync_do_voice_asr_value():
     """执行一次语义理解并获得返回结果(便利方法)
 
     Returns:
@@ -2597,7 +2593,7 @@ def sync_do_voice_asr_value():
     return RobotAsrResult(res["data"]).retDict
 
 
-def sync_do_voice_asr():
+cpdef   public sync_do_voice_asr():
     """执行一次语义理解并获得返回结果
 
     Returns:
@@ -2627,7 +2623,7 @@ def sync_do_voice_asr():
     return tasks.result()
 
 
-def delete_voice_asr_offline_syntax(grammar: str):
+cpdef  public  delete_voice_asr_offline_syntax(grammar: str):
     """删除指定离线语法名称下的所有配置
 
     可以先获取系统所有的离线语法名称，请注意系统默认的离线语法名称为defaut, 它不可以通过API来添加，删除以及修改
@@ -2653,7 +2649,7 @@ def delete_voice_asr_offline_syntax(grammar: str):
     return res
 
 
-def get_voice_asr_offline_syntax(grammar: str):
+cpdef   public get_voice_asr_offline_syntax(grammar: str):
     """获取指定语法名称下的所有配置
 
     Args:
@@ -2712,7 +2708,7 @@ def get_voice_asr_offline_syntax(grammar: str):
     return res
 
 
-def create_voice_asr_offline_syntax(object: Dict):
+cpdef  public  create_voice_asr_offline_syntax(object: Dict):
     """创建一个新的离线语法名称配置
 
     Args:
@@ -2763,7 +2759,7 @@ def create_voice_asr_offline_syntax(object: Dict):
     return res
 
 
-def update_voice_asr_offline_syntax(object: Dict):
+cpdef  public  update_voice_asr_offline_syntax(object: Dict):
     """修改已有语法配置中的命令词和对应的返回值
 
     可用于配置或添加新的离线命令词
@@ -2816,7 +2812,7 @@ def update_voice_asr_offline_syntax(object: Dict):
     return res
 
 
-def get_voice_asr_offline_syntax_grammars():
+cpdef   public get_voice_asr_offline_syntax_grammars():
     """获取所有离线语法名称
 
     Note:
@@ -2844,7 +2840,7 @@ def get_voice_asr_offline_syntax_grammars():
     return res
 
 
-def stop_voice_iat():
+cpdef   public stop_voice_iat():
     """停止语音听写
 
     Returns:
@@ -2863,7 +2859,7 @@ def stop_voice_iat():
     return res
 
 
-def get_voice_iat():
+cpdef   public get_voice_iat():
     """获取语音听写结果
 
     Returns:
@@ -2894,7 +2890,7 @@ def get_voice_iat():
     return res
 
 
-def start_voice_iat(timestamp: int = 0):
+cpdef   start_voice_iat(timestamp: int = 0):
     """开始语音听写
 
     当语音听写处于工作状态时，需要先停止当前的语音听写。
@@ -2920,7 +2916,7 @@ def start_voice_iat(timestamp: int = 0):
     res = json.loads(str(response.content.decode("utf-8")))
     return res
 
-def sync_do_voice_iat_value():
+cpdef   public sync_do_voice_iat_value():
     """执行一次语音听写并获得返回结果(便利方法)。
 
     Returns:
@@ -2954,7 +2950,7 @@ def sync_do_voice_iat_value():
     result = result.strip().lower()
     return result
 
-def sync_do_voice_iat():
+cpdef   public sync_do_voice_iat():
     """执行一次语音听写并获得返回结果。
 
     Returns:
@@ -2986,7 +2982,7 @@ def sync_do_voice_iat():
     return task.result()
 
 
-def stop_voice_tts():
+cpdef   public stop_voice_tts():
     """停止语音播报任务
 
     Returns:
@@ -3006,7 +3002,7 @@ def stop_voice_tts():
     return res
 
 
-def get_voice_tts_state(timestamp: int = None):
+cpdef   get_voice_tts_state(timestamp: int = None):
     """获取指定或者当前工作状态
 
     带时间戳为指定任务工作状态，如果无时间戳则当前任务。
@@ -3042,7 +3038,7 @@ def get_voice_tts_state(timestamp: int = None):
     return res
 
 
-def start_voice_tts(tts: str = "", interrupt: bool = True, timestamp: int = 0):
+cpdef   start_voice_tts(tts: str = "", interrupt: bool = True, timestamp: int = 0):
     """开始语音合成任务
 
     合成指定的语句并播放。当语音合成处于工作状态时可以接受新的语音合成任务.
@@ -3071,7 +3067,7 @@ def start_voice_tts(tts: str = "", interrupt: bool = True, timestamp: int = 0):
     return res
 
 
-def sync_do_tts(tts: str = "", interrupt: bool = True):
+cpdef   sync_do_tts(tts: str = "", interrupt: bool = True):
     """执行语音合成任务,合成完成后返回
 
     Args:
@@ -3110,7 +3106,7 @@ def sync_do_tts(tts: str = "", interrupt: bool = True):
 ####Visions####
 
 
-def get_visual_task_result(option: str, type: str):
+cpdef   public get_visual_task_result(option: str, type: str):
     """获取视觉任务结果
 
     Args:
@@ -3158,7 +3154,7 @@ def get_visual_task_result(option: str, type: str):
     return res
 
 
-def __control_visual_task(option: str, type: str, operation: str = "start", timestamp: int = 0):
+def   __control_visual_task(option: str, type: str, operation: str = "start", timestamp: int = 0):
     """指定视觉任务停止或开始
 
     Args:
@@ -3211,7 +3207,7 @@ def __control_visual_task(option: str, type: str, operation: str = "start", time
     res = json.loads(str(response.content.decode("utf-8")))
     return res
 
-def start_face_recognition(type: str, timestamp: int = 0):
+cpdef   start_face_recognition(type: str, timestamp: int = 0):
     """开始人脸识别
 
     Args:
@@ -3230,7 +3226,7 @@ def start_face_recognition(type: str, timestamp: int = 0):
     """
     return __control_visual_task(option = 'face',type=type,operation='start',timestamp = timestamp)
 
-def stop_face_recognition(type: str, timestamp: int = 0):
+cpdef   stop_face_recognition(type: str, timestamp: int = 0):
     """停止人脸识别
 
     Args:
@@ -3249,7 +3245,7 @@ def stop_face_recognition(type: str, timestamp: int = 0):
     """
     return __control_visual_task(option = 'face',type=type,operation='stop',timestamp = timestamp)
 
-def sync_do_face_recognition_value(type:str):
+cpdef  public  sync_do_face_recognition_value(type:str):
     """执行人脸识别,识别完成后返回
 
     Args:
@@ -3289,7 +3285,7 @@ def sync_do_face_recognition_value(type:str):
     ret = getattr(faceRes,type)
     return ret
 
-def sync_do_face_recognition(type: str):
+cpdef   public sync_do_face_recognition(type: str):
     """执行人脸识别,识别完成后返回
 
     Args:
@@ -3330,7 +3326,7 @@ def sync_do_face_recognition(type: str):
     loop.run_until_complete(tasks)
     return tasks.result()
 
-def start_gesture_recognition(timestamp: int = 0):
+cpdef   start_gesture_recognition(timestamp: int = 0):
     """开始手势识别
 
     Args:
@@ -3348,7 +3344,7 @@ def start_gesture_recognition(timestamp: int = 0):
     """
     return __control_visual_task(option = 'hand',type='gesture',operation='start',timestamp = timestamp)
 
-def stop_gesture_recognition(timestamp: int = 0):
+cpdef   stop_gesture_recognition(timestamp: int = 0):
     """停止手势识别
 
     Args:
@@ -3366,7 +3362,7 @@ def stop_gesture_recognition(timestamp: int = 0):
     """
     return __control_visual_task(option = 'hand',type='gesture',operation='stop',timestamp = timestamp)
 
-def sync_do_gesture_recognition():
+cpdef  public  sync_do_gesture_recognition():
     """执行手势识别,识别完成后返回
 
     Note:
@@ -3405,7 +3401,7 @@ def sync_do_gesture_recognition():
     loop.run_until_complete(tasks)
     return tasks.result()
 
-def start_color_recognition(timestamp: int = 0):
+cpdef  start_color_recognition(timestamp: int = 0):
     """开始颜色识别
 
     Args:
@@ -3423,7 +3419,7 @@ def start_color_recognition(timestamp: int = 0):
     """
     return __control_visual_task(option = 'color',type="color_detect",operation='start',timestamp = timestamp)
 
-def stop_color_recognition(timestamp: int = 0):
+cpdef   stop_color_recognition(timestamp: int = 0):
     """停止颜色识别
 
     Args:
@@ -3441,7 +3437,7 @@ def stop_color_recognition(timestamp: int = 0):
     """
     return __control_visual_task(option = 'color',type="color_detect",operation='stop',timestamp = timestamp)
 
-def sync_do_color_recognition():
+cpdef   public sync_do_color_recognition():
     """执行颜色识别,识别完成后返回
 
     Returns:
@@ -3477,7 +3473,7 @@ def sync_do_color_recognition():
     loop.run_until_complete(tasks)
     return tasks.result()
 
-def start_object_recognition(timestamp: int = 0):
+cpdef   start_object_recognition(timestamp: int = 0):
     """开始物体识别
 
     Args:
@@ -3495,7 +3491,7 @@ def start_object_recognition(timestamp: int = 0):
     """
     return __control_visual_task(option = 'object',type="recognition",operation='start',timestamp = timestamp)
 
-def stop_object_recognition(timestamp: int = 0):
+cpdef   stop_object_recognition(timestamp: int = 0):
     """停止物体识别
 
     Args:
@@ -3513,7 +3509,7 @@ def stop_object_recognition(timestamp: int = 0):
     """
     return __control_visual_task(option = 'object',type="recognition",operation='stop',timestamp = timestamp)
 
-def sync_do_object_recognition():
+cpdef   public sync_do_object_recognition():
     """执行物体识别,识别完成后返回
 
     Returns:
@@ -3547,7 +3543,7 @@ def sync_do_object_recognition():
     loop.run_until_complete(tasks)
     return tasks.result()
 
-def do_face_entry(name:str):
+cpdef  public  do_face_entry(name:str):
     """进行人脸录入
 
     Args:
@@ -3580,7 +3576,7 @@ def do_face_entry(name:str):
     return True
 
 
-def delete_vision_photo(name: str):
+cpdef   public delete_vision_photo(name: str):
     """删除指定名称的图片
 
     用户拍照默认存储目录：/tmp/photo
@@ -3605,7 +3601,7 @@ def delete_vision_photo(name: str):
     return res
 
 
-def get_vision_photo(name: str, savePath: str = "./"):
+cpdef   get_vision_photo(name: str, savePath: str = "./"):
     """获取指定名称的照片，并保存到特定路径下面
 
     Args:
@@ -3625,7 +3621,7 @@ def get_vision_photo(name: str, savePath: str = "./"):
     return res
 
 
-def take_vision_photo(resolution: str = "640x480"):
+cpdef   take_vision_photo(resolution: str = "640x480"):
     """拍一张照片
 
     默认存储路径为/tmp/photo
@@ -3652,7 +3648,7 @@ def take_vision_photo(resolution: str = "640x480"):
     return res
 
 
-def get_vision_photo_list():
+cpdef   public get_vision_photo_list():
     """获取机器人照片列表
 
     Returns:
@@ -3679,7 +3675,7 @@ def get_vision_photo_list():
     return res
 
 
-def delete_vision_photo_sample(name: str):
+cpdef   public delete_vision_photo_sample(name: str):
     """删除指定名称的样本照片
 
     Args:
@@ -3705,7 +3701,7 @@ def delete_vision_photo_sample(name: str):
     return res
 
 
-def get_vision_photo_samples():
+cpdef  public  get_vision_photo_samples():
     """获取样本照片列表
 
     Returns:
@@ -3732,7 +3728,7 @@ def get_vision_photo_samples():
     return res
 
 
-def upload_vision_photo_sample(filePath: str):
+cpdef  public  upload_vision_photo_sample(filePath: str):
     """上传样本图片到特定文件夹
 
     默认Sample文件夹
@@ -3762,7 +3758,7 @@ def upload_vision_photo_sample(filePath: str):
     return res
 
 
-def open_vision_stream(resolution: str = "640x480"):
+cpdef   open_vision_stream(resolution: str = "640x480"):
     """打开摄像头网络视频流
 
     用户可以通过浏览器直接接收视频．视频将以mjpg格式通过http的形式发布url: http://机器人ip地址:8000。
@@ -3789,7 +3785,7 @@ def open_vision_stream(resolution: str = "640x480"):
     return res
 
 
-def close_vision_stream():
+cpdef  public  close_vision_stream():
     """关闭摄像头网络视频流
 
     Returns:
@@ -3809,7 +3805,7 @@ def close_vision_stream():
     return res
 
 
-def delete_vision_tag(tag: str,mode:str = "all"):
+cpdef   delete_vision_tag(tag: str,mode:str = "all"):
     """删除指定标签
 
     Args:
@@ -3835,7 +3831,7 @@ def delete_vision_tag(tag: str,mode:str = "all"):
     return res
 
 
-def get_vision_tags():
+cpdef   public get_vision_tags():
     """获取样本标签列表
 
     Returns:
@@ -3881,7 +3877,7 @@ def get_vision_tags():
     return res
 
 
-def set_vision_tag(resources: List[str], tag: str):
+cpdef   public  set_vision_tag(resources: List[str], tag: str):
     """给已有样本图片打标签
 
     打标签前请先上传样本图片
@@ -3908,7 +3904,7 @@ def set_vision_tag(resources: List[str], tag: str):
     res = json.loads(str(response.content.decode("utf-8")))
     return res
 
-def do_visions_visible(operation, task):
+cpdef   public do_visions_visible(operation, task):
     """
 	开启或关闭视觉任务视频流
 	参数
@@ -3938,7 +3934,7 @@ def do_visions_visible(operation, task):
             pass
     return res
 
-def show_visions_result(operation):
+cpdef   public show_visions_result(operation):
     """
 	显示视觉任务视频流
 	参数
@@ -4020,7 +4016,7 @@ def show_visions_result(operation):
 ####Subscriptions####
 
 
-def stop_subscribe_motion(url: str):
+cpdef  public  stop_subscribe_motion(url: str):
     """停止运动控制状态信息订阅
 
     Args:
@@ -4046,7 +4042,7 @@ def stop_subscribe_motion(url: str):
     return res
 
 
-def start_subscribe_motion(url: str, timeout: int = 10):
+cpdef   start_subscribe_motion(url: str, timeout: int = 10):
     """订阅运动控制状态信息
 
     Args:
@@ -4073,7 +4069,7 @@ def start_subscribe_motion(url: str, timeout: int = 10):
     return res
 
 
-def stop_subscribe_motion_gait(url: str):
+cpdef   public stop_subscribe_motion_gait(url: str):
     """停止步态运动控制状态信息订阅
 
     Args:
@@ -4099,7 +4095,7 @@ def stop_subscribe_motion_gait(url: str):
     return res
 
 
-def start_subscribe_motion_gait(url: str, timeout: int = 10):
+cpdef   start_subscribe_motion_gait(url: str, timeout: int = 10):
     """订阅步态运动控制状态信息
 
     Args:
@@ -4126,7 +4122,7 @@ def start_subscribe_motion_gait(url: str, timeout: int = 10):
     return res
 
 
-def stop_subscribe_sensor(url, type, id=0, slot=0):
+cpdef   stop_subscribe_sensor(url, type, id=0, slot=0):
     """停止传感器订阅服务。
 
     Args:
@@ -4159,7 +4155,7 @@ def stop_subscribe_sensor(url, type, id=0, slot=0):
     return res
 
 
-def start_subscribe_sensor(url: str, type: str, id=0, slot=0, timeval=100, timeout=10):
+cpdef   start_subscribe_sensor(url: str, type: str, id=0, slot=0, timeval=100, timeout=10):
     """订阅传感器消息
 
     Args:
@@ -4194,7 +4190,7 @@ def start_subscribe_sensor(url: str, type: str, id=0, slot=0, timeval=100, timeo
     return res
 
 
-def stop_subscribe_vision(url: str, type: str):
+cpdef   public stop_subscribe_vision(url: str, type: str):
     """停止指定视觉任务订阅
 
     Args:
@@ -4221,7 +4217,7 @@ def stop_subscribe_vision(url: str, type: str):
     return res
 
 
-def start_subscribe_vision(url: str, type: str, timeout:int=10):
+cpdef   start_subscribe_vision(url: str, type: str, timeout:int=10):
     """订阅指定视觉任务消息
 
     Args:
@@ -4250,7 +4246,7 @@ def start_subscribe_vision(url: str, type: str, timeout:int=10):
     return res
 
 
-def stop_subscribe_voice_asr(url: str):
+cpdef   public stop_subscribe_voice_asr(url: str):
     """停止订阅语义理解消息
 
     Args:
@@ -4276,7 +4272,7 @@ def stop_subscribe_voice_asr(url: str):
     return res
 
 
-def start_subscribe_voice_asr(url: str, timeout: int = 10):
+cpdef   start_subscribe_voice_asr(url: str, timeout: int = 10):
     """订阅语义理解消息
 
     Args:
@@ -4303,7 +4299,7 @@ def start_subscribe_voice_asr(url: str, timeout: int = 10):
     return res
 
 
-def stop_subscribe_voice_iat(url: str):
+cpdef   public  stop_subscribe_voice_iat(url: str):
     """停止订阅语音听写消息
 
     Args:
@@ -4329,7 +4325,7 @@ def stop_subscribe_voice_iat(url: str):
     return res
 
 
-def start_subscribe_voice_iat(url: str, timeout=10):
+cpdef   start_subscribe_voice_iat(url: str, timeout=10):
     """订阅语音听写消息
 
     Args:
@@ -4356,7 +4352,7 @@ def start_subscribe_voice_iat(url: str, timeout=10):
     return res
 
 
-def stop_subscribe_voice_tts(url: str):
+cpdef   public  stop_subscribe_voice_tts(url: str):
     """停止订阅语音播报消息
 
     Args:
@@ -4381,8 +4377,8 @@ def stop_subscribe_voice_tts(url: str):
     res = json.loads(str(response.content.decode("utf-8")))
     return res
 
-
-def start_subscribe_voice_tts(url: str, timeout: int = 10):
+# 导出给 C++ 的接口（必选参数）
+cpdef public start_subscribe_voice_tts_impl(url: str, timeout: int):
     """订阅语音播报消息
 
     Returns:
@@ -4403,44 +4399,145 @@ def start_subscribe_voice_tts(url: str, timeout: int = 10):
                              data=json_data, headers=headers)
     res = json.loads(str(response.content.decode("utf-8")))
     return res
+cpdef   start_subscribe_voice_tts(url: str, timeout: int = 10):
+    return start_subscribe_voice_tts_impl(url,timeout)
+
+# # @unique
+# cpdef public class GamepadKey(Enum):
+#     """蓝牙手柄按键名
+#
+#     :meta private:
+#     """
+#     L1 = "key_L1"
+#     L2 = "key_L2"
+#     R1 = "key_R1"
+#     R2 = "key_R2"
+#     A = "key_A"
+#     B = "key_B"
+#     X = "key_X"
+#     Y = "key_Y"
+#     DPAD_UP = "key_DPAD_UP"
+#     DPAD_DOWN = "key_DPAD_DOWN"
+#     DPAD_LEFT = "key_DPAD_LEFT"
+#     DPAD_RIGHT = "key_DPAD_RIGHT"
+#     DPAD_UP_LEFT = "key_DPAD_UP_LEFT"
+#     DPAD_UP_RIGHT = "key_DPAD_UP_RIGHT"
+#     DPAD_DOWN_LEFT = "key_DPAD_DOWN_LEFT"
+#     DPAD_DOWN_RIGHT = "key_DPAD_DOWN_RIGHT"
+#     L_STICK = "key_L_STICK"
+#     R_STICK = "key_R_STICK"
+#     L_STICK_UP = "key_L_STICK_UP"
+#     L_STICK_DOWN = "key_L_STICK_DOWN"
+#     L_STICK_LEFT = "key_L_STICK_LEFT"
+#     L_STICK_RIGHT = "key_L_STICK_RIGHT"
+#     R_STICK_UP = "key_R_STICK_UP"
+#     R_STICK_DOWN = "key_R_STICK_DOWN"
+#     R_STICK_LEFT = "key_R_STICK_LEFT"
+#     R_STICK_RIGHT = "key_R_STICK_RIGHT"
+#     BT = "key_BT"
+#     START = "key_START"
+#     POWER = "key_POWER"
+#     RESERVE = "key_RESERVE"
 
 
-@unique
-class GamepadKey(Enum):
-    """蓝牙手柄按键名
 
-    :meta private:
-    """
-    L1 = "key_L1"
-    L2 = "key_L2"
-    R1 = "key_R1"
-    R2 = "key_R2"
-    A = "key_A"
-    B = "key_B"
-    X = "key_X"
-    Y = "key_Y"
-    DPAD_UP = "key_DPAD_UP"
-    DPAD_DOWN = "key_DPAD_DOWN"
-    DPAD_LEFT = "key_DPAD_LEFT"
-    DPAD_RIGHT = "key_DPAD_RIGHT"
-    DPAD_UP_LEFT = "key_DPAD_UP_LEFT"
-    DPAD_UP_RIGHT = "key_DPAD_UP_RIGHT"
-    DPAD_DOWN_LEFT = "key_DPAD_DOWN_LEFT"
-    DPAD_DOWN_RIGHT = "key_DPAD_DOWN_RIGHT"
-    L_STICK = "key_L_STICK"
-    R_STICK = "key_R_STICK"
-    L_STICK_UP = "key_L_STICK_UP"
-    L_STICK_DOWN = "key_L_STICK_DOWN"
-    L_STICK_LEFT = "key_L_STICK_LEFT"
-    L_STICK_RIGHT = "key_L_STICK_RIGHT"
-    R_STICK_UP = "key_R_STICK_UP"
-    R_STICK_DOWN = "key_R_STICK_DOWN"
-    R_STICK_LEFT = "key_R_STICK_LEFT"
-    R_STICK_RIGHT = "key_R_STICK_RIGHT"
-    BT = "key_BT"
-    START = "key_START"
-    POWER = "key_POWER"
-    RESERVE = "key_RESERVE"
+cpdef public enum GamepadKey:
+    L1 = 1
+    L2 = 2
+    R1 = 3
+    R2 = 4
+    A = 5
+    B = 6
+    X = 7
+    Y = 8
+    DPAD_UP = 9
+    DPAD_DOWN = 10
+    DPAD_LEFT = 11
+    DPAD_RIGHT = 12
+    DPAD_UP_LEFT = 13
+    DPAD_UP_RIGHT = 14
+    DPAD_DOWN_LEFT = 15
+    DPAD_DOWN_RIGHT = 16
+    L_STICK = 17
+    R_STICK = 18
+    L_STICK_UP = 19
+    L_STICK_DOWN = 20
+    L_STICK_LEFT = 21
+    L_STICK_RIGHT = 22
+    R_STICK_UP = 23
+    R_STICK_DOWN = 24
+    R_STICK_LEFT = 25
+    R_STICK_RIGHT = 26
+    BT = 27
+    START = 28
+    POWER = 29
+    RESERVE = 30
+
+def gamepad_key_to_string(GamepadKey key):
+    if key == GamepadKey.L1:
+        return "key_L1"
+    elif key == GamepadKey.L2:
+        return "key_L2"
+    elif key == GamepadKey.R1:
+        return "key_R1"
+    elif key == GamepadKey.R2:
+        return "key_R2"
+    elif key == GamepadKey.A:
+        return "key_A"
+    elif key == GamepadKey.B:
+        return "key_B"
+    elif key == GamepadKey.X:
+        return "key_X"
+    elif key == GamepadKey.Y:
+        return "key_Y"
+    elif key == GamepadKey.DPAD_UP:
+        return "key_DPAD_UP"
+    elif key == GamepadKey.DPAD_DOWN:
+        return "key_DPAD_DOWN"
+    elif key == GamepadKey.DPAD_LEFT:
+        return "key_DPAD_LEFT"
+    elif key == GamepadKey.DPAD_RIGHT:
+        return "key_DPAD_RIGHT"
+    elif key == GamepadKey.DPAD_UP_LEFT:
+        return "key_DPAD_UP_LEFT"
+    elif key == GamepadKey.DPAD_UP_RIGHT:
+        return "key_DPAD_UP_RIGHT"
+    elif key == GamepadKey.DPAD_DOWN_LEFT:
+        return "key_DPAD_DOWN_LEFT"
+    elif key == GamepadKey.DPAD_DOWN_RIGHT:
+        return "key_DPAD_DOWN_RIGHT"
+    elif key == GamepadKey.L_STICK:
+        return "key_L_STICK"
+    elif key == GamepadKey.R_STICK:
+        return "key_R_STICK"
+    elif key == GamepadKey.L_STICK_UP:
+        return "key_L_STICK_UP"
+    elif key == GamepadKey.L_STICK_DOWN:
+        return "key_L_STICK_DOWN"
+    elif key == GamepadKey.L_STICK_LEFT:
+        return "key_L_STICK_LEFT"
+    elif key == GamepadKey.L_STICK_RIGHT:
+        return "key_L_STICK_RIGHT"
+    elif key == GamepadKey.R_STICK_UP:
+        return "key_R_STICK_UP"
+    elif key == GamepadKey.R_STICK_DOWN:
+        return "key_R_STICK_DOWN"
+    elif key == GamepadKey.R_STICK_LEFT:
+        return "key_R_STICK_LEFT"
+    elif key == GamepadKey.R_STICK_RIGHT:
+        return "key_R_STICK_RIGHT"
+    elif key == GamepadKey.BT:
+        return "key_BT"
+    elif key == GamepadKey.START:
+        return "key_START"
+    elif key == GamepadKey.POWER:
+        return "key_POWER"
+    elif key == GamepadKey.RESERVE:
+        return "key_RESERVE"
+    else:
+        return "Unknown"
+
+
 
 class GamepadKeymap():
     """手柄按键和动作文件映射
@@ -4454,8 +4551,8 @@ class GamepadKeymap():
       "longPress": false
     }
     """
-    def __init__(self, keyName: GamepadKey=None, htsName=None, longPress=False):
-        self.keyName = keyName.value
+    def __init__(self, keyName: GamepadKey, htsName=None, longPress=False):
+        self.keyName = gamepad_key_to_string(keyName)
         self.htsName = htsName
         self.longPress = longPress
 
@@ -4471,8 +4568,29 @@ class GamepadKeymap():
     def long_press(self):
         return self.longPress
 
+# cdef public class GamepadKeymap[object GamepadKeymap, type GamepadKeymap_Type]: #
+#     cdef object keyName
+#     cdef object htsName
+#     cdef bint longPress
+#
+#     def __init__(self, keyName=None, htsName=None, longPress=False):
+#         self.keyName = keyName
+#         self.htsName = htsName
+#         self.longPress = longPress
+#
+#     # @cython.property
+#     cdef  public object key_name(self):
+#         return self.keyName
+#
+#     # @cython.property
+#     cdef inline  object hts_name(self):
+#         return self.htsName
+#
+#     # @cython.property
+#     cdef inline  bint long_press(self):
+#         return self.longPress
 
-def get_gamepad_keymap():
+cpdef   public  get_gamepad_keymap():
     """获取蓝牙手柄按键和动作文件映射关系
     Args:
 
@@ -4498,8 +4616,8 @@ def get_gamepad_keymap():
     res = json.loads(str(response.content.decode("utf-8")))
     return res
 
-
-def set_gamepad_keymap(key_name: GamepadKey, hts_name: str, long_press: bool = False):
+# 导出给 C++ 的接口（必选参数）
+cpdef public set_gamepad_keymap_impl(key_name: GamepadKey, hts_name: str, bint long_press):
     """设置单个按键的动作
 
       Args:
@@ -4515,7 +4633,10 @@ def set_gamepad_keymap(key_name: GamepadKey, hts_name: str, long_press: bool = F
                    }
 
     """
-    return set_gamepad_keymaps([GamepadKeymap(key_name, hts_name, long_press)])
+    return set_gamepad_keymaps([GamepadKeymap(key_name , hts_name, long_press)])
+
+def set_gamepad_keymap(key_name: GamepadKey, hts_name: str, long_press: bool = False):
+    return set_gamepad_keymap_impl(key_name, hts_name, long_press)
 
 
 def set_gamepad_keymaps(keymaps: List[GamepadKeymap]):
@@ -4551,7 +4672,7 @@ def set_gamepad_keymaps(keymaps: List[GamepadKeymap]):
     return res
 
 
-def reset_gamepad_keymap(key_name: GamepadKey):
+cpdef public reset_gamepad_keymap(key_name: GamepadKey):
     """重置单个按键到默认配置
 
       Args:
@@ -4569,7 +4690,7 @@ def reset_gamepad_keymap(key_name: GamepadKey):
     return reset_gamepad_keymaps([key_name])
 
 
-def reset_gamepad_keymaps(key_name_list: List[GamepadKey] = None, reset_all: bool = False):
+def   reset_gamepad_keymaps(key_name_list: List[GamepadKey] = None, reset_all: bool = False):
     """重置多个按键或者全部按键到默认配置
 
       Args:
@@ -4596,7 +4717,7 @@ def reset_gamepad_keymaps(key_name_list: List[GamepadKey] = None, reset_all: boo
 
     def default(obj):
         if isinstance(obj, GamepadKey):
-            return obj.value
+            return gamepad_key_to_string(obj) # .value
         return obj
 
     json_data = json.dumps(param, default=default)
@@ -4732,7 +4853,7 @@ async def __wait_result_gait(start_time, type, getFuc):
         elif res['data']['timestamp'] > start_time:
             return res
 
-def __resIsSuccess(res):
+def   __resIsSuccess(res):
     if not isinstance(res,Dict):
         return False
     if not "code" in res:
@@ -4894,7 +5015,7 @@ class RobotFaceRecognitionType(Enum):
 @unique
 class RobotJointType(Enum):
     """机器人关节类型
-
+    
     :meta private:
     """
     #右肩转动关节

@@ -1,0 +1,6 @@
+language = C++
+headers = YanAPI.h yanapi_wrapper.h
+#headerFilter = YanAPI.h
+# linkerOpts = -lpython3.12.dylib
+# // 前向声明 PyObject 为不透明类型
+#//typedef struct _object PyObject;

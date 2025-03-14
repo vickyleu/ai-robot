@@ -39,10 +39,10 @@ class DefaultDeviceManager : DeviceManager {
      * 添加新发现的设备
      */
     private fun addDevice(deviceId: String, name: String, type: DeviceType) {
-        val factory = deviceFactories[type] ?: return
+        /*val factory = deviceFactories[type] ?: return
         val device = factory.createDevice(deviceId, name)
         devices[deviceId] = device
-        updateAvailableDevices()
+        updateAvailableDevices()*/
     }
     
     /**

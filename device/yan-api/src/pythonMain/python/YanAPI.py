@@ -4353,7 +4353,7 @@ def start_subscribe_voice_iat(url: str, timeout=10):
     return res
 
 
-def stop_subscribe_voice_tts(url: str):
+cpdef stop_subscribe_voice_tts(url: str):
     """停止订阅语音播报消息
 
     Args:

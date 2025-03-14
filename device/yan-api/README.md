@@ -6,6 +6,10 @@ YAN API模块是设备控制层的标准化接口实现，提供了与YAN协议�
 https://yandev.ubtrobot.com/#/zh/api?api=YanAPI 接口文档
 本地接口文档在src/nativeMain/resources/README.md
 
+通过将yan 的python模块生成cython, 当前模块改为C++实现, 头文件为src/pythonMain/python/cpp/YanAPI.h
+原restful接口文档在src/nativeMain/resources/README.md
+部分接口名会带_value后缀, 比原文档多一个后缀, 请以c++文档为准
+
 
 
 ## 功能特性
