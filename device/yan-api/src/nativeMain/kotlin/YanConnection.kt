@@ -1,11 +1,13 @@
+@file:OptIn(ExperimentalForeignApi::class)
+
 package com.airobot.device.yanapi
 
-import com.airobot.pythoninterop.BT
-import com.airobot.pythoninterop.get_ip_address
-import com.airobot.pythoninterop.Py_tp_init
+import com.airobot.pythoninterop.*
 import kotlinx.cinterop.ExperimentalForeignApi
-//import com.airobot.pythoninterop.PyObject
-//import com.airobot.pythoninterop
+import kotlinx.cinterop.*
+
+
+typealias PyObject = _object
 /**
  * YAN设备连接类
  *
@@ -16,6 +18,7 @@ class YanConnection {
     private var errorCallback: ((String) -> Unit)? = null
     private var isConnected = false
 
+    private var initResult: CPointer<PyObject>?=null
     /**
      * 连接设备
      *
@@ -26,7 +29,8 @@ class YanConnection {
         try {
             // 初始化YAN API
             isConnected = true
-            val initResult = abc_yan_api_init(null)  // 根据接口签名传入正确参数
+//            PyInit_YanAPI()
+            initResult = yan_api_init(null)  // 根据接口签名传入正确参数
             println("yan_api_init result: $initResult")
             // 启动状态监控
             monitorDeviceStatus()
@@ -108,14 +112,27 @@ class YanConnection {
         val volume = params["value"] as? Number ?: return
         set_robot_volume_value(volume.toInt())
     }
-
+    fun createPythonString(value: String): CPointer<PyObject>? {
+        return memScoped {
+            val cString = value.cstr.ptr
+            // 调用 Python C API 创建 PyObject
+            Py_BuildValue
+            pyApi.Py_BuildValue("s", cString)
+        }
+    }
     /**
      * 处理语言设置命令
      */
     private fun handleLanguageCommand(command: Map<String, Any>) {
         val params = command["params"] as? Map<String, Any> ?: return
         val language = params["value"] as? String ?: return
-        set_robot_language(language)
+        memScoped {
+            // 将 CPointer<PyObject>? 转为 CValuesRef<PyObject>
+            val cValuesRef: CValuesRef<PyObject> = createPythonString(language)
+            // 调用需要 CValuesRef<PyObject> 参数的 C 函数
+            set_robot_language(cValuesRef,0)
+        }
+
     }
 
     /**
@@ -126,17 +143,17 @@ class YanConnection {
         val status = mutableMapOf<String, Any>()
 
         // 获取电池信息
-        get_robot_battery_info()?.let { batteryInfo ->
+        get_robot_battery_info(0)?.let { batteryInfo ->
             status["battery"] = batteryInfo
         }
 
         // 获取LED状态
-        get_robot_led()?.let { ledInfo ->
+        get_robot_led(0)?.let { ledInfo ->
             status["led"] = ledInfo
         }
 
         // 获取音量
-        get_robot_volume()?.let { volume ->
+        get_robot_volume(0)?.let { volume ->
             status["volume"] = volume
         }
 
@@ -144,8 +161,3 @@ class YanConnection {
         statusCallback?.invoke(status)
     }
 }
-
-/**
- * 连接异常
- */
-class ConnectionException(message: String, cause: Throwable? = null) : Exception(message, cause)

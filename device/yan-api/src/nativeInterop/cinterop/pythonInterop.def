@@ -1,4 +1,4 @@
 language = C++
-headers = YanAPI.h
+headers = YanAPI.h Python.h
 linkerOpts = -L../cpp/build/ -lyanapi  -lstdc++
 ---
