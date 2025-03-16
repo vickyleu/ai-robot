@@ -23,26 +23,13 @@ kotlin {
             val pythonInterop by creating {
                 defFile("src/nativeInterop/cinterop/pythonInterop.def")
                 packageName("com.airobot.pythoninterop")
-                // 获取Python头文件目录
-                val pythonInclude = providers.exec {
-                    commandLine("python3", "-c", "import sysconfig; print(sysconfig.get_path('include'))")
-                }.standardOutput.asText.get().trim()
-                /*headers((file("src/nativeInterop/cpp").absolutePath+"/YanAPI.h").apply {
-                    // 如果YanAPI头文件不存在，抛出异常
-                    if (!file(this).exists()) {
-                        throw GradleException("YanAPI头文件未找到，请确保C++代码已生成。${this}")
-                    }
-                },
-                    "$pythonInclude/Python.h".apply {
-                        // 如果Python头文件不存在，抛出异常
-                        println("Python头文件路径：$this")
-                        if (!file(this).exists()) {
-                            throw GradleException("Python头文件未找到，请确保Python已安装并在PATH中。${this}")
-                        }
-                    }
-                )*/
-//                // 包含项目自身的头文件目录和Python系统头文件
-                includeDirs(file("src/nativeInterop/cpp").absolutePath,pythonInclude)
+                includeDirs(
+                    file("src/nativeInterop/cpp").absolutePath,
+                    file("src/nativeInterop/cpp/include/python3.7m").absolutePath,
+                    file("src/nativeInterop/cpp/include/python3.7m/internal").absolutePath,
+                    file("src/nativeInterop/cpp/include").absolutePath,
+                )
+                compilerOpts("-DCYTHON_EXTERN_C=")
 //                compilerOpts("-I${file("src/nativeInterop/cpp").absolutePath}")
             }
         }
@@ -70,7 +57,7 @@ kotlin {
         doLast {
             val output = ByteArrayOutputStream()
             val result = exec {
-                commandLine("cmake", "--version")
+                commandLine("/usr/local/bin/cmake", "--version")
                 standardOutput = output
                 // 如果 cmake 不存在，不要让任务直接失败，后面我们自己抛异常
                 isIgnoreExitValue = true
@@ -86,19 +73,11 @@ kotlin {
         group = "小工具"
         dependsOn("checkCMake")
         workingDir = file("src/nativeInterop/cpp")
-        // 获取 Python 环境路径
-        val pythonPath = providers.exec {
-            commandLine("python3", "-c", "import sysconfig; print(sysconfig.get_path('include'))")
-        }.standardOutput.asText.get().trim()
-        val pythonLibPath = providers.exec {
-            commandLine("python3", "-c", "import sysconfig; print(sysconfig.get_config_var('LIBDIR'))")
-        }.standardOutput.asText.get().trim()
         // 向CMake传递Python路径参数
-        commandLine("cmake",
+        commandLine("/usr/local/bin/cmake",
             "-S", ".",
             "-B", "build",
-            "-DPYTHON_INCLUDE_DIR=$pythonPath",
-            "-DPYTHON_LIBRARY=$pythonLibPath"
+            "-DCMAKE_TOOLCHAIN_FILE=${file("src/nativeInterop/cpp/toolchain.cmake").absolutePath}",
         )
     }
 // 定义一个任务，用于调用 CMake 编译 native 库
@@ -107,13 +86,7 @@ kotlin {
         dependsOn("configureNativeLib")
         workingDir(file("src/nativeInterop/cpp"))// 指定 CMakeLists.txt 所在目录
 // 获取 Python 环境路径
-        val pythonPath = providers.exec {
-            commandLine("python3", "-c", "import sysconfig; print(sysconfig.get_path('include'))")
-        }.standardOutput.asText.get().trim()
-        val pythonLibPath = providers.exec {
-            commandLine("python3", "-c", "import sysconfig; print(sysconfig.get_config_var('LIBDIR'))")
-        }.standardOutput.asText.get().trim()
-        commandLine("cmake", "--build", "build")
+        commandLine("/usr/local/bin/cmake", "--build", "build")
     }
 
 // 让 Kotlin/Native 编译任务依赖 buildNativeLib 任务

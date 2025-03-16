@@ -1,9 +1,11 @@
 package com.airobot.device.yanapi
 
 import com.airobot.pythoninterop.BT
+import com.airobot.pythoninterop.get_ip_address
 import com.airobot.pythoninterop.Py_tp_init
 import kotlinx.cinterop.ExperimentalForeignApi
-
+//import com.airobot.pythoninterop.PyObject
+//import com.airobot.pythoninterop
 /**
  * YAN设备连接类
  *
@@ -24,7 +26,7 @@ class YanConnection {
         try {
             // 初始化YAN API
             isConnected = true
-            val initResult = yan_api_init(null)  // 根据接口签名传入正确参数
+            val initResult = abc_yan_api_init(null)  // 根据接口签名传入正确参数
             println("yan_api_init result: $initResult")
             // 启动状态监控
             monitorDeviceStatus()
