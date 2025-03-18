@@ -3,7 +3,6 @@
 package com.airobot.device.yanapi
 
 import com.airobot.pythoninterop.*
-import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.cinterop.*
 
 
@@ -104,17 +103,10 @@ class YanConnection {
      */
     private fun handleLedCommand(command: Map<String, Any>) {
         val params = command["params"] as? Map<String, Any> ?: return
+        val type = params["type"] as? String ?: return
         val color = params["color"] as? String ?: return
         val mode = params["mode"] as? String ?: return
-        //public external fun
-        // set_robot_led(arg0: kotlinx.cinterop.CValuesRef<com.airobot.pythoninterop._object>?,
-        // arg1: kotlinx.cinterop.CValuesRef<com.airobot.pythoninterop._object>?,
-        // arg2: kotlinx.cinterop.CValuesRef<com.airobot.pythoninterop._object>?,
-        // __pyx_skip_dispatch: kotlin.Int):
-        // kotlinx.cinterop.CPointer<com.airobot.pythoninterop._object>? { /* compiled code */ }
-        //__PYX_EXTERN_C PyObject *set_robot_led(PyObject *, PyObject *, PyObject *, int __pyx_skip_dispatch);
-        //set_robot_led(type: str, color: str, mode: str)
-        set_robot_led(color, mode, null)
+        set_robot_led(type.toRef(), color.toRef(), mode.toRef(), 0,)
     }
 
     /**
@@ -123,15 +115,11 @@ class YanConnection {
     private fun handleVolumeCommand(command: Map<String, Any>) {
         val params = command["params"] as? Map<String, Any> ?: return
         val volume = params["value"] as? Number ?: return
-        set_robot_volume_value(volume.toInt())
+        set_robot_volume_value(volume.toInt().toRef(),0)
     }
-    fun createPythonString(value: String): CPointer<PyObject>? {
-        return memScoped {
-            val cString = value.cstr.ptr
-            // 调用 Python C API 创建 PyObject
-            return Py_BuildValue("s", cString)
-        }
-    }
+
+
+
     /**
      * 处理语言设置命令
      */
@@ -139,10 +127,8 @@ class YanConnection {
         val params = command["params"] as? Map<String, Any> ?: return
         val language = params["value"] as? String ?: return
         memScoped {
-            // 将 CPointer<PyObject>? 转为 CValuesRef<PyObject>
-            val cValuesRef: CValuesRef<PyObject> = createPythonString(language)
             // 调用需要 CValuesRef<PyObject> 参数的 C 函数
-            set_robot_language(cValuesRef,0)
+            set_robot_language(language.toRef(),0)
         }
 
     }
