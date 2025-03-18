@@ -23,11 +23,12 @@ kotlin {
             val pythonInterop by creating {
                 defFile("src/nativeInterop/cinterop/pythonInterop.def")
                 packageName("com.airobot.pythoninterop")
+                // 从上面四个目录中查找所有的头文件,添加到headers.files
                 includeDirs(
-                    file("src/nativeInterop/cpp").absolutePath,
-                    file("src/nativeInterop/cpp/include/python3.7m").absolutePath,
-                    file("src/nativeInterop/cpp/include/python3.7m/internal").absolutePath,
-                    file("src/nativeInterop/cpp/include").absolutePath,
+                    file("src/nativeInterop/cpp"),
+                    file("src/nativeInterop/cpp/include/python3.7m"),
+                    file("src/nativeInterop/cpp/include/python3.7m/internal"),
+                    file("src/nativeInterop/cpp/include")
                 )
                 compilerOpts("-DCYTHON_EXTERN_C=")
 //                compilerOpts("-I${file("src/nativeInterop/cpp").absolutePath}")
@@ -44,10 +45,10 @@ kotlin {
         linuxArm64Main.dependencies {
             // 平台特定依赖
         }
-        val nativeInterop by creating{
+        val nativeInterop by creating {
             this.kotlin.srcDir("src/nativeInterop/cinterop")
         }
-        val pythonMain by creating{
+        val pythonMain by creating {
             this.kotlin.srcDir("src/pythonMain/python")
         }
     }
@@ -74,19 +75,22 @@ kotlin {
         dependsOn("checkCMake")
         workingDir = file("src/nativeInterop/cpp")
         // 向CMake传递Python路径参数
-        commandLine("/usr/local/bin/cmake",
+        commandLine(
+            "/usr/local/bin/cmake",
             "-S", ".",
             "-B", "build",
             "-DCMAKE_TOOLCHAIN_FILE=${file("src/nativeInterop/cpp/toolchain.cmake").absolutePath}",
         )
     }
 // 定义一个任务，用于调用 CMake 编译 native 库
-    tasks.create<Exec>("buildNativeLib"){
+    tasks.create<Exec>("buildNativeLib") {
         group = "小工具"
         dependsOn("configureNativeLib")
         workingDir(file("src/nativeInterop/cpp"))// 指定 CMakeLists.txt 所在目录
 // 获取 Python 环境路径
-        commandLine("/usr/local/bin/cmake", "--build", "build")
+        commandLine("/usr/local/bin/cmake",
+            "--build", "build",
+        )
     }
 
 // 让 Kotlin/Native 编译任务依赖 buildNativeLib 任务
@@ -95,13 +99,6 @@ kotlin {
     }
 }
 
-
-// 添加Python任务
-val runPython by tasks.creating(jython.JythonTask::class) {
-    group = "小工具"
-    description = "Run the YanAPI Python script"
-    script(file("src/pythonMain/python/YanAPI.py"))
-}
 
 // 添加Cython任务
 val cythonize by tasks.creating {
@@ -127,7 +124,18 @@ val cythonize by tasks.creating {
         // 执行Cython命令，生成C++代码和头文件
         exec {
             // "--cplus",
-            commandLine("python3", "-m", "cython", "--embed", "--force", "--3str",   "-o", "src/nativeInterop/cpp/YanAPI.c", "src/pythonMain/python/YanAPI.pyx")
+            commandLine(
+                "python3",
+                "-m",
+                "cython",
+                "--cplus",
+                "--embed",
+                "--force",
+                "--3str",
+                "-o",
+                "src/nativeInterop/cpp/YanAPI.cpp",
+                "src/pythonMain/python/YanAPI.pyx"
+            )
         }
     }
 }

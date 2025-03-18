@@ -1,4 +1,394 @@
 language = C++
-headers = YanAPI.h Python.h
-linkerOpts = -L../cpp/build/ -lyanapi  -lstdc++
+
+headers = YanAPI.h \
+ longobject.h  \
+expat.h ncurses.h curses.h unctrl.h expat_external.h \
+    \
+Python.h \
+Python-ast.h abstract.h accu.h  asdl.h \
+bitset.h  bltinmodule.h boolobject.h  bytearrayobject.h  bytes_methods.h  bytesobject.h \
+cellobject.h  ceval.h classobject.h  code.h  codecs.h compile.h complexobject.h context.h \
+datetime.h  descrobject.h  dictobject.h dtoa.h dynamic_annotations.h \
+enumobject.h errcode.h eval.h fileobject.h fileutils.h \
+floatobject.h frameobject.h funcobject.h genobject.h   grammar.h import.h \
+intrcheck.h \
+iterobject.h \
+listobject.h \
+longintrepr.h \
+marshal.h \
+internal/mem.h \
+memoryobject.h \
+metagrammar.h \
+methodobject.h \
+modsupport.h \
+moduleobject.h \
+namespaceobject.h \
+node.h \
+ast.h \
+object.h \
+objimpl.h \
+odictobject.h \
+opcode.h \
+osdefs.h \
+osmodule.h \
+parsetok.h \
+patchlevel.h \
+pgen.h \
+pgenheaders.h \
+py_curses.h \
+pyarena.h \
+pyatomic.h \
+pycapsule.h \
+pyconfig.h \
+pyctype.h \
+pydebug.h \
+pydtrace.h \
+pyerrors.h \
+pyexpat.h \
+pyfpe.h \
+pyhash.h \
+pylifecycle.h \
+pymacconfig.h \
+pymacro.h \
+pymath.h \
+pymem.h \
+pyport.h \
+pystate.h \
+pystrcmp.h \
+pystrhex.h \
+pystrtod.h \
+pythonrun.h \
+pythread.h \
+pytime.h \
+rangeobject.h \
+setobject.h \
+sliceobject.h \
+structmember.h \
+structseq.h \
+symtable.h \
+sysmodule.h \
+token.h \
+traceback.h \
+tupleobject.h \
+typeslots.h \
+ucnhash.h \
+unicodeobject.h \
+warnings.h \
+weakrefobject.h
+
+#compilerOpts = -DPy_BUILD_CORE
+linkerOpts = -Lbuild/libyanapi.so -lyanapi\
+    -Lbuild/libpython3.so -lpython3
+
+headerFilter =  YanAPI.h   Python.h unicodeobject.h longobject.h tupleobject.h weakrefobject.h rangeobject.h  setobject.h  sliceobject.h \
+                           moduleobject.h namespaceobject.h object.h  odictobject.h \
+                           bitset.h  boolobject.h  bytearrayobject.h  bytesobject.h \
+                           cellobject.h   classobject.h  code.h  codecs.h compile.h complexobject.h context.h \
+                           datetime.h  descrobject.h  dictobject.h enumobject.h errcode.h eval.h fileobject.h fileutils.h \
+                           floatobject.h frameobject.h funcobject.h genobject.h  grammar.h import.h \
+                           intrcheck.h iterobject.h listobject.h
 ---
+__PYX_EXTERN_C PyObject *get_ip_address(PyObject *);
+__PYX_EXTERN_C PyObject *yan_api_init(PyObject *);
+__PYX_EXTERN_C PyObject *get_robot_battery_info(int __pyx_skip_dispatch);
+__PYX_EXTERN_C PyObject *get_robot_battery_value(int __pyx_skip_dispatch);
+__PYX_EXTERN_C PyObject *get_robot_fall_management_state(int __pyx_skip_dispatch);
+__PYX_EXTERN_C PyObject *set_robot_fall_management_state(PyObject *, int __pyx_skip_dispatch);
+__PYX_EXTERN_C PyObject *get_robot_language(int __pyx_skip_dispatch);
+__PYX_EXTERN_C PyObject *set_robot_language(PyObject *, int __pyx_skip_dispatch);
+__PYX_EXTERN_C PyObject *get_button_led_color_value(int __pyx_skip_dispatch);
+__PYX_EXTERN_C PyObject *get_button_led_mode_value(int __pyx_skip_dispatch);
+__PYX_EXTERN_C PyObject *get_eye_led_color_value(int __pyx_skip_dispatch);
+__PYX_EXTERN_C PyObject *get_eye_led_mode_value(int __pyx_skip_dispatch);
+__PYX_EXTERN_C PyObject *get_robot_led(int __pyx_skip_dispatch);
+__PYX_EXTERN_C PyObject *set_robot_led(PyObject *, PyObject *, PyObject *, int __pyx_skip_dispatch);
+__PYX_EXTERN_C PyObject *sync_set_led(PyObject *, PyObject *, PyObject *, int __pyx_skip_dispatch);
+__PYX_EXTERN_C PyObject *get_robot_version_info_value(PyObject *, int __pyx_skip_dispatch);
+__PYX_EXTERN_C PyObject *get_robot_version_info(PyObject *, int __pyx_skip_dispatch);
+__PYX_EXTERN_C PyObject *get_robot_mode(int __pyx_skip_dispatch);
+__PYX_EXTERN_C PyObject *get_robot_volume_value(int __pyx_skip_dispatch);
+__PYX_EXTERN_C PyObject *get_robot_volume(int __pyx_skip_dispatch);
+__PYX_EXTERN_C PyObject *set_robot_volume_value(PyObject *, int __pyx_skip_dispatch);
+__PYX_EXTERN_C PyObject *set_robot_volume(PyObject *, int __pyx_skip_dispatch);
+__PYX_EXTERN_C PyObject *get_joystick_buttons_list(int __pyx_skip_dispatch);
+__PYX_EXTERN_C PyObject *get_joystick_buttons_list_value(int __pyx_skip_dispatch);
+__PYX_EXTERN_C PyObject *delete_media_music(PyObject *, int __pyx_skip_dispatch);
+__PYX_EXTERN_C PyObject *get_media_music_state(int __pyx_skip_dispatch);
+__PYX_EXTERN_C PyObject *upload_media_music(PyObject *, int __pyx_skip_dispatch);
+__PYX_EXTERN_C PyObject *stop_play_music(int __pyx_skip_dispatch);
+__PYX_EXTERN_C PyObject *get_media_music_list(int __pyx_skip_dispatch);
+__PYX_EXTERN_C PyObject *delete_motion(PyObject *, int __pyx_skip_dispatch);
+__PYX_EXTERN_C PyObject *get_current_motion_play_state(int __pyx_skip_dispatch);
+__PYX_EXTERN_C PyObject *get_current_layer_motion_play_state(int __pyx_skip_dispatch);
+__PYX_EXTERN_C PyObject *upload_motion(PyObject *, int __pyx_skip_dispatch);
+__PYX_EXTERN_C PyObject *get_motion_list_value(int __pyx_skip_dispatch);
+__PYX_EXTERN_C PyObject *get_motion_list(int __pyx_skip_dispatch);
+__PYX_EXTERN_C PyObject *get_motion_gait_state(int __pyx_skip_dispatch);
+__PYX_EXTERN_C PyObject *exit_motion_gait(int __pyx_skip_dispatch);
+__PYX_EXTERN_C PyObject *get_aprilTag_recognition_status(int __pyx_skip_dispatch);
+__PYX_EXTERN_C PyObject *stop_aprilTag_recognition(int __pyx_skip_dispatch);
+__PYX_EXTERN_C PyObject *get_QR_code_recognition_status(int __pyx_skip_dispatch);
+__PYX_EXTERN_C PyObject *stop_QR_code_recognition(int __pyx_skip_dispatch);
+__PYX_EXTERN_C PyObject *get_object_tracking_status(int __pyx_skip_dispatch);
+__PYX_EXTERN_C PyObject *stop_object_tracking(int __pyx_skip_dispatch);
+__PYX_EXTERN_C PyObject *get_servo_angle_value(PyObject *, int __pyx_skip_dispatch);
+__PYX_EXTERN_C PyObject *get_servos_angles(PyObject *, int __pyx_skip_dispatch);
+__PYX_EXTERN_C PyObject *set_servos_angles_layers(PyObject *, int __pyx_skip_dispatch);
+__PYX_EXTERN_C PyObject *get_servos_mode(PyObject *, int __pyx_skip_dispatch);
+__PYX_EXTERN_C PyObject *set_servos_mode(PyObject *, PyObject *, int __pyx_skip_dispatch);
+__PYX_EXTERN_C PyObject *sensor_calibration(PyObject *, int __pyx_skip_dispatch);
+__PYX_EXTERN_C PyObject *get_sensors_list_value(int __pyx_skip_dispatch);
+__PYX_EXTERN_C PyObject *get_sensors_list(int __pyx_skip_dispatch);
+__PYX_EXTERN_C PyObject *get_sensors_environment_value(int __pyx_skip_dispatch);
+__PYX_EXTERN_C PyObject *get_sensors_environment(int __pyx_skip_dispatch);
+__PYX_EXTERN_C PyObject *get_sensors_gyro(int __pyx_skip_dispatch);
+__PYX_EXTERN_C PyObject *get_sensors_infrared_value(int __pyx_skip_dispatch);
+__PYX_EXTERN_C PyObject *get_sensors_pressure_value(int __pyx_skip_dispatch);
+__PYX_EXTERN_C PyObject *get_sensors_touch_value(int __pyx_skip_dispatch);
+__PYX_EXTERN_C PyObject *get_sensors_ultrasonic_value(int __pyx_skip_dispatch);
+__PYX_EXTERN_C PyObject *stop_voice_asr(int __pyx_skip_dispatch);
+__PYX_EXTERN_C PyObject *get_voice_asr_state(int __pyx_skip_dispatch);
+__PYX_EXTERN_C PyObject *sync_do_voice_asr_value(int __pyx_skip_dispatch);
+__PYX_EXTERN_C PyObject *sync_do_voice_asr(int __pyx_skip_dispatch);
+__PYX_EXTERN_C PyObject *delete_voice_asr_offline_syntax(PyObject *, int __pyx_skip_dispatch);
+__PYX_EXTERN_C PyObject *get_voice_asr_offline_syntax(PyObject *, int __pyx_skip_dispatch);
+__PYX_EXTERN_C PyObject *create_voice_asr_offline_syntax(PyObject *, int __pyx_skip_dispatch);
+__PYX_EXTERN_C PyObject *update_voice_asr_offline_syntax(PyObject *, int __pyx_skip_dispatch);
+__PYX_EXTERN_C PyObject *get_voice_asr_offline_syntax_grammars(int __pyx_skip_dispatch);
+__PYX_EXTERN_C PyObject *stop_voice_iat(int __pyx_skip_dispatch);
+__PYX_EXTERN_C PyObject *get_voice_iat(int __pyx_skip_dispatch);
+__PYX_EXTERN_C PyObject *sync_do_voice_iat_value(int __pyx_skip_dispatch);
+__PYX_EXTERN_C PyObject *sync_do_voice_iat(int __pyx_skip_dispatch);
+__PYX_EXTERN_C PyObject *stop_voice_tts(int __pyx_skip_dispatch);
+__PYX_EXTERN_C PyObject *get_visual_task_result(PyObject *, PyObject *, int __pyx_skip_dispatch);
+__PYX_EXTERN_C PyObject *sync_do_face_recognition_value(PyObject *, int __pyx_skip_dispatch);
+__PYX_EXTERN_C PyObject *sync_do_face_recognition(PyObject *, int __pyx_skip_dispatch);
+__PYX_EXTERN_C PyObject *sync_do_gesture_recognition(int __pyx_skip_dispatch);
+__PYX_EXTERN_C PyObject *sync_do_color_recognition(int __pyx_skip_dispatch);
+__PYX_EXTERN_C PyObject *sync_do_object_recognition(int __pyx_skip_dispatch);
+__PYX_EXTERN_C PyObject *do_face_entry(PyObject *, int __pyx_skip_dispatch);
+__PYX_EXTERN_C PyObject *delete_vision_photo(PyObject *, int __pyx_skip_dispatch);
+__PYX_EXTERN_C PyObject *get_vision_photo_list(int __pyx_skip_dispatch);
+__PYX_EXTERN_C PyObject *delete_vision_photo_sample(PyObject *, int __pyx_skip_dispatch);
+__PYX_EXTERN_C PyObject *get_vision_photo_samples(int __pyx_skip_dispatch);
+__PYX_EXTERN_C PyObject *upload_vision_photo_sample(PyObject *, int __pyx_skip_dispatch);
+__PYX_EXTERN_C PyObject *close_vision_stream(int __pyx_skip_dispatch);
+__PYX_EXTERN_C PyObject *get_vision_tags(int __pyx_skip_dispatch);
+__PYX_EXTERN_C PyObject *set_vision_tag(PyObject *, PyObject *, int __pyx_skip_dispatch);
+__PYX_EXTERN_C PyObject *do_visions_visible(PyObject *, PyObject *, int __pyx_skip_dispatch);
+__PYX_EXTERN_C PyObject *show_visions_result(PyObject *, int __pyx_skip_dispatch);
+__PYX_EXTERN_C PyObject *stop_subscribe_motion(PyObject *, int __pyx_skip_dispatch);
+__PYX_EXTERN_C PyObject *stop_subscribe_motion_gait(PyObject *, int __pyx_skip_dispatch);
+__PYX_EXTERN_C PyObject *stop_subscribe_vision(PyObject *, PyObject *, int __pyx_skip_dispatch);
+__PYX_EXTERN_C PyObject *stop_subscribe_voice_asr(PyObject *, int __pyx_skip_dispatch);
+__PYX_EXTERN_C PyObject *stop_subscribe_voice_iat(PyObject *, int __pyx_skip_dispatch);
+__PYX_EXTERN_C PyObject *stop_subscribe_voice_tts(PyObject *, int __pyx_skip_dispatch);
+__PYX_EXTERN_C PyObject *start_subscribe_voice_tts_impl(PyObject *, PyObject *, int __pyx_skip_dispatch);
+__PYX_EXTERN_C PyObject *get_gamepad_keymap(int __pyx_skip_dispatch);
+__PYX_EXTERN_C PyObject *set_gamepad_keymap_impl(enum GamepadKey, PyObject *, int, int __pyx_skip_dispatch);
+__PYX_EXTERN_C PyObject *reset_gamepad_keymap(enum GamepadKey, int __pyx_skip_dispatch);
+
+
+PyAPI_FUNC(int) PyArg_Parse(PyObject *, const char *, ...);
+PyAPI_FUNC(int) PyArg_ParseTuple(PyObject *, const char *, ...);
+PyAPI_FUNC(int) PyArg_ParseTupleAndKeywords(PyObject *, PyObject *,
+                                                  const char *, char **, ...);
+PyAPI_FUNC(int) PyArg_VaParse(PyObject *, const char *, va_list);
+PyAPI_FUNC(int) PyArg_VaParseTupleAndKeywords(PyObject *, PyObject *,
+                                                  const char *, char **, va_list);
+PyAPI_FUNC(int) PyArg_ValidateKeywordArguments(PyObject *);
+PyAPI_FUNC(int) PyArg_UnpackTuple(PyObject *, const char *, Py_ssize_t, Py_ssize_t, ...);
+PyAPI_FUNC(PyObject *) Py_BuildValue(const char *, ...);
+
+
+PyAPI_FUNC(PyObject*) PyType_FromSpec(PyType_Spec*);
+PyAPI_FUNC(PyObject*) PyType_FromSpecWithBases(PyType_Spec*, PyObject*);
+PyAPI_FUNC(void*) PyType_GetSlot(PyTypeObject*, int);
+PyAPI_FUNC(int) PyObject_Print(PyObject *, FILE *, int);
+PyAPI_FUNC(PyObject *) PyObject_Repr(PyObject *);
+PyAPI_FUNC(PyObject *) PyObject_Str(PyObject *);
+PyAPI_FUNC(PyObject *) PyObject_ASCII(PyObject *);
+PyAPI_FUNC(PyObject *) PyObject_Bytes(PyObject *);
+PyAPI_FUNC(PyObject *) PyObject_RichCompare(PyObject *, PyObject *, int);
+PyAPI_FUNC(int) PyObject_RichCompareBool(PyObject *, PyObject *, int);
+PyAPI_FUNC(PyObject *) PyObject_GetAttrString(PyObject *, const char *);
+PyAPI_FUNC(int) PyObject_SetAttrString(PyObject *, const char *, PyObject *);
+PyAPI_FUNC(int) PyObject_HasAttrString(PyObject *, const char *);
+PyAPI_FUNC(PyObject *) PyObject_GetAttr(PyObject *, PyObject *);
+PyAPI_FUNC(int) PyObject_SetAttr(PyObject *, PyObject *, PyObject *);
+PyAPI_FUNC(int) PyObject_HasAttr(PyObject *, PyObject *);
+PyAPI_FUNC(PyObject *) PyObject_SelfIter(PyObject *);
+PyAPI_FUNC(PyObject *) PyObject_GenericGetAttr(PyObject *, PyObject *);
+PyAPI_FUNC(int) PyObject_GenericSetAttr(PyObject *,
+                                              PyObject *, PyObject *);
+PyAPI_FUNC(Py_hash_t) PyObject_Hash(PyObject *);
+PyAPI_FUNC(Py_hash_t) PyObject_HashNotImplemented(PyObject *);
+PyAPI_FUNC(int) PyObject_IsTrue(PyObject *);
+PyAPI_FUNC(int) PyObject_Not(PyObject *);
+PyAPI_FUNC(int) PyCallable_Check(PyObject *);
+
+PyAPI_FUNC(void) PyObject_ClearWeakRefs(PyObject *);
+PyAPI_FUNC(void) PyObject_CallFinalizer(PyObject *);
+PyAPI_FUNC(int) PyObject_CallFinalizerFromDealloc(PyObject *);
+PyAPI_FUNC(PyObject *) PyObject_Dir(PyObject *);
+PyAPI_FUNC(int) Py_ReprEnter(PyObject *);
+PyAPI_FUNC(void) Py_ReprLeave(PyObject *);
+
+
+PyAPI_FUNC(Py_ssize_t) PyUnicode_CopyCharacters(
+    PyObject *to,
+    Py_ssize_t to_start,
+    PyObject *from,
+    Py_ssize_t from_start,
+    Py_ssize_t how_many
+    );
+
+PyAPI_FUNC(Py_ssize_t) PyUnicode_Fill(
+    PyObject *unicode,
+    Py_ssize_t start,
+    Py_ssize_t length,
+    Py_UCS4 fill_char
+    );
+
+PyAPI_FUNC(const char *) PyUnicode_AsUTF8(PyObject *unicode);
+
+PyAPI_FUNC(PyObject*) PyUnicode_FromUnicode(
+    const Py_UNICODE *u,
+    Py_ssize_t size
+    );
+
+PyAPI_FUNC(PyObject*) PyUnicode_FromStringAndSize(
+        const char *u,             /* UTF-8 encoded string */
+        Py_ssize_t size            /* size of buffer */
+    );
+PyAPI_FUNC(PyObject*) PyUnicode_FromString(
+    const char *u              /* UTF-8 encoded string */
+    );
+
+PyAPI_FUNC(PyObject*) PyUnicode_FromKindAndData(
+    int kind,
+    const void *buffer,
+    Py_ssize_t size);
+
+
+
+PyAPI_FUNC(PyObject*) PyUnicode_Substring(
+    PyObject *str,
+    Py_ssize_t start,
+    Py_ssize_t end);
+
+
+
+PyAPI_FUNC(Py_UCS4*) PyUnicode_AsUCS4(
+    PyObject *unicode,
+    Py_UCS4* buffer,
+    Py_ssize_t buflen,
+    int copy_null);
+
+PyAPI_FUNC(Py_UCS4*) PyUnicode_AsUCS4Copy(PyObject *unicode);
+
+
+PyAPI_FUNC(Py_UNICODE *) PyUnicode_AsUnicode(
+    PyObject *unicode           /* Unicode object */
+    );
+
+PyAPI_FUNC(Py_UNICODE *) PyUnicode_AsUnicodeAndSize(
+    PyObject *unicode,          /* Unicode object */
+    Py_ssize_t *size            /* location where to save the length */
+    );
+PyAPI_FUNC(Py_ssize_t) PyUnicode_GetLength(
+    PyObject *unicode
+);
+PyAPI_FUNC(Py_ssize_t) PyUnicode_GetSize(
+    PyObject *unicode           /* Unicode object */
+    ) Py_DEPRECATED(3.3);
+PyAPI_FUNC(Py_UCS4) PyUnicode_ReadChar(
+    PyObject *unicode,
+    Py_ssize_t index
+    );
+PyAPI_FUNC(int) PyUnicode_WriteChar(
+    PyObject *unicode,
+    Py_ssize_t index,
+    Py_UCS4 character
+    );
+PyAPI_FUNC(PyObject *) PyLong_FromLong(long);
+PyAPI_FUNC(PyObject *) PyLong_FromUnsignedLong(unsigned long);
+PyAPI_FUNC(PyObject *) PyLong_FromSize_t(size_t);
+PyAPI_FUNC(PyObject *) PyLong_FromSsize_t(Py_ssize_t);
+PyAPI_FUNC(PyObject *) PyLong_FromDouble(double);
+PyAPI_FUNC(long) PyLong_AsLong(PyObject *);
+PyAPI_FUNC(long) PyLong_AsLongAndOverflow(PyObject *, int *);
+PyAPI_FUNC(Py_ssize_t) PyLong_AsSsize_t(PyObject *);
+PyAPI_FUNC(size_t) PyLong_AsSize_t(PyObject *);
+PyAPI_FUNC(unsigned long) PyLong_AsUnsignedLong(PyObject *);
+PyAPI_FUNC(unsigned long) PyLong_AsUnsignedLongMask(PyObject *);
+PyAPI_FUNC(PyObject *) PyLong_GetInfo(void);
+
+PyAPI_FUNC(double) PyLong_AsDouble(PyObject *);
+PyAPI_FUNC(PyObject *) PyLong_FromVoidPtr(void *);
+PyAPI_FUNC(void *) PyLong_AsVoidPtr(PyObject *);
+
+PyAPI_FUNC(PyObject *) PyDict_New(void);
+PyAPI_FUNC(PyObject *) PyDict_GetItem(PyObject *mp, PyObject *key);
+PyAPI_FUNC(PyObject *) PyDict_GetItemWithError(PyObject *mp, PyObject *key);
+PyAPI_FUNC(PyObject *) PyDict_SetDefault(
+    PyObject *mp, PyObject *key, PyObject *defaultobj);
+PyAPI_FUNC(int) PyDict_SetItem(PyObject *mp, PyObject *key, PyObject *item);
+PyAPI_FUNC(int) PyDict_DelItem(PyObject *mp, PyObject *key);
+PyAPI_FUNC(void) PyDict_Clear(PyObject *mp);
+PyAPI_FUNC(PyObject *) PyDict_Keys(PyObject *mp);
+PyAPI_FUNC(PyObject *) PyDict_Values(PyObject *mp);
+PyAPI_FUNC(PyObject *) PyDict_Items(PyObject *mp);
+PyAPI_FUNC(Py_ssize_t) PyDict_Size(PyObject *mp);
+PyAPI_FUNC(PyObject *) PyDict_Copy(PyObject *mp);
+PyAPI_FUNC(int) PyDict_Contains(PyObject *mp, PyObject *key);
+PyAPI_FUNC(void) PyDict_Clear(PyObject *mp);
+PyAPI_FUNC(int) PyDict_Next(
+    PyObject *mp, Py_ssize_t *pos, PyObject **key, PyObject **value);
+PyAPI_FUNC(PyObject *) PyObject_GenericGetDict(PyObject *, void *);
+PyAPI_FUNC(int) PyDict_ClearFreeList(void);
+PyAPI_FUNC(int) PyDict_Update(PyObject *mp, PyObject *other);
+PyAPI_FUNC(int) PyDict_MergeFromSeq2(PyObject *d,
+                                           PyObject *seq2,
+                                           int override);
+PyAPI_FUNC(PyObject *) PyDict_GetItemString(PyObject *dp, const char *key);
+PyAPI_FUNC(int) PyDict_SetItemString(PyObject *dp, const char *key, PyObject *item);
+PyAPI_FUNC(int) PyDict_DelItemString(PyObject *dp, const char *key);
+PyAPI_FUNC(int) PyDict_Merge(PyObject *mp,
+                                   PyObject *other,
+                                   int override);
+PyAPI_FUNC(PyObject *) PyLong_FromLongLong(long long);
+PyAPI_FUNC(PyObject *) PyLong_FromUnsignedLongLong(unsigned long long);
+PyAPI_FUNC(long long) PyLong_AsLongLong(PyObject *);
+PyAPI_FUNC(unsigned long long) PyLong_AsUnsignedLongLong(PyObject *);
+PyAPI_FUNC(unsigned long long) PyLong_AsUnsignedLongLongMask(PyObject *);
+PyAPI_FUNC(long long) PyLong_AsLongLongAndOverflow(PyObject *, int *);
+
+PyAPI_FUNC(PyObject *) PyLong_FromString(const char *, char **, int);
+PyAPI_FUNC(PyObject *) PyLong_FromUnicode(Py_UNICODE*, Py_ssize_t, int) Py_DEPRECATED(3.3);
+PyAPI_FUNC(PyObject *) PyLong_FromUnicodeObject(PyObject *u, int base);
+
+PyAPI_FUNC(void) PyMethod_Fini(void);
+PyAPI_FUNC(void) PyFrame_Fini(void);
+PyAPI_FUNC(void) PyCFunction_Fini(void);
+PyAPI_FUNC(void) PyDict_Fini(void);
+PyAPI_FUNC(void) PyTuple_Fini(void);
+PyAPI_FUNC(void) PyList_Fini(void);
+PyAPI_FUNC(void) PySet_Fini(void);
+PyAPI_FUNC(void) PyBytes_Fini(void);
+PyAPI_FUNC(void) PyByteArray_Fini(void);
+PyAPI_FUNC(void) PyFloat_Fini(void);
+PyAPI_FUNC(void) PyOS_FiniInterrupts(void);
+PyAPI_FUNC(void) PySlice_Fini(void);
+PyAPI_FUNC(void) PyAsyncGen_Fini(void);
+
+PyAPI_FUNC(PyOS_sighandler_t) PyOS_getsig(int);
+PyAPI_FUNC(PyOS_sighandler_t) PyOS_setsig(int, PyOS_sighandler_t);
+
+PyAPI_FUNC(void) Py_Initialize(void);
+PyAPI_FUNC(void) Py_InitializeEx(int);
+PyAPI_FUNC(void) Py_Finalize(void);
+PyAPI_FUNC(int) Py_FinalizeEx(void);
+PyAPI_FUNC(int) Py_IsInitialized(void);
+PyAPI_FUNC(PyThreadState *) Py_NewInterpreter(void);
+PyAPI_FUNC(void) Py_EndInterpreter(PyThreadState *);

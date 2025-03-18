@@ -29,11 +29,16 @@ class YanConnection {
         try {
             // 初始化YAN API
             isConnected = true
-//            PyInit_YanAPI()
-            initResult = yan_api_init(null)  // 根据接口签名传入正确参数
-            println("yan_api_init result: $initResult")
-            // 启动状态监控
-            monitorDeviceStatus()
+            memScoped {
+                val ip = "192.168.1.1"
+                val pyIp: PyUnicodeObject = PyUnicodeObject(ip.cstr.ptr.rawValue)
+                // 调用 yan_api_init，传入 pyIp（类型会自动转换为 CValuesRef<_object>）
+                initResult =  yan_api_init(pyIp.reinterpret<PyObject>().ptr) // 根据接口签名传入正确参数
+                // 此时 ret 是返回的 PyObject*，可根据需要进行后续处理
+                println("yan_api_init result: $initResult")
+                // 启动状态监控
+                monitorDeviceStatus()
+            }
         } catch (e: Exception) {
             throw ConnectionException("连接设备失败: ${e.message}", e)
         }
@@ -101,6 +106,14 @@ class YanConnection {
         val params = command["params"] as? Map<String, Any> ?: return
         val color = params["color"] as? String ?: return
         val mode = params["mode"] as? String ?: return
+        //public external fun
+        // set_robot_led(arg0: kotlinx.cinterop.CValuesRef<com.airobot.pythoninterop._object>?,
+        // arg1: kotlinx.cinterop.CValuesRef<com.airobot.pythoninterop._object>?,
+        // arg2: kotlinx.cinterop.CValuesRef<com.airobot.pythoninterop._object>?,
+        // __pyx_skip_dispatch: kotlin.Int):
+        // kotlinx.cinterop.CPointer<com.airobot.pythoninterop._object>? { /* compiled code */ }
+        //__PYX_EXTERN_C PyObject *set_robot_led(PyObject *, PyObject *, PyObject *, int __pyx_skip_dispatch);
+        //set_robot_led(type: str, color: str, mode: str)
         set_robot_led(color, mode, null)
     }
 
@@ -116,8 +129,7 @@ class YanConnection {
         return memScoped {
             val cString = value.cstr.ptr
             // 调用 Python C API 创建 PyObject
-            Py_BuildValue
-            pyApi.Py_BuildValue("s", cString)
+            return Py_BuildValue("s", cString)
         }
     }
     /**

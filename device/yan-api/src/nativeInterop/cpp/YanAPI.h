@@ -57,17 +57,12 @@ enum GamepadKey {
     #warning Please do not define the '__PYX_EXTERN_C' macro externally. Use 'CYTHON_EXTERN_C' instead.
     #endif
 #else
-  #ifdef __cplusplus
-    #define __PYX_EXTERN_C extern "C"
-  #else
-    #define __PYX_EXTERN_C extern
-  #endif
+    #define __PYX_EXTERN_C extern "C++"
 #endif
 
 #ifndef DL_IMPORT
   #define DL_IMPORT(_T) _T
 #endif
-
 
 __PYX_EXTERN_C PyObject *get_ip_address(PyObject *);
 __PYX_EXTERN_C PyObject *yan_api_init(PyObject *);
