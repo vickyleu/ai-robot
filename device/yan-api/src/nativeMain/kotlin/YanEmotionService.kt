@@ -3,7 +3,6 @@ package com.airobot.device.yanapi
 import com.airobot.pythoninterop.*
 import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.cinterop.*
-import com.airobot.pythoninterop.*
 /**
  * YAN设备情感服务
  *
@@ -11,55 +10,24 @@ import com.airobot.pythoninterop.*
  */
 @OptIn(ExperimentalForeignApi::class)
 class YanEmotionService {
-    /**
-     * 设置表情
-     *
-     * @param emotion 表情名称，如"happy", "sad", "angry"等
-     * @return 操作是否成功
-     */
-    fun setEmotion(emotion: String): Boolean {
-        try {
-            memScoped {
-                val pyEmotion = PyUnicodeObject(emotion.cstr.ptr.rawValue)
-                val result = set_robot_emotion(pyEmotion.reinterpret<PyObject>().ptr)
-                return result != null && PyObject_IsTrue(result) == 1
-            }
-        } catch (e: Exception) {
-            return false
-        }
-    }
-
-    /**
-     * 获取当前表情
-     *
-     * @return 当前表情名称，失败返回null
-     */
-    fun getCurrentEmotion(): String? {
-        try {
-            val result = get_robot_emotion()
-            if (result != null) {
-                val pyStr = PyUnicode_AsUTF8(result)
-                return pyStr?.toKString()
-            }
-            return null
-        } catch (e: Exception) {
-            return null
-        }
-    }
+    // 注意：set_robot_emotion和get_robot_emotion函数在YanAPI.h中不存在，已移除相关方法
 
     /**
      * 播放动作
+     * 
+     * 注意：YanAPI.h中没有直接的动作播放方法
+     * 此方法可以通过YanSkillManager中的方法来实现
      *
      * @param action 动作名称
      * @return 操作是否成功
      */
     fun playAction(action: String): Boolean {
+        // 由于YanAPI.h中没有直接的动作播放方法
+        // 实际应用中，可以通过获取动作列表并检查是否存在该动作，然后使用其他API来播放
         try {
-            memScoped {
-                val pyAction = PyUnicodeObject(action.cstr.ptr.rawValue)
-                val result = play_robot_action(pyAction.reinterpret<PyObject>().ptr)
-                return result != null && PyObject_IsTrue(result) == 1
-            }
+            // 这里可以调用YanSkillManager中的方法
+            // 暂时返回false，需要根据实际需求实现
+            return false
         } catch (e: Exception) {
             return false
         }
@@ -67,12 +35,15 @@ class YanEmotionService {
 
     /**
      * 停止当前动作
+     * 
+     * 注意：YanAPI.h中有exit_motion_gait方法可以用来停止动作
      *
      * @return 操作是否成功
      */
     fun stopAction(): Boolean {
         try {
-            val result = stop_robot_action()
+            // 使用exit_motion_gait方法来停止动作
+            val result = exit_motion_gait(0)
             return result != null && PyObject_IsTrue(result) == 1
         } catch (e: Exception) {
             return false
@@ -82,28 +53,35 @@ class YanEmotionService {
     /**
      * 获取可用表情列表
      *
-     * @return 表情列表，失败返回空列表
+     * 注意：get_available_emotions函数在YanAPI.h中不存在
+     * 此方法保留为空实现，以便将来可能的扩展
+     *
+     * @return 表情列表，当前返回空列表
      */
     fun getAvailableEmotions(): List<String> {
+        // 由于YanAPI.h中不存在获取表情列表的函数
+        // 返回空列表，需要根据实际API实现
+        return emptyList()
+    }
+    
+    /**
+     * 播放动画
+     *
+     * 注意：YanAPI.h中没有直接的动画播放方法
+     * 此方法可以通过调用其他可用API来实现
+     *
+     * @param name 动画名称
+     * @return 操作是否成功
+     */
+    fun playAnimation(name: String): Boolean {
+        // 由于YanAPI.h中没有直接的动画播放方法
+        // 实际应用中，可以通过获取动作列表并检查是否存在该动作，然后使用其他API来播放
         try {
-            val result = get_available_emotions()
-            if (result != null) {
-                val emotions = mutableListOf<String>()
-                val size = PyList_Size(result)
-                
-                for (i in 0 until size) {
-                    val item = PyList_GetItem(result, i)
-                    if (item != null) {
-                        val pyStr = PyUnicode_AsUTF8(item)
-                        pyStr?.toKString()?.let { emotions.add(it) }
-                    }
-                }
-                
-                return emotions
-            }
-            return emptyList()
+            // 这里可以调用playAction或YanSkillManager中的方法
+            // 暂时返回false，需要根据实际需求实现
+            return false
         } catch (e: Exception) {
-            return emptyList()
+            return false
         }
     }
 }

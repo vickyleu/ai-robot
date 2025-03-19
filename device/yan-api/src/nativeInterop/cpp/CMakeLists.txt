@@ -23,9 +23,10 @@ set(PYTHON_INCLUDE_DIR "${CMAKE_SOURCE_DIR}/include/python3.7m")
 set(PYTHON_LIBRARY "${CMAKE_SOURCE_DIR}/libpython3.so")
 
 # 添加库和头文件 --------------------------------------------
-add_library(yanapi SHARED YanAPI.cpp)
+add_library(yanapi SHARED YanAPI.cpp python_export.c)
 
 target_include_directories(yanapi PRIVATE
+        ${CMAKE_SOURCE_DIR}
         ${PYTHON_INCLUDE_DIR}
         ${CMAKE_SOURCE_DIR}/include
 )

@@ -25,7 +25,6 @@ import cv2
 from multiprocessing import Process
 from enum import Enum, unique
 
-
 basic_url = "http://127.0.0.1:9090/v1/"
 ip = "127.0.0.1"
 headers = {'Content-Type': 'application/json'}
@@ -44,10 +43,10 @@ cdef public  yan_api_init(robot_ip: str):
     """
     global basic_url
     global ip
-    basic_url = "http://"+robot_ip+":9090/v1/"
+    basic_url = "http://" + robot_ip + ":9090/v1/"
     ip = robot_ip
-    logging.basicConfig(level=logging.ERROR,format="%(asctime)s %(funcName)s %(levelname)s %(message)s",datefmt = '%Y-%m-%d  %H:%M:%S %a')
-
+    logging.basicConfig(level=logging.ERROR, format="%(asctime)s %(funcName)s %(levelname)s %(message)s",
+                        datefmt='%Y-%m-%d  %H:%M:%S %a')
 
 cpdef public  get_robot_battery_info():
     """获得机器人电量信息
@@ -57,17 +56,17 @@ cpdef public  get_robot_battery_info():
            e.g::
 
                 {
-                    code:integer (int32)返回码，0表示正常
+                    code:integer (int32)返回码，0表示正常
                     data:
-                    {
-                        voltage: integer   电池电压(单位mv)
-                        charging: integer  充电状态:    1 表示正在充电      0 未充电
+                    {
+                        voltage: integer   电池电压(单位mv)
+                        charging: integer  充电状态:    1 表示正在充电      0 未充电
                         percent: integer   电量百分比
                     }
                     msg:string  提示信息
                 }
     """
-    devices_url = basic_url+"devices/battery"
+    devices_url = basic_url + "devices/battery"
     response = requests.get(url=devices_url, headers=headers)
     res = json.loads(str(response.content.decode("utf-8")))
     return res
@@ -79,16 +78,15 @@ cpdef  public  get_robot_battery_value():
         int: 电量百分比 (0-100)
 
     """
-    devices_url = basic_url+"devices/battery"
+    devices_url = basic_url + "devices/battery"
     response = requests.get(url=devices_url, headers=headers)
     res = json.loads(str(response.content.decode("utf-8")))
     if __resIsSuccess(res):
         batteryInfo = RobotBatteryInfo(res["data"])
         return batteryInfo.batteryPercentage
     else:
-        logging.error("error code = %d msg = %s",res.get("code",-1),res.get("msg",""))
+        logging.error("error code = %d msg = %s", res.get("code", -1), res.get("msg", ""))
         return -1
-
 
 cpdef  public  get_robot_fall_management_state():
     """获得机器人摔倒管理状态
@@ -98,20 +96,19 @@ cpdef  public  get_robot_fall_management_state():
            e.g::
 
            {
-                code: integer (int32)返回码，0表示正常
+                code: integer (int32)返回码，0表示正常
                 data:
-                    {
+                    {
                         enable: boolean （True 打开 False 关闭）
                     }
                 msg: string提示信息
             }
 
     """
-    devices_url = basic_url+"devices/fall_management"
+    devices_url = basic_url + "devices/fall_management"
     response = requests.get(url=devices_url, headers=headers)
     res = json.loads(str(response.content.decode("utf-8")))
     return res
-
 
 cpdef  public  set_robot_fall_management_state(enable: bool):
     """设置机器人摔倒管理开关
@@ -124,41 +121,39 @@ cpdef  public  set_robot_fall_management_state(enable: bool):
            e.g::
 
                 {
-                    code: integer (int32) 返回码，0表示正常
-                    msg: string 提示信息
+                    code: integer (int32) 返回码，0表示正常
+                    msg: string 提示信息
                 }
 
     """
-    devices_url = basic_url+"devices/fall_management"
+    devices_url = basic_url + "devices/fall_management"
     param = {"enable": enable}
     json_data = json.dumps(param)
     response = requests.put(url=devices_url, data=json_data, headers=headers)
     res = json.loads(str(response.content.decode("utf-8")))
     return res
 
-
 cpdef   public get_robot_language():
     """获取机器人语言
 
     Returns:
-           json: 
+           json: 
            e.g::
 
            {
-                code: integer (int32)返回码，0表示正常
+                code: integer (int32)返回码，0表示正常
                 data:
-                                        {
-                        language:string可选：zh, en Default: zh
+                                        {
+                        language:string可选：zh, en Default: zh
                     }
                     msg:string提示信息
             }
 
     """
-    languages_url = basic_url+"devices/languages"
+    languages_url = basic_url + "devices/languages"
     response = requests.get(url=languages_url, headers=headers)
     res = json.loads(str(response.content.decode("utf-8")))
     return res
-
 
 cpdef  public  set_robot_language(language: str):
     """设置机器人语言
@@ -167,16 +162,16 @@ cpdef  public  set_robot_language(language: str):
         language(str): 'zh' 中文 'en' 英语
 
     Returns:
-           json: 
+           json: 
            e.g::
 
                 {
-                    code: integer (int32)返回码，0表示正常
-                    msg: string提示信息
+                    code: integer (int32)返回码，0表示正常
+                    msg: string提示信息
                  }
 
     """
-    languages_url = basic_url+"devices/languages"
+    languages_url = basic_url + "devices/languages"
     param = {"language": language}
     json_data = json.dumps(param)
     response = requests.put(url=languages_url, data=json_data, headers=headers)
@@ -188,14 +183,14 @@ def __get_robot_led_info():
     Returns:
         RobotLedInfo: 机器人灯效信息
     """
-    led_url = basic_url+"devices/led"
+    led_url = basic_url + "devices/led"
     response = requests.get(url=led_url, headers=headers)
     res = json.loads(str(response.content.decode("utf-8")))
     if __resIsSuccess(res):
         ledInfo = RobotLedInfo(res["data"])
         return ledInfo
     else:
-        logging.error("error code = %d msg = %s",res.get("code",-1),res.get("msg",""))
+        logging.error("error code = %d msg = %s", res.get("code", -1), res.get("msg", ""))
         return RobotLedInfo()
 
 cpdef  public  get_button_led_color_value():
@@ -207,7 +202,6 @@ cpdef  public  get_button_led_color_value():
 
     return __get_robot_led_info().buttonLedColor
 
-
 cpdef   public get_button_led_mode_value():
     """返回机器人胸口按钮灯点亮模式
 
@@ -216,7 +210,6 @@ cpdef   public get_button_led_mode_value():
     """
 
     return __get_robot_led_info().buttonLedMode
-
 
 cpdef   public get_eye_led_color_value():
     """返回机器人眼睛LED颜色
@@ -244,31 +237,30 @@ cpdef   public get_robot_led():
     Returns:
            Dict:
            e.g::
-  
+  
                 {
-                    code: integer返回码，0表示正常
+                    code: integer返回码，0表示正常
                     data:[
                             {
-                                type:string （LED灯的类型Default: button Enum: button, camera）
+                                type:string （LED灯的类型Default: button Enum: button, camera）
                                 color:string （type为 button 时，取值范围如下：white/red/green/blue/yellow/purple/cyan，type camera 时，取值范围如下:red/green/blue Default: white）
-                                mode: string  (当type为 button 时，取值范围如下:red/green/blue Default: white,type为 camera 时，取值范围如下:on/off/blink Default: on)
+                                mode: string  (当type为 button 时，取值范围如下:red/green/blue Default: white,type为 camera 时，取值范围如下:on/off/blink Default: on)
                             }
                         ]
-                    msg: string提示信息
+                    msg: string提示信息
                 }
 
     """
-    led_url = basic_url+"devices/led"
+    led_url = basic_url + "devices/led"
     response = requests.get(url=led_url, headers=headers)
     res = json.loads(str(response.content.decode("utf-8")))
     return res
-
 
 cpdef   public set_robot_led(type: str, color: str, mode: str):
     """设置机器人灯效
 
     Args:
-        type(str):LED灯的类型Default: button Enum: button, camera
+        type(str):LED灯的类型Default: button Enum: button, camera
         color(str):type为 button 时，取值范围如下：white/red/green/blue/yellow/purple/cyan，type camera 时，取值范围如下:red/green/blue Default: white
         mode(str):type为 button 时，取值范围如下：on/off/blink/breath ,type为 camera 时，取值范围如下:on/off/blink Default: on
 
@@ -277,42 +269,40 @@ cpdef   public set_robot_led(type: str, color: str, mode: str):
            e.g::
 
                 {
-                    code: integer (int32) 返回码，0表示正常
-                    msg: string提示信息
+                    code: integer (int32) 返回码，0表示正常
+                    msg: string提示信息
                 }
 
     """
-    led_url = basic_url+"devices/led"
+    led_url = basic_url + "devices/led"
     param = {"type": type, "color": color, "mode": mode}
     json_data = json.dumps(param)
     response = requests.put(url=led_url, data=json_data, headers=headers)
     res = json.loads(str(response.content.decode("utf-8")))
     return res
 
-
 cpdef   public sync_set_led(type: str, color: str, mode: str):
     """设置机器人灯效,设置完成后返回
 
     Args:
-        type(str):LED灯的类型Default: button Enum: button, camera
+        type(str):LED灯的类型Default: button Enum: button, camera
         color(str):type为 button 时，取值范围如下：white/red/green/blue/yellow/purple/cyan，type camera 时，取值范围如下:red/green/blue Default: white
         mode(str):type为 button 时，取值范围如下：on/off/blink/breath ,type为 camera 时，取值范围如下:on/off/blink Default: on
 
     Returns:
            bool:True 设置成功   False 设置失败
     """
-    res = set_robot_led(type = type, color = color, mode = mode)
+    res = set_robot_led(type=type, color=color, mode=mode)
     if res['code'] != 0:
-        logging.error("set led failed error code = %d msg = %s",res.get("code",-1),res.get("msg",""))
+        logging.error("set led failed error code = %d msg = %s", res.get("code", -1), res.get("msg", ""))
         return False
-    coroutine = __wait_result_color(type = type, color = color, mode = mode, getFuc = get_robot_led)
+    coroutine = __wait_result_color(type=type, color=color, mode=mode, getFuc=get_robot_led)
     loop = asyncio.get_event_loop()
     tasks = loop.create_task(coroutine)
     loop.run_until_complete(tasks)
     return True
 
-
-cpdef   public get_robot_version_info_value(type:str):
+cpdef   public get_robot_version_info_value(type: str):
     """获取机器人版本信息
     Args:
         type（str): 指定的模块，取值范围如下：core/servo/sn
@@ -321,16 +311,16 @@ cpdef   public get_robot_version_info_value(type:str):
         str: (版本号，舵机版本号，sn号)
 
     """
-    version_url = basic_url+"devices/versions"
+    version_url = basic_url + "devices/versions"
     params = {'type': type}
-    response = requests.get(url=version_url, headers=headers ,params=params)
+    response = requests.get(url=version_url, headers=headers, params=params)
     res = json.loads(str(response.content.decode("utf-8")))
     if __resIsSuccess(res):
         versionInfo = RobotVersionInfo(res["data"])
-        ret = getattr(versionInfo,type)
+        ret = getattr(versionInfo, type)
         return ret
     else:
-        logging.error("error code = %d msg = %s",res.get("code",-1),res.get("msg",""))
+        logging.error("error code = %d msg = %s", res.get("code", -1), res.get("msg", ""))
         return ""
 
 cpdef  public  get_robot_version_info(type: str):
@@ -342,11 +332,11 @@ cpdef  public  get_robot_version_info(type: str):
     Returns:
            Dict:
            e.g::
- 
+ 
                 {
-                    code: integer (int32)返回码，0表示正常
+                    code: integer (int32)返回码，0表示正常
                     data:
-                        {
+                        {
                             core:string  机器人主体软件版本号(包括硬件版本)
                             servo:string 舵机版本号
                             sn：string   机器人序列号
@@ -355,7 +345,7 @@ cpdef  public  get_robot_version_info(type: str):
                 }
 
     """
-    version_url = basic_url+"devices/versions"
+    version_url = basic_url + "devices/versions"
     params = {'type': type}
     response = requests.get(url=version_url, headers=headers, params=params)
     res = json.loads(str(response.content.decode("utf-8")))
@@ -370,7 +360,7 @@ cpdef  public  get_robot_mode():
         calibration_mode：表示校准模式
 
     Returns:
-           json: 
+           json: 
            e.g::
 
             {
@@ -383,22 +373,21 @@ cpdef  public  get_robot_mode():
             }
 
     """
-    request_url = basic_url+"devices/mode"
+    request_url = basic_url + "devices/mode"
     response = requests.get(url=request_url, headers=headers)
     res = json.loads(str(response.content.decode("utf-8")))
     return res
-
 
 cpdef  public  get_robot_volume_value():
     """获得机器人音量
     Returns:
         int: 机器人音量 返回-1表示获取失败
     """
-    volume_url = basic_url+"devices/volume"
+    volume_url = basic_url + "devices/volume"
     response = requests.get(url=volume_url, headers=headers)
     res = json.loads(str(response.content.decode("utf-8")))
     if not __resIsSuccess(res):
-        logging.error("error code = %d msg = %s",res.get("code",-1),res.get("msg",""))
+        logging.error("error code = %d msg = %s", res.get("code", -1), res.get("msg", ""))
         return -1
     return res["data"]["volume"] if isinstance(res["data"]["volume"], int) else -1
 
@@ -408,18 +397,18 @@ cpdef  public  get_robot_volume():
     Returns:
            Dict:
            e.g::
- 
+ 
                 {
-                    code:integer (int32)返回码，0表示正常
+                    code:integer (int32)返回码，0表示正常
                     data:
-                        {
-                            volume:integer maximum:100
+                        {
+                            volume:integer maximum:100
                         }
                     msg:string提示信息
                 }
 
     """
-    volume_url = basic_url+"devices/volume"
+    volume_url = basic_url + "devices/volume"
     response = requests.get(url=volume_url, headers=headers)
     res = json.loads(str(response.content.decode("utf-8")))
     return res
@@ -428,38 +417,38 @@ cpdef   public set_robot_volume_value(volume: int):
     """设置机器人音量
 
     Args:
-        volume(int):音量（0-100） 
+        volume(int):音量（0-100） 
 
     Returns:
         bool （True 成功 False 失败）
 
     """
-    volume_url = basic_url+"devices/volume"
+    volume_url = basic_url + "devices/volume"
     param = {"volume": volume}
     json_data = json.dumps(param)
     response = requests.put(url=volume_url, data=json_data, headers=headers)
     res = json.loads(str(response.content.decode("utf-8")))
     if not __resIsSuccess(res):
-        logging.error("error code = %d msg = %s",res.get("code",-1),res.get("msg",""))
+        logging.error("error code = %d msg = %s", res.get("code", -1), res.get("msg", ""))
     return (__resIsSuccess(res))
 
 cpdef   public set_robot_volume(volume: int):
     """设置机器人音量
 
     Args:
-        volume(int):音量（0-100） 
+        volume(int):音量（0-100） 
 
     Returns:
            Dict:
            e.g::
- 
+ 
                 {
-                    code:integer (int32)返回码，0表示正常
+                    code:integer (int32)返回码，0表示正常
                     msg:string提示信息
                 }
 
     """
-    volume_url = basic_url+"devices/volume"
+    volume_url = basic_url + "devices/volume"
     param = {"volume": volume}
     json_data = json.dumps(param)
     response = requests.put(url=volume_url, data=json_data, headers=headers)
@@ -472,11 +461,11 @@ cpdef   public get_joystick_buttons_list():
     Returns:
            Dict:
            e.g::
- 
+ 
                 {
-                    code:integer (int32)返回码，0表示正常
+                    code:integer (int32)返回码，0表示正常
                     data:
-                        {
+                        {
                             L1:integer 按键L1状态1按下0未按下
                             L2:integer 按键L2状态1按下0未按下
                             R1:integer 按键R1状态1按下0未按下
@@ -511,7 +500,7 @@ cpdef   public get_joystick_buttons_list():
                 }
 
     """
-    volume_url = basic_url+"devices/joystick"
+    volume_url = basic_url + "devices/joystick"
     response = requests.get(url=volume_url, headers=headers)
     res = json.loads(str(response.content.decode("utf-8")))
     return res
@@ -522,7 +511,7 @@ cpdef  public  get_joystick_buttons_list_value():
     Returns:
            Dict:
            e.g::
-            {
+            {
                 L1:integer 按键L1状态1按下0未按下
                 L2:integer 按键L2状态1按下0未按下
                 R1:integer 按键R1状态1按下0未按下
@@ -555,11 +544,10 @@ cpdef  public  get_joystick_buttons_list_value():
             }
 
     """
-    volume_url = basic_url+"devices/joystick"
+    volume_url = basic_url + "devices/joystick"
     response = requests.get(url=volume_url, headers=headers)
     res = json.loads(str(response.content.decode("utf-8")))
     return res["data"]
-
 
 ######media########
 
@@ -574,20 +562,19 @@ cpdef   public delete_media_music(name: str):
     Returns:
            Dict:
            e.g::
- 
+ 
                 {
-                    code:integer (int32)返回码，0表示正常
+                    code:integer (int32)返回码，0表示正常
                     msg:string提示信息
                 }
 
     """
-    music_url = basic_url+"media/music"
+    music_url = basic_url + "media/music"
     param = {"name": name}
     json_data = json.dumps(param)
     response = requests.delete(url=music_url, data=json_data, headers=headers)
     res = json.loads(str(response.content.decode("utf-8")))
     return res
-
 
 cpdef  public  get_media_music_state():
     """获取机器人音乐播放状态
@@ -595,9 +582,9 @@ cpdef  public  get_media_music_state():
     Returns:
            Dict:
            e.g::
- 
+ 
                 {
-                "code": integer (int32)返回码，0表示正常
+                "code": integer (int32)返回码，0表示正常
                 "data": {
                             "name": string 音乐名"SorrySorry.mp3",
                             "status": string音乐播放状态 "run"
@@ -606,11 +593,10 @@ cpdef  public  get_media_music_state():
                 }
 
     """
-    music_url = basic_url+"media/music"
+    music_url = basic_url + "media/music"
     response = requests.get(url=music_url, headers=headers)
     res = json.loads(str(response.content.decode("utf-8")))
     return res
-
 
 cpdef   public upload_media_music(filePath: str):
     """上传音乐文件
@@ -624,14 +610,14 @@ cpdef   public upload_media_music(filePath: str):
     Returns:
            Dict:
            e.g::
- 
+ 
                 {
-                    "code": integer (int32)返回码，0表示正常
+                    "code": integer (int32)返回码，0表示正常
                     "msg": string提示信息 "success"
                 }
 
     """
-    music_url = basic_url+"media/music"
+    music_url = basic_url + "media/music"
     headers = {'Authorization': 'multipart/form-data'}
     files = {'file': open(filePath, 'rb')}
     response = requests.post(url=music_url, files=files, headers=headers)
@@ -650,14 +636,14 @@ cpdef   start_play_music(name: str = ""):
     Returns:
            Dict:
            e.g::
- 
+ 
                 {
-                    "code": integer (int32)返回码，0表示正常
+                    "code": integer (int32)返回码，0表示正常
                     "msg": string提示信息 "success"
                 }
 
     """
-    return __control_media_music(operation='start',name=name)
+    return __control_media_music(operation='start', name=name)
 
 cpdef  public  stop_play_music():
     """停止播放音乐
@@ -665,37 +651,36 @@ cpdef  public  stop_play_music():
     Returns:
            Dict:
            e.g::
- 
+ 
                 {
-                    "code": integer (int32)返回码，0表示正常
+                    "code": integer (int32)返回码，0表示正常
                     "msg": string提示信息 "success"
                 }
 
     """
     return __control_media_music(operation='stop')
 
-
-def   __control_media_music(operation: str, name: str = ""):
+def __control_media_music(operation: str, name: str = ""):
     """播放/停止音乐
 
     Note:
         支持的音乐格式：wav和mp3
 
     Args:
-        operation(str): 播放控制Default: start  start, stop
+        operation(str): 播放控制Default: start  start, stop
         name(str): 音乐名称(可选)Default: SorrySorry.mp3
 
     Returns:
            Dict:
            e.g::
- 
+ 
                 {
-                    "code": integer (int32)返回码，0表示正常
+                    "code": integer (int32)返回码，0表示正常
                     "msg": string提示信息 "success"
                 }
 
     """
-    music_url = basic_url+"media/music"
+    music_url = basic_url + "media/music"
     param = {"operation": operation}
     if (len(name) > 0):
         param["name"] = name
@@ -703,7 +688,6 @@ def   __control_media_music(operation: str, name: str = ""):
     response = requests.put(url=music_url, data=json_data, headers=headers)
     res = json.loads(str(response.content.decode("utf-8")))
     return res
-
 
 cpdef   public get_media_music_list():
     """获取音乐列表
@@ -713,9 +697,9 @@ cpdef   public get_media_music_list():
     Returns:
            Dict:
            e.g::
- 
+ 
                 {
-                    "code": integer (int32)返回码，0表示正常
+                    "code": integer (int32)返回码，0表示正常
                     "data": {
                                 "name": string 音乐名"SorrySorry.mp3",
                                 "status": string音乐播放状态 "run"
@@ -723,11 +707,10 @@ cpdef   public get_media_music_list():
                     "msg": string提示信息 "success"
                 }
     """
-    music_url = basic_url+"media/music/list"
+    music_url = basic_url + "media/music/list"
     response = requests.get(url=music_url, headers=headers)
     res = json.loads(str(response.content.decode("utf-8")))
     return res
-
 
 cpdef   sync_play_music(name: str = ""):
     """播放音乐，播放完成后返回
@@ -738,15 +721,14 @@ cpdef   sync_play_music(name: str = ""):
     """
     res = start_play_music(name)
     if res['code'] != 0:
-        logging.error("play music failed error code = %d msg = %s",res.get("code",-1),res.get("msg",""))
+        logging.error("play music failed error code = %d msg = %s", res.get("code", -1), res.get("msg", ""))
         return False
-    coroutine = __wait_result_music(name = name, start_time = None, getFuc = get_media_music_state)
+    coroutine = __wait_result_music(name=name, start_time=None, getFuc=get_media_music_state)
     loop = asyncio.get_event_loop()
     tasks = loop.create_task(coroutine)
     loop.run_until_complete(tasks)
     # Success Example
     return True
-
 
 ####motions####
 
@@ -762,22 +744,20 @@ cpdef  public  delete_motion(name: str):
     Returns:
            Dict:
            e.g::
- 
+ 
                 {
-                    "code": integer (int32)返回码，0表示正常
+                    "code": integer (int32)返回码，0表示正常
                     "data": {},
                     "msg": string提示信息 "success"
                 }
 
     """
-    motions_url = basic_url+"motions"
+    motions_url = basic_url + "motions"
     param = {"name": name}
     json_data = json.dumps(param)
-    response = requests.delete(
-        url=motions_url, data=json_data, headers=headers)
+    response = requests.delete(url=motions_url, data=json_data, headers=headers)
     res = json.loads(str(response.content.decode("utf-8")))
     return res
-
 
 cpdef   public get_current_motion_play_state():
     """获得当前动作文件执行状态
@@ -785,7 +765,7 @@ cpdef   public get_current_motion_play_state():
     Returns:
            Dict:
            e.g::
- 
+ 
                 {
                     "code": 0,
                     "data": {
@@ -797,7 +777,7 @@ cpdef   public get_current_motion_play_state():
                 }
 
     """
-    motions_url = basic_url+"motions"
+    motions_url = basic_url + "motions"
     response = requests.get(url=motions_url, headers=headers)
     res = json.loads(str(response.content.decode("utf-8")))
     return res
@@ -808,7 +788,7 @@ cpdef   public get_current_layer_motion_play_state():
     Returns:
            Dict:
            e.g::
- 
+ 
                 {
                     "code": 0,
                     "data": [{
@@ -820,156 +800,159 @@ cpdef   public get_current_layer_motion_play_state():
                 }
 
     """
-    motions_url = basic_url+"motions/all"
+    motions_url = basic_url + "motions/all"
     response = requests.get(url=motions_url, headers=headers)
     res = json.loads(str(response.content.decode("utf-8")))
     return res
 
-def   __control_motion_play_state(operation: str = "start", name: str = "reset", direction: str = "", speed: str = "normal", repeat: int = 1, timestamp: int = 0, version: str = "v1"):
+def __control_motion_play_state(operation: str = "start", name: str = "reset", direction: str = "",
+                                speed: str = "normal", repeat: int = 1, timestamp: int = 0, version: str = "v1"):
     """机器人动作控制
 
     Args:
-        operation(str):运动控制Default: start    Enum: start, pause, resume, stop
-        name(str): 动作名称
+        operation(str):运动控制Default: start    Enum: start, pause, resume, stop
+        name(str): 动作名称
         direction(str):
-        repeat(int): 
-        speed(str): 
+        repeat(int): 
+        speed(str): 
         timestamp(int):(int64)时间戳, Unix标准时间
 
     Returns:
            Dict:
            e.g::
- 
+ 
                 {
-                    code:integer (int32)返回码，0表示正常
+                    code:integer (int32)返回码，0表示正常
                     data:
-                        {
-                            total_time:integer (int32)运行完成需要的时间（单位ms）
+                        {
+                            total_time:integer (int32)运行完成需要的时间（单位ms）
                         }
                     msg:string提示信息
                 }
 
     """
-    motion_url = basic_url+"motions"
-    param = {"operation": operation, "motion":
-             {"name": name, "repeat": repeat, "speed": speed}, "timestamp": timestamp,"version": version}
-    if(len(direction) != 0):
+    motion_url = basic_url + "motions"
+    param = {"operation": operation, "motion": {"name": name, "repeat": repeat, "speed": speed}, "timestamp": timestamp,
+             "version": version}
+    if (len(direction) != 0):
         param["motion"]["direction"] = direction
     json_data = json.dumps(param)
     response = requests.put(url=motion_url, data=json_data, headers=headers)
     res = json.loads(str(response.content.decode("utf-8")))
     return res
 
-cpdef   start_play_motion(name: str = "reset", direction: str = "", speed: str = "normal", repeat: int = 1, timestamp: int = 0,version: str="v1"):
+cpdef   start_play_motion(name: str = "reset", direction: str = "", speed: str = "normal", repeat: int = 1,
+                          timestamp: int = 0, version: str = "v1"):
     """开始执行动作
 
     Args:
-        name(str): 动作名称 除了默认值和用户上传的动作还可以使用以下值：raise | crouch | stretch | come on | wave | bend | walk | turn around | head | bow
+        name(str): 动作名称 除了默认值和用户上传的动作还可以使用以下值：raise | crouch | stretch | come on | wave | bend | walk | turn around | head | bow
         direction(str):当name 是 "raise | stretch | come on | wave" 时, "direction" 可选项为:left | right | both，
                        当name 是 "bend | turn around" 时, "direction" 可选项为:left|right
                        当name 是 "walk", "direction" 时, "direction" 可选项为:forward | backward | left | right
                        当name 是 "head", "direction" 时, "direction" 可选项为:forward | left | right
-        repeat(int): 重复次数  1 - 100
-        speed(str): 动作执行速度，可选项（very slow,slow,normal,fast,very fast） 
+        repeat(int): 重复次数  1 - 100
+        speed(str): 动作执行速度，可选项（very slow,slow,normal,fast,very fast） 
         timestamp(int):(int64)时间戳, Unix标准时间
         version(str):动作执行类型，可选择：v1表示原来的hts动作，v2表示新的动作分层layer动作
 
     Returns:
            Dict:
            e.g::
- 
+ 
                 {
-                    code:integer (int32)返回码，0表示正常
+                    code:integer (int32)返回码，0表示正常
                     data:
-                        {
-                            total_time:integer (int32)运行完成需要的时间（单位ms）
+                        {
+                            total_time:integer (int32)运行完成需要的时间（单位ms）
                         }
                     msg:string提示信息
                 }
 
     """
-    return __control_motion_play_state(operation = "start", name = name, direction = direction, speed = speed, repeat = repeat, timestamp = timestamp, version = version)
+    return __control_motion_play_state(operation="start", name=name, direction=direction, speed=speed, repeat=repeat,
+                                       timestamp=timestamp, version=version)
 
-cpdef   pause_play_motion(name: str = "",timestamp: int = 0,version: str ="v1"):
+cpdef   pause_play_motion(name: str = "", timestamp: int = 0, version: str = "v1"):
     """暂停动作执行
 
     Args:
-        name(str): 需要暂停的动作名称,默认为""，表示暂停所有动作
+        name(str): 需要暂停的动作名称,默认为""，表示暂停所有动作
         timestamp(int):(int64)时间戳, Unix标准时间
         version(str):动作执行类型，可选择：v1表示原来的hts动作，v2表示新的动作分层layer动作
     Returns:
            Dict:
            e.g::
- 
+ 
                 {
-                    code:integer (int32)返回码，0表示正常
+                    code:integer (int32)返回码，0表示正常
                     data:
-                        {
-                            total_time:integer (int32)运行完成需要的时间（单位ms）
+                        {
+                            total_time:integer (int32)运行完成需要的时间（单位ms）
                         }
                     msg:string提示信息
                 }
 
     """
-    return __control_motion_play_state(name = name,operation = "pause",timestamp = timestamp,version = version)
+    return __control_motion_play_state(name=name, operation="pause", timestamp=timestamp, version=version)
 
-cpdef   resume_play_motion(name: str = "",timestamp: int = 0,version: str ="v1"):
+cpdef   resume_play_motion(name: str = "", timestamp: int = 0, version: str = "v1"):
     """恢复动作执行
 
     Args:
-        name(str): 需要恢复的动作名称,默认为""，表示恢复所有动作。
+        name(str): 需要恢复的动作名称,默认为""，表示恢复所有动作。
         timestamp(int):(int64)时间戳, Unix标准时间
         version(str):动作执行类型，可选择：v1表示原来的hts动作，v2表示新的动作分层layer动作
     Returns:
            Dict:
            e.g::
- 
+ 
                 {
-                    code:integer (int32)返回码，0表示正常
+                    code:integer (int32)返回码，0表示正常
                     data:
-                        {
-                            total_time:integer (int32)运行完成需要的时间（单位ms）
+                        {
+                            total_time:integer (int32)运行完成需要的时间（单位ms）
                         }
                     msg:string提示信息
                 }
 
     """
-    return __control_motion_play_state(name = name,operation = "resume",timestamp = timestamp,version = version)
+    return __control_motion_play_state(name=name, operation="resume", timestamp=timestamp, version=version)
 
-cpdef   stop_play_motion(name: str = "",timestamp: int = 0,version: str ="v1"):
+cpdef   stop_play_motion(name: str = "", timestamp: int = 0, version: str = "v1"):
     """停止动作执行
 
     Args:
-        name(str): 需要停止的动作名称,默认为""，表示停止所有动作。
+        name(str): 需要停止的动作名称,默认为""，表示停止所有动作。
         timestamp(int):(int64)时间戳, Unix标准时间
         version(str):动作执行类型，可选择：v1表示原来的hts动作，v2表示新的动作分层layer动作
     Returns:
            Dict:
            e.g::
- 
+ 
                 {
-                    code:integer (int32)返回码，0表示正常
+                    code:integer (int32)返回码，0表示正常
                     data:
-                        {
-                            total_time:integer (int32)运行完成需要的时间（单位ms）
+                        {
+                            total_time:integer (int32)运行完成需要的时间（单位ms）
                         }
                     msg:string提示信息
                 }
 
     """
-    return __control_motion_play_state(name = name,operation = "stop",timestamp = timestamp,version = version)
+    return __control_motion_play_state(name=name, operation="stop", timestamp=timestamp, version=version)
 
-
-cpdef   sync_play_motion(name: str = "reset", direction: str = "", speed: str = "normal", repeat: int = 1,version: str = "v1"):
+cpdef   sync_play_motion(name: str = "reset", direction: str = "", speed: str = "normal", repeat: int = 1,
+                         version: str = "v1"):
     """开始执行动作，执行完成后返回
 
     Args:
-        name(str): 动作名称 除了默认值和用户上传的动作还可以使用以下值：raise | crouch | stretch | come on | wave | bend | walk | turn around | head | bow
+        name(str): 动作名称 除了默认值和用户上传的动作还可以使用以下值：raise | crouch | stretch | come on | wave | bend | walk | turn around | head | bow
         direction(str):当name 是 "raise | stretch | come on | wave" 时, "direction" 可选项为:left | right | both，
                        当name 是 "bend | turn around" 时, "direction" 可选项为:left|right
                        当name 是 "walk", "direction" 时, "direction" 可选项为:forward | backward | left | right
                        当name 是 "head", "direction" 时, "direction" 可选项为:forward | left | right
-        repeat(int): 重复次数  1 - 100
+        repeat(int): 重复次数  1 - 100
         speed(str): 动作执行速度，可选项（very slow,slow,normal,fast,very fast）
         version(str):动作执行类型，可选择：v1表示原来的hts动作，v2表示新的动作分层layer动作
 
@@ -978,20 +961,19 @@ cpdef   sync_play_motion(name: str = "reset", direction: str = "", speed: str = 
 
     """
     t = int(time.time() * 1000)
-    res = start_play_motion(direction = direction, speed = speed, repeat = repeat,name = name, timestamp = t, version = version)
+    res = start_play_motion(direction=direction, speed=speed, repeat=repeat, name=name, timestamp=t, version=version)
     if res['code'] != 0:
-        logging.error("play motion failed error code = %d msg = %s",res.get("code",-1),res.get("msg","unknow error"))
+        logging.error("play motion failed error code = %d msg = %s", res.get("code", -1),
+                      res.get("msg", "unknow error"))
         return False
     if version == "v1":
-        coroutine = __wait_result_motion(name = name, start_time = t, getFuc = get_current_motion_play_state)
+        coroutine = __wait_result_motion(name=name, start_time=t, getFuc=get_current_motion_play_state)
     elif version == "v2":
-        coroutine = __wait_result_layer_motion(name = name, start_time = t, getFuc = get_current_layer_motion_play_state)
+        coroutine = __wait_result_layer_motion(name=name, start_time=t, getFuc=get_current_layer_motion_play_state)
     loop = asyncio.get_event_loop()
     tasks = loop.create_task(coroutine)
     loop.run_until_complete(tasks)
     return True
-
-
 
 cpdef  public  upload_motion(filePath: str):
     """上传动作文件
@@ -1004,15 +986,15 @@ cpdef  public  upload_motion(filePath: str):
     Returns:
            Dict:
            e.g::
- 
+ 
                 {
-                    "code": integer (int32)返回码，0表示正常
+                    "code": integer (int32)返回码，0表示正常
                     "data": {},
                     "msg": string提示信息 "success"
                 }
 
     """
-    motions_url = basic_url+"motions"
+    motions_url = basic_url + "motions"
     headers = {'Authorization': 'multipart/form-data'}
     files = {'file': open(filePath, 'rb')}
     response = requests.post(url=motions_url, files=files, headers=headers)
@@ -1027,11 +1009,11 @@ cpdef   public get_motion_list_value():
            e.g::              
     [A, B, C, D, E, F ,G]
     """
-    motions_url = basic_url+"motions/list"
+    motions_url = basic_url + "motions/list"
     response = requests.get(url=motions_url, headers=headers)
     res = json.loads(str(response.content.decode("utf-8")))
     if not __resIsSuccess(res):
-        logging.error("error code = %d msg = %s",res.get("code",-1),res.get("msg",""))
+        logging.error("error code = %d msg = %s", res.get("code", -1), res.get("msg", ""))
         return []
     motion = []
     for item in res['data']['system_hts_motions']:
@@ -1098,47 +1080,41 @@ cpdef  public get_motion_list():
                 }
 
     """
-    motions_url = basic_url+"motions/list"
+    motions_url = basic_url + "motions/list"
     response = requests.get(url=motions_url, headers=headers)
     res = json.loads(str(response.content.decode("utf-8")))
     return res
 
-
-cpdef   control_motion_gait(speed_v: int = 0, speed_h: int = 0, steps: int = 0, period: int = 1, wave: bool = False):
+cpdef public control_motion_gait_impl(speed_v: int, speed_h: int, steps: int, period: int, wave: bool):
+    return control_motion_gait(speed_v, speed_h, steps, period, wave)
+cpdef  control_motion_gait(speed_v: int = 0, speed_h: int = 0, steps: int = 0, period: int = 1, wave: bool = False):
     """机器人步态动作控制
 
     Args:
-        period : integer (int32) 取值 【0~5】当period = 0，表示停止步态。
-        speed_v : integer (int32) 前后垂直行走速度，取值【-5~5】。
-        speed_h : integer (int32) 左右水平行走速度，取值【-5~5】。
-        steps: integer (int32) 总步数值，大于零的正整数。当steps =0时，代表10亿这样一个极大值。这个也是它的默认值。
-        wave: bool 表示是否开启手臂摆动。取值true、false。
+        period : integer (int32) 取值 【0~5】当period = 0，表示停止步态。
+        speed_v : integer (int32) 前后垂直行走速度，取值【-5~5】。
+        speed_h : integer (int32) 左右水平行走速度，取值【-5~5】。
+        steps: integer (int32) 总步数值，大于零的正整数。当steps =0时，代表10亿这样一个极大值。这个也是它的默认值。
+        wave: bool 表示是否开启手臂摆动。取值true、false。
 
     Returns:
            Dict:
            e.g::
- 
+ 
                 {
-                    code:integer (int32)返回码，0表示正常
+                    code:integer (int32)返回码，0表示正常
                     msg:string提示信息
                 }
 
     """
     motion_url = basic_url + "motions/gait"
-    timestamp = int(time.time()*1000)
-    param = {
-        "speed_v": speed_v,
-        "speed_h": speed_h,
-        "steps": steps,
-        "period": period,
-        "timestamp": timestamp,
-        "wave": wave
-    }
+    timestamp = int(time.time() * 1000)
+    param = {"speed_v": speed_v, "speed_h": speed_h, "steps": steps, "period": period, "timestamp": timestamp,
+        "wave": wave}
     json_data = json.dumps(param)
     response = requests.put(url=motion_url, data=json_data, headers=headers)
     res = json.loads(str(response.content.decode("utf-8")))
     return res
-
 
 cpdef  public    get_motion_gait_state():
     """获取机器人步态执行状态
@@ -1146,7 +1122,7 @@ cpdef  public    get_motion_gait_state():
     Returns:
            Dict:
            e.g::
- 
+ 
                 {
                     "code": 0,
                     "data": {
@@ -1184,7 +1160,6 @@ cpdef  public    get_motion_gait_state():
     res = json.loads(str(response.content.decode("utf-8")))
     return res
 
-
 cpdef  public  exit_motion_gait():
     """退出机器人步态执行
 
@@ -1193,7 +1168,7 @@ cpdef  public  exit_motion_gait():
     Returns:
            Dict:
            e.g::
- 
+ 
                 {
                     "code": 0,
                     "data": {},
@@ -1203,20 +1178,19 @@ cpdef  public  exit_motion_gait():
     """
     motion_url = basic_url + "motions/gait"
     payload = {"timestamp": 0}
-    response = requests.delete(url=motion_url, headers=headers,data = json.dumps(payload))
+    response = requests.delete(url=motion_url, headers=headers, data=json.dumps(payload))
     res = json.loads(str(response.content.decode("utf-8")))
     return res
-
 
 cpdef   sync_do_motion_gait(speed_v: int = 0, speed_h: int = 0, steps: int = 0, period: int = 1, wave: bool = False):
     """机器人步态动作控制,执行完成后返回
 
     Args:
-        period : integer (int32) 取值 【0~5】当period = 0，表示停止步态。
-        speed_v : integer (int32) 前后垂直行走速度，取值【-5~5】。
-        speed_h : integer (int32) 左右水平行走速度，取值【-5~5】。
-        steps: integer (int32) 总步数值，大于零的正整数。当steps =0时，代表10亿这样一个极大值。这个也是它的默认值。
-        wave: bool 表示是否开启手臂摆动。取值true、false。
+        period : integer (int32) 取值 【0~5】当period = 0，表示停止步态。
+        speed_v : integer (int32) 前后垂直行走速度，取值【-5~5】。
+        speed_h : integer (int32) 左右水平行走速度，取值【-5~5】。
+        steps: integer (int32) 总步数值，大于零的正整数。当steps =0时，代表10亿这样一个极大值。这个也是它的默认值。
+        wave: bool 表示是否开启手臂摆动。取值true、false。
 
     Returns:
            BOOL:False 执行失败  True 执行完成
@@ -1224,9 +1198,10 @@ cpdef   sync_do_motion_gait(speed_v: int = 0, speed_h: int = 0, steps: int = 0, 
     """
     # No stand up, since we could do multiple times
     t = int(time.time() * 1000)
-    res = control_motion_gait(speed_v = speed_v, speed_h = speed_h, steps = steps, period = period, wave = wave)
+    res = control_motion_gait(speed_v=speed_v, speed_h=speed_h, steps=steps, period=period, wave=wave)
     if res['code'] != 0:
-        logging.error("do motion gait failed error code = %d msg = %s",res.get("code",-1),res.get("msg","unknow error"))
+        logging.error("do motion gait failed error code = %d msg = %s", res.get("code", -1),
+                      res.get("msg", "unknow error"))
         return False
     coroutine = __wait_result_gait(start_time=t, type='start', getFuc=get_motion_gait_state)
     loop = asyncio.get_event_loop()
@@ -1254,16 +1229,16 @@ cpdef   public get_aprilTag_recognition_status():
                     "msg":""
                 }
     """
-    servos_url = basic_url+"visions/aprilTag"
+    servos_url = basic_url + "visions/aprilTag"
     response = requests.get(url=servos_url, headers=headers)
     res = json.loads(str(response.content.decode("utf-8")))
     if not __resIsSuccess(res):
-        logging.error("error code = %d msg = %s",res.get("code",-1),res.get("msg",""))
+        logging.error("error code = %d msg = %s", res.get("code", -1), res.get("msg", ""))
         return -1
     return res
 
 PaprilTagStream = None
-cpdef   start_aprilTag_recognition(tags: List,enableStream: bool = False):
+cpdef   start_aprilTag_recognition(tags: List, enableStream: bool = False):
     """开启aprilTag识别
     Args:
         tags:需要识别的apriltag id 及 size
@@ -1271,9 +1246,9 @@ cpdef   start_aprilTag_recognition(tags: List,enableStream: bool = False):
     Returns:
            Dict:
            e.g::
- 
+ 
                 {
-                    code:integer (int32)返回码，0表示正常
+                    code:integer (int32)返回码，0表示正常
                     msg:string提示信息
                     stream_url:string 视频流地址
                 }
@@ -1283,11 +1258,7 @@ cpdef   start_aprilTag_recognition(tags: List,enableStream: bool = False):
     # for key,value in tags.items():
     #     tag = {"id":key,"size":value}
     #     aprilTags.append(tag)
-    param = {
-                "operation": "start",
-                "tags":tags,
-                "remote_stream_enable":enableStream
-            }
+    param = {"operation": "start", "tags": tags, "remote_stream_enable": enableStream}
     json_data = json.dumps(param)
     response = requests.put(url=motion_url, data=json_data, headers=headers)
     res = json.loads(str(response.content.decode("utf-8")))
@@ -1295,18 +1266,18 @@ cpdef   start_aprilTag_recognition(tags: List,enableStream: bool = False):
     global ip
     streamUrl = ""
     if not (PaprilTagStream is None) and PaprilTagStream.is_alive():
-       return res
+        return res
     if (res["code"] == 0 or res['code'] == 20003) and enableStream:
         streamUrl = res["streamUrl"]
         if res['code'] == 20003:
             if ip != "127.0.0.1":
                 port = res["streamUrl"][7:][res["streamUrl"][7:].find(':') + 1:]
                 streamUrl = "http://" + ip + ":" + port
-        PaprilTagStream=Process(target=__openStreamWindow,args=('aprilTag',streamUrl,ip)) #必须加,号
+        PaprilTagStream = Process(target=__openStreamWindow, args=('aprilTag', streamUrl, ip))  #必须加,号
         PaprilTagStream.start()
     return res
 
-def   __openStreamWindow(windowName,url,ip_addr:str = ip):
+def __openStreamWindow(windowName, url, ip_addr: str = ip):
     camera = cv2.VideoCapture(url)
     ret = camera.isOpened()
     counter = 0
@@ -1342,10 +1313,10 @@ def   __openStreamWindow(windowName,url,ip_addr:str = ip):
             cv2.imshow(windowName, frame)
             cv2.waitKey(1)
             if cv2.getWindowProperty(windowName, cv2.WND_PROP_VISIBLE) <= 0 and sys.platform != "darwin":
-               if windowName == "aprilTag":
+                if windowName == "aprilTag":
                     yan_api_init(ip_addr)
                     __stop_aprilTag_recognition()
-               break
+                break
     except:
         print('program crash')
         if windowName == "aprilTag":
@@ -1354,23 +1325,20 @@ def   __openStreamWindow(windowName,url,ip_addr:str = ip):
         cv2.destroyAllWindows()
         cv2.waitKey(1)
 
-def   __stop_aprilTag_recognition():
+def __stop_aprilTag_recognition():
     """关闭aprilTag识别
     Returns:
            Dict:
            e.g::
- 
+ 
                 {
-                    code:integer (int32)返回码，0表示正常
+                    code:integer (int32)返回码，0表示正常
                     msg:string提示信息
                 }
     """
     motion_url = basic_url + "visions/aprilTag"
-    timestamp = int(time.time()*1000)
-    param = {
-            "operation": "stop",
-            "timestamp": timestamp
-            }
+    timestamp = int(time.time() * 1000)
+    param = {"operation": "stop", "timestamp": timestamp}
     json_data = json.dumps(param)
     response = requests.put(url=motion_url, data=json_data, headers=headers)
     res = json.loads(str(response.content.decode("utf-8")))
@@ -1381,9 +1349,9 @@ cpdef  public  stop_aprilTag_recognition():
     Returns:
            Dict:
            e.g::
- 
+ 
                 {
-                    code:integer (int32)返回码，0表示正常
+                    code:integer (int32)返回码，0表示正常
                     msg:string提示信息
                 }
     """
@@ -1410,11 +1378,11 @@ cpdef  public  get_QR_code_recognition_status():
                     "msg":""
                 }
     """
-    servos_url = basic_url+"visions/QR"
+    servos_url = basic_url + "visions/QR"
     response = requests.get(url=servos_url, headers=headers)
     res = json.loads(str(response.content.decode("utf-8")))
     if not __resIsSuccess(res):
-        logging.error("error code = %d msg = %s",res.get("code",-1),res.get("msg",""))
+        logging.error("error code = %d msg = %s", res.get("code", -1), res.get("msg", ""))
     return res
 
 PqrStream = None
@@ -1426,16 +1394,13 @@ cpdef   start_QR_code_recognition(enableStream: bool = False):
         Dict:
            e.g::
                 {
-                    code:integer (int32)返回码，0表示正常
+                    code:integer (int32)返回码，0表示正常
                     msg:string提示信息
                 }
         
     """
     motion_url = basic_url + "visions/QR"
-    param = {
-              "operation": "start",
-              "remote_stream_enable":enableStream
-            }
+    param = {"operation": "start", "remote_stream_enable": enableStream}
     json_data = json.dumps(param)
     response = requests.put(url=motion_url, data=json_data, headers=headers)
     res = json.loads(str(response.content.decode("utf-8")))
@@ -1443,15 +1408,15 @@ cpdef   start_QR_code_recognition(enableStream: bool = False):
     global ip
     streamUrl = ""
     if not (PqrStream is None) and PqrStream.is_alive():
-       PqrStream.terminate()
-       PqrStream = None
+        PqrStream.terminate()
+        PqrStream = None
     if (res["code"] == 0 or res['code'] == 20003) and enableStream:
         streamUrl = res["streamUrl"]
         if res['code'] == 20003:
             if ip != "127.0.0.1":
                 port = res["streamUrl"][7:][res["streamUrl"][7:].find(':') + 1:]
                 streamUrl = "http://" + ip + ":" + port
-        PqrStream=Process(target=__openStreamWindow,args=('qrCode',streamUrl)) #必须加,号
+        PqrStream = Process(target=__openStreamWindow, args=('qrCode', streamUrl))  #必须加,号
         PqrStream.start()
     return res
 
@@ -1461,14 +1426,12 @@ cpdef   public stop_QR_code_recognition():
            Dict:
            e.g::
                 {
-                    code:integer (int32)返回码，0表示正常
+                    code:integer (int32)返回码，0表示正常
                     msg:string提示信息
                 }
     """
     motion_url = basic_url + "visions/QR"
-    param = {
-                "operation": "stop",
-            }
+    param = {"operation": "stop", }
     json_data = json.dumps(param)
     response = requests.put(url=motion_url, data=json_data, headers=headers)
     res = json.loads(str(response.content.decode("utf-8")))
@@ -1478,7 +1441,7 @@ cpdef   public stop_QR_code_recognition():
         PqrStream = None
     return res
 
-cpdef   sync_do_QR_code_recognition(timeOut:int = 8):
+cpdef   sync_do_QR_code_recognition(timeOut: int = 8):
     """开启二维码识别,识别到或超时后返回
     Args:
         timeOut:最大等待时间 单位（秒）小于等于0表示永久等待
@@ -1495,9 +1458,10 @@ cpdef   sync_do_QR_code_recognition(timeOut:int = 8):
     """
     res = start_QR_code_recognition(True)
     if not (res['code'] == 0 or res['code'] == 20003):
-        logging.error("start QR code recognition failed error code = %d msg = %s",res.get("code",-1),res.get("msg","unknow error"))
+        logging.error("start QR code recognition failed error code = %d msg = %s", res.get("code", -1),
+                      res.get("msg", "unknow error"))
         return res
-    coroutine = __wait_result_QR(get_QR_code_recognition_status,timeOut,True)
+    coroutine = __wait_result_QR(get_QR_code_recognition_status, timeOut, True)
     loop = asyncio.get_event_loop()
     tasks = loop.create_task(coroutine)
     loop.run_until_complete(tasks)
@@ -1516,11 +1480,11 @@ cpdef   public get_object_tracking_status():
                     "msg":"Success"
                 }
     """
-    object_tracking_url = basic_url+"visions/object/tracking"
+    object_tracking_url = basic_url + "visions/object/tracking"
     response = requests.get(url=object_tracking_url, headers=headers)
     res = json.loads(str(response.content.decode("utf-8")))
     if not __resIsSuccess(res):
-        logging.error("error code = %d msg = %s",res.get("code",-1),res.get("msg",""))
+        logging.error("error code = %d msg = %s", res.get("code", -1), res.get("msg", ""))
     return res
 
 cpdef   start_object_tracking(name: str = "", width: int = 0, height: int = 0):
@@ -1547,15 +1511,15 @@ cpdef   start_object_tracking(name: str = "", width: int = 0, height: int = 0):
                     "msg":"Success"
                 }
     """
-    object_tracking_url = basic_url+"visions/object/tracking"
+    object_tracking_url = basic_url + "visions/object/tracking"
     if name != "":
-        msg = {"operation":"start", "name":name, "width":width, "height": height}
+        msg = {"operation": "start", "name": name, "width": width, "height": height}
     else:
-        msg = {"operation":"start"}
-    response = requests.put(url=object_tracking_url, data = json.dumps(msg), headers=headers)
+        msg = {"operation": "start"}
+    response = requests.put(url=object_tracking_url, data=json.dumps(msg), headers=headers)
     res = json.loads(str(response.content.decode("utf-8")))
     if not __resIsSuccess(res):
-        logging.error("error code = %d msg = %s",res.get("code",-1),res.get("msg",""))
+        logging.error("error code = %d msg = %s", res.get("code", -1), res.get("msg", ""))
     return res
 
 cpdef  public  stop_object_tracking():
@@ -1569,14 +1533,13 @@ cpdef  public  stop_object_tracking():
                     "msg":"Success"
                 }
     """
-    object_tracking_url = basic_url+"visions/object/tracking"
-    msg = {"operation":"stop"}
-    response = requests.put(url=object_tracking_url, data = json.dumps(msg), headers=headers)
+    object_tracking_url = basic_url + "visions/object/tracking"
+    msg = {"operation": "stop"}
+    response = requests.put(url=object_tracking_url, data=json.dumps(msg), headers=headers)
     res = json.loads(str(response.content.decode("utf-8")))
     if not __resIsSuccess(res):
-        logging.error("error code = %d msg = %s",res.get("code",-1),res.get("msg",""))
+        logging.error("error code = %d msg = %s", res.get("code", -1), res.get("msg", ""))
     return res
-
 
 cpdef   config_object_tracking(track_timeout: int, detect_timeout: int):
     """配置物体跟踪
@@ -1593,16 +1556,16 @@ cpdef   config_object_tracking(track_timeout: int, detect_timeout: int):
                     "msg":"Success"
                 }
     """
-    object_tracking_config_url = basic_url+"visions/object/tracking/config"
-    msg = {"track_timeout":track_timeout, "detect_timeout":detect_timeout}
-    response = requests.put(url=object_tracking_config_url, data = json.dumps(msg), headers=headers)
+    object_tracking_config_url = basic_url + "visions/object/tracking/config"
+    msg = {"track_timeout": track_timeout, "detect_timeout": detect_timeout}
+    response = requests.put(url=object_tracking_config_url, data=json.dumps(msg), headers=headers)
     res = json.loads(str(response.content.decode("utf-8")))
     if not __resIsSuccess(res):
-        logging.error("error code = %d msg = %s",res.get("code",-1),res.get("msg",""))
+        logging.error("error code = %d msg = %s", res.get("code", -1), res.get("msg", ""))
     return res
 
 ####Servos####
-cpdef   public get_servo_angle_value(name:str):
+cpdef   public get_servo_angle_value(name: str):
     """查询舵机角度值
 
     一次可以查询一个舵机角度值
@@ -1655,17 +1618,15 @@ cpdef   public get_servo_angle_value(name:str):
         >>> res = YanAPI.get_servo_angle_value("RightShoulderFlex")
 
     """
-    servos_url = basic_url+"servos/angles"
-    params = {'names':[name]}
+    servos_url = basic_url + "servos/angles"
+    params = {'names': [name]}
     response = requests.get(url=servos_url, headers=headers, params=params)
     res = json.loads(str(response.content.decode("utf-8")))
     if not __resIsSuccess(res):
-        logging.error("error code = %d msg = %s",res.get("code",-1),res.get("msg",""))
+        logging.error("error code = %d msg = %s", res.get("code", -1), res.get("msg", ""))
         return -1
-    values =  res["data"].popitem()
+    values = res["data"].popitem()
     return values[1]
-
-
 
 cpdef   public get_servos_angles(names: List[str]):
     """查询舵机角度值
@@ -1715,30 +1676,30 @@ cpdef   public get_servos_angles(names: List[str]):
     Returns:
            Dict:
            e.g::
- 
+ 
                 {
-                    code:integer (int32)返回码，0表示正常
+                    code:integer (int32)返回码，0表示正常
                     data:
-                                                {
-                            RightShoulderRoll:integer maximum:180     1号舵机
-                            RightShoulderFlex: integer maximum:180    2号舵机
-                            RightElbowFlex: integer maximum:180       3号舵机
-                            LeftShoulderRoll: integer maximum:180     4号舵机
-                            LeftShoulderFlex:integer maximum:180      5号舵机
-                            LeftElbowFlex: integer maximum:180        6号舵机
-                            RightHipLR: integer maximum:180           7号舵机
-                            RightHipFB: integer maximum:180           8号舵机
-                            RightKneeFlex:integer maximum:180         9号舵机
-                            RightAnkleFB:integer maximum:180          10号舵机
-                            RightAnkleUD: integer maximum:180         11号舵机
-                            LeftHipLR: integer maximum:180            12号舵机
-                            LeftHipFB: integer maximum:180            13号舵机
-                            LeftKneeFlex:integer maximum:180          14号舵机
-                            LeftAnkleFB: integer maximum:180          15号舵机
-                            LeftAnkleUD:integer maximum:180           16号舵机
-                            NeckLR: integer minimum:45 maximum:135    17号舵机
+                                                {
+                            RightShoulderRoll:integer maximum:180     1号舵机
+                            RightShoulderFlex: integer maximum:180    2号舵机
+                            RightElbowFlex: integer maximum:180       3号舵机
+                            LeftShoulderRoll: integer maximum:180     4号舵机
+                            LeftShoulderFlex:integer maximum:180      5号舵机
+                            LeftElbowFlex: integer maximum:180        6号舵机
+                            RightHipLR: integer maximum:180           7号舵机
+                            RightHipFB: integer maximum:180           8号舵机
+                            RightKneeFlex:integer maximum:180         9号舵机
+                            RightAnkleFB:integer maximum:180          10号舵机
+                            RightAnkleUD: integer maximum:180         11号舵机
+                            LeftHipLR: integer maximum:180            12号舵机
+                            LeftHipFB: integer maximum:180            13号舵机
+                            LeftKneeFlex:integer maximum:180          14号舵机
+                            LeftAnkleFB: integer maximum:180          15号舵机
+                            LeftAnkleUD:integer maximum:180           16号舵机
+                            NeckLR: integer minimum:45 maximum:135    17号舵机
                         }
-                    msg: string提示信息
+                    msg: string提示信息
                 }
 
     Examples:
@@ -1748,12 +1709,11 @@ cpdef   public get_servos_angles(names: List[str]):
             print (res["data"])
 
     """
-    servos_url = basic_url+"servos/angles"
+    servos_url = basic_url + "servos/angles"
     params = {'names': names}
     response = requests.get(url=servos_url, headers=headers, params=params)
     res = json.loads(str(response.content.decode("utf-8")))
     return res
-
 
 cpdef   set_servos_angles(angles: Dict[str, int], runtime: int = 200):
     """设置舵机角度值
@@ -1762,7 +1722,7 @@ cpdef   set_servos_angles(angles: Dict[str, int], runtime: int = 200):
 
     Args:
         angles(map) : {servoName:angle}  servoName舵机名，angel 角度：【0-180】
-        runtime(int): minimum:200 maximum:4000 运行时间，单位ms
+        runtime(int): minimum:200 maximum:4000 运行时间，单位ms
 
     Note:
         ID1/2/3/4/5/6/9/10/14/15舵机可运行角度范围为0-180,超出范围运动存在风险.
@@ -1784,11 +1744,11 @@ cpdef   set_servos_angles(angles: Dict[str, int], runtime: int = 200):
     Returns:
            Dict:
            e.g::
- 
+ 
                 {
-                    code:integer (int32)返回码，0表示正常
+                    code:integer (int32)返回码，0表示正常
                     data:
-                                                {
+                                                {
                             RightShoulderRoll:boolean 1号舵机，true表示设置成功，false表示失败
                             RightShoulderFlex:boolean 2号舵机，true表示设置成功，false表示失败
                             RightElbowFlex:boolean 3号舵机，true表示设置成功，false表示失败
@@ -1801,7 +1761,7 @@ cpdef   set_servos_angles(angles: Dict[str, int], runtime: int = 200):
                             RightAnkleFB:boolean 10号舵机，true表示设置成功，false表示失败
                             RightAnkleUD:boolean 11号舵机，true表示设置成功，false表示失败
                             LeftHipLR:boolean 12号舵机，true表示设置成功，false表示失败
-                            LeftHipFB: boolean 13号舵机，true表示设置成功，false表示失败
+                            LeftHipFB: boolean 13号舵机，true表示设置成功，false表示失败
                             LeftKneeFlex:boolean 14号舵机，true表示设置成功，false表示失败
                             LeftAnkleFB:boolean 15号舵机，true表示设置成功，false表示失败
                             LeftAnkleUD:boolean 16号舵机，true表示设置成功，false表示失败
@@ -1811,20 +1771,20 @@ cpdef   set_servos_angles(angles: Dict[str, int], runtime: int = 200):
                 }
 
     """
-    servos_url = basic_url+"servos/angles"
+    servos_url = basic_url + "servos/angles"
     param = {"angles": angles, "runtime": runtime}
     json_data = json.dumps(param)
     response = requests.put(url=servos_url, data=json_data, headers=headers)
     res = json.loads(str(response.content.decode("utf-8")))
     return res
 
-cpdef   public set_servos_angles_layers(data: Dict[str,Dict[int,int]]):
+cpdef   public set_servos_angles_layers(data: Dict[str, Dict[int, int]]):
     """设置舵机角度值
 
     一次可以设置一个或者多个舵机角度值
 
     Args:
-        angles(map) : {servoName:{angle,isNeedBessel,runtime}}  servoName舵机名，angel 角度：【0-180】,isNeedBessel:是否需要变速运动(贝塞尔曲线)，runtime:minimum:200 maximum:4000 运行时间，单位ms
+        angles(map) : {servoName:{angle,isNeedBessel,runtime}}  servoName舵机名，angel 角度：【0-180】,isNeedBessel:是否需要变速运动(贝塞尔曲线)，runtime:minimum:200 maximum:4000 运行时间，单位ms
 
     Note:
         ID1/2/3/4/5/6/9/10/14/15舵机可运行角度范围为0-180,超出范围运动存在风险.
@@ -1846,17 +1806,17 @@ cpdef   public set_servos_angles_layers(data: Dict[str,Dict[int,int]]):
     Returns:
            Dict:
            e.g::
- 
+ 
                 {
-                    code:integer (int32)返回码，0表示正常
+                    code:integer (int32)返回码，0表示正常
                     data:
-                                                {
+                                                {
                         }
                     msg:string提示信息
                 }
 
     """
-    servos_url = basic_url+"servos/angles/layers"
+    servos_url = basic_url + "servos/angles/layers"
     param = {"data": data}
     json_data = json.dumps(param)
     response = requests.put(url=servos_url, data=json_data, headers=headers)
@@ -1868,7 +1828,7 @@ cpdef   sync_set_servo_rotate(angles: Dict[str, int], runtime: int = 200):
 
     Args:
         angles(map) : {servoName:angle}  servoName舵机名，angel 角度：【0-180】
-        runtime(int): minimum:200 maximum:4000 运行时间，单位ms
+        runtime(int): minimum:200 maximum:4000 运行时间，单位ms
 
     Note:
         ID1/2/3/4/5/6/9/10/14/15舵机可运行角度范围为0-180,超出范围运动存在风险.
@@ -1890,11 +1850,11 @@ cpdef   sync_set_servo_rotate(angles: Dict[str, int], runtime: int = 200):
     Returns:
            BOOL:
            e.g::
- 
+ 
                 {
-                    code:integer (int32)返回码，0表示正常
+                    code:integer (int32)返回码，0表示正常
                     data:
-                                                {
+                                                {
                             RightShoulderRoll:boolean1号舵机，true表示设置成功，false表示失败
                             RightShoulderFlex:boolean2号舵机，true表示设置成功，false表示失败
                             RightElbowFlex:boolean3号舵机，true表示设置成功，false表示失败
@@ -1907,7 +1867,7 @@ cpdef   sync_set_servo_rotate(angles: Dict[str, int], runtime: int = 200):
                             RightAnkleFB:boolean10号舵机，true表示设置成功，false表示失败
                             RightAnkleUD:boolean11号舵机，true表示设置成功，false表示失败
                             LeftHipLR:boolean12号舵机，true表示设置成功，false表示失败
-                            LeftHipFB: boolean13号舵机，true表示设置成功，false表示失败
+                            LeftHipFB: boolean13号舵机，true表示设置成功，false表示失败
                             LeftKneeFlex:boolean14号舵机，true表示设置成功，false表示失败
                             LeftAnkleFB:boolean15号舵机，true表示设置成功，false表示失败
                             LeftAnkleUD:boolean16号舵机，true表示设置成功，false表示失败
@@ -1917,16 +1877,15 @@ cpdef   sync_set_servo_rotate(angles: Dict[str, int], runtime: int = 200):
                 }
 
     """
-    res = set_servos_angles(angles = angles, runtime = runtime)
+    res = set_servos_angles(angles=angles, runtime=runtime)
     if res['code'] != 0:
-        logging.error("set servo failed error code = %d msg = %s",res.get("code",-1),res.get("msg","unknow error"))
+        logging.error("set servo failed error code = %d msg = %s", res.get("code", -1), res.get("msg", "unknow error"))
         return res
-    coroutine = __wait_result_by_time(runtime / 1000) # ms --> s
+    coroutine = __wait_result_by_time(runtime / 1000)  # ms --> s
     loop = asyncio.get_event_loop()
     tasks = loop.create_task(coroutine)
     loop.run_until_complete(tasks)
     return res
-
 
 cpdef  public  get_servos_mode(names: List[str]):
     """查询舵机工作模式
@@ -1939,7 +1898,7 @@ cpdef  public  get_servos_mode(names: List[str]):
     Returns:
            Dict:
            e.g::
- 
+ 
                 {
                     code (integer): Return code, 0 means success ,
                     data (ServosMode),
@@ -1997,12 +1956,11 @@ cpdef  public  get_servos_mode(names: List[str]):
             }
 
     """
-    servos_url = basic_url+"servos/mode"
+    servos_url = basic_url + "servos/mode"
     params = {"names": names}
     response = requests.get(url=servos_url, headers=headers, params=params)
     res = json.loads(str(response.content.decode("utf-8")))
     return res
-
 
 cpdef   public set_servos_mode(mode: str, servos: List[str]):
     """设置舵机工作模式
@@ -2016,7 +1974,7 @@ cpdef   public set_servos_mode(mode: str, servos: List[str]):
     Returns:
            Dict:
            e.g::
- 
+ 
                 {
                     "code": 0,
                     "data": {
@@ -2027,7 +1985,7 @@ cpdef   public set_servos_mode(mode: str, servos: List[str]):
                 }
 
     """
-    servos_url = basic_url+"servos/mode"
+    servos_url = basic_url + "servos/mode"
     param = {"mode": mode, "servos": []}
     for i in range(len(servos)):
         param["servos"].append({"name": servos[i]})
@@ -2049,7 +2007,7 @@ cpdef  public  sensor_calibration(id: int):
     Returns:
            Dict:
            e.g::
- 
+ 
                 {
                     "code": 0,
                     "data": {},
@@ -2057,9 +2015,9 @@ cpdef  public  sensor_calibration(id: int):
                 }
 
     """
-    __set_sensors(operation="Calibrate",type = "gyro",id=id)
+    __set_sensors(operation="Calibrate", type="gyro", id=id)
 
-def   __set_sensors(operation: str, id: int, type: str, value: int = 0):
+def __set_sensors(operation: str, id: int, type: str, value: int = 0):
     """传感器设置(校准或修改地址)
 
     目前只支持运动传感器（gyro）校准
@@ -2084,7 +2042,7 @@ def   __set_sensors(operation: str, id: int, type: str, value: int = 0):
     Returns:
            Dict:
            e.g::
- 
+ 
                 {
                     "code": 0,
                     "data": {},
@@ -2092,9 +2050,8 @@ def   __set_sensors(operation: str, id: int, type: str, value: int = 0):
                 }
 
     """
-    sensors_url = basic_url+"sensors"
-    param = {"operation": operation, "sensor":
-             {"id": id, "type": type, "value": value}}
+    sensors_url = basic_url + "sensors"
+    param = {"operation": operation, "sensor": {"id": id, "type": type, "value": value}}
     json_data = json.dumps(param)
     response = requests.put(url=sensors_url, data=json_data, headers=headers)
     res = json.loads(str(response.content.decode("utf-8")))
@@ -2108,15 +2065,15 @@ cpdef   public get_sensors_list_value():
            e.g::
 
                 [
-                    type:string传感器名称 gyro, infrared, ultrasonic, environment, touch, pressure
+                    type:string传感器名称 gyro, infrared, ultrasonic, environment, touch, pressure
                 ]
 
     """
-    sensor_url = basic_url+"sensors/list"
+    sensor_url = basic_url + "sensors/list"
     response = requests.get(url=sensor_url, headers=headers)
     res = json.loads(str(response.content.decode("utf-8")))
     if not __resIsSuccess(res):
-        logging.error("error code = %d msg = %s",res.get("code",-1),res.get("msg",""))
+        logging.error("error code = %d msg = %s", res.get("code", -1), res.get("msg", ""))
         return []
     sensors = res["data"]["sensors"]
     sensorsName = []
@@ -2126,24 +2083,23 @@ cpdef   public get_sensors_list_value():
             sensorsName.append(sensorName)
     return sensorsName
 
-
 cpdef   public get_sensors_list():
     """获取所有传感器的列表
 
     Returns:
            Dict:
            e.g::
- 
+ 
                 {
                     "code": 0,
                     "data": {
                             sensors:
                                 [
                                     {
-                                        id: integer (int32) minimum:1 maximum:127传感器地址
-                                        slot:integer (int32) minimum:1 maximum:6传感器槽位号
-                                        type:string传感器名称 gyro, infrared, ultrasonic, environment, touch, pressure
-                                        version: integer (int32)传感器版本号
+                                        id: integer (int32) minimum:1 maximum:127传感器地址
+                                        slot:integer (int32) minimum:1 maximum:6传感器槽位号
+                                        type:string传感器名称 gyro, infrared, ultrasonic, environment, touch, pressure
+                                        version: integer (int32)传感器版本号
                                     }
                                 ]
                             },
@@ -2151,7 +2107,7 @@ cpdef   public get_sensors_list():
                 }
 
     """
-    sensor_url = basic_url+"sensors/list"
+    sensor_url = basic_url + "sensors/list"
     response = requests.get(url=sensor_url, headers=headers)
     res = json.loads(str(response.content.decode("utf-8")))
     return res
@@ -2163,18 +2119,18 @@ cpdef  public  get_sensors_environment_value():
         Dict:
         e.g::
 
-             {
-                id: integer (int32) minimum:1 maximum:127
-                slot:integer (int32) minimum:1 maximum:6传感器槽位号
-                temperature:integer (int32)温度值
-                humidity: integer (int32)湿度值
-                pressure: integer (int32)大气压力
+             {
+                id: integer (int32) minimum:1 maximum:127
+                slot:integer (int32) minimum:1 maximum:6传感器槽位号
+                temperature:integer (int32)温度值
+                humidity: integer (int32)湿度值
+                pressure: integer (int32)大气压力
             }
     """
     res = get_sensors_environment()
     if not __resIsSuccess(res):
-         logging.error("error code = %d msg = %s",res.get("code",-1),res.get("msg",""))
-         return "Failed to get environment sensor value."
+        logging.error("error code = %d msg = %s", res.get("code", -1), res.get("msg", ""))
+        return "Failed to get environment sensor value."
     values = res["data"]["environment"]
     if len(values) == 0:
         return "not connected to sensor."
@@ -2189,18 +2145,18 @@ cpdef   public get_sensors_environment():
     Returns:
            Dict:
            e.g::
- 
+ 
                 {
-                    code: integer (int32)返回码，0表示正常
+                    code: integer (int32)返回码，0表示正常
                     data:
-                                                {
+                                                {
                             environment:[
-                                                                                        {
-                                                id: integer (int32) minimum:1 maximum:127
-                                                slot:integer (int32) minimum:1 maximum:6传感器槽位号
-                                                temperature:integer (int32)温度值
-                                                humidity: integer (int32)湿度值
-                                                pressure: integer (int32)大气压力
+                                                                                        {
+                                                id: integer (int32) minimum:1 maximum:127
+                                                slot:integer (int32) minimum:1 maximum:6传感器槽位号
+                                                temperature:integer (int32)温度值
+                                                humidity: integer (int32)湿度值
+                                                pressure: integer (int32)大气压力
                                             }
                                         ]
                         }
@@ -2208,11 +2164,10 @@ cpdef   public get_sensors_environment():
                 }
 
     """
-    sensor_url = basic_url+"sensors/environment"
+    sensor_url = basic_url + "sensors/environment"
     response = requests.get(url=sensor_url, headers=headers)
     res = json.loads(str(response.content.decode("utf-8")))
     return res
-
 
 cpdef  public  get_sensors_gyro():
     """获取九轴陀螺仪运动传感器值
@@ -2220,26 +2175,26 @@ cpdef  public  get_sensors_gyro():
     Returns:
            Dict:
            e.g::
- 
+ 
                 {
-                    code:integer (int32)返回码，0表示正常
+                    code:integer (int32)返回码，0表示正常
                     data:
-                                                {
+                                                {
                             gyro:[
-                                                                        {
-                                        id: integer (int32) minimum:1 maximum:127
-                                        gyro-x:number (float)
-                                        gyro-y:number (float)
-                                        gyro-z:number (float)
-                                        accel-x:number (float)
-                                        accel-y:number (float)
+                                                                        {
+                                        id: integer (int32) minimum:1 maximum:127
+                                        gyro-x:number (float)
+                                        gyro-y:number (float)
+                                        gyro-z:number (float)
+                                        accel-x:number (float)
+                                        accel-y:number (float)
                                         accel-z:number
-                                        compass-x:number (float)
-                                        compass-y:number (float)
-                                        compass-z:number (float)
-                                        euler-x:number (float)
-                                        euler-y:number (float)
-                                        euler-z:number (float)
+                                        compass-x:number (float)
+                                        compass-y:number (float)
+                                        compass-z:number (float)
+                                        euler-x:number (float)
+                                        euler-y:number (float)
+                                        euler-z:number (float)
                                     }
                                 ]
                         }
@@ -2247,7 +2202,7 @@ cpdef  public  get_sensors_gyro():
                 }
 
     """
-    sensor_url = basic_url+"sensors/gyro"
+    sensor_url = basic_url + "sensors/gyro"
     response = requests.get(url=sensor_url, headers=headers)
     res = json.loads(str(response.content.decode("utf-8")))
     return res
@@ -2260,8 +2215,8 @@ cpdef  public  get_sensors_infrared_value():
     """
     res = get_sensors_infrared()
     if not __resIsSuccess(res):
-         logging.error("error code = %d msg = %s",res.get("code",-1),res.get("msg",""))
-         return "Failed to get infrared distance sensor value."
+        logging.error("error code = %d msg = %s", res.get("code", -1), res.get("msg", ""))
+        return "Failed to get infrared distance sensor value."
     values = res["data"]["infrared"]
     if len(values) == 0:
         return "not connected to sensor."
@@ -2277,17 +2232,17 @@ cpdef   get_sensors_infrared(id: List[int] = None, slot: List[int] = None):
     Returns:
            Dict:
            e.g::
- 
+ 
                 {
-                    code:integer (int32)返回码，0表示正常
+                    code:integer (int32)返回码，0表示正常
                     data:
-                                                {
+                                                {
                             infrared:
                                     [
-                                                                                {
-                                            id: integer (int32) minimum:1 maximum:127传感器地址
-                                            slot: integer (int32) minimum:1 maximum:6传感器槽位号
-                                            value: integer (int32)距离值，单位毫米
+                                                                                {
+                                            id: integer (int32) minimum:1 maximum:127传感器地址
+                                            slot: integer (int32) minimum:1 maximum:6传感器槽位号
+                                            value: integer (int32)距离值，单位毫米
                                         }
                                     ]
                         }
@@ -2295,7 +2250,7 @@ cpdef   get_sensors_infrared(id: List[int] = None, slot: List[int] = None):
                 }
 
     """
-    sensor_url = basic_url+"sensors/infrared"
+    sensor_url = basic_url + "sensors/infrared"
     if (id != None) and (slot == None):
         params = {"id": id}
         response = requests.get(url=sensor_url, headers=headers, params=params)
@@ -2318,8 +2273,8 @@ cpdef  public  get_sensors_pressure_value():
     """
     res = get_sensors_pressure()
     if not __resIsSuccess(res):
-         logging.error("error code = %d msg = %s",res.get("code",-1),res.get("msg",""))
-         return "Failed to get pressure sensor value."
+        logging.error("error code = %d msg = %s", res.get("code", -1), res.get("msg", ""))
+        return "Failed to get pressure sensor value."
     values = res["data"]["pressure"]
     if len(values) == 0:
         return "not connected to sensor."
@@ -2335,17 +2290,17 @@ cpdef   get_sensors_pressure(id: List[int] = None, slot: List[int] = None):
     Returns:
            Dict:
            e.g::
- 
+ 
                 {
-                    code:integer (int32)返回码，0表示正常
+                    code:integer (int32)返回码，0表示正常
                     data:
-                                                {
+                                                {
                             pressure:
-                                    [ 
+                                    [ 
                                         {
-                                            id: integer (int32) minimum:1 maximum:127传感器地址
-                                            slot: integer (int32) minimum:1 maximum:6传感器槽位号
-                                            value: integer (int32)压力值，单位：牛
+                                            id: integer (int32) minimum:1 maximum:127传感器地址
+                                            slot: integer (int32) minimum:1 maximum:6传感器槽位号
+                                            value: integer (int32)压力值，单位：牛
                                         }
                                     ]
                         }
@@ -2353,7 +2308,7 @@ cpdef   get_sensors_pressure(id: List[int] = None, slot: List[int] = None):
                 }
 
     """
-    sensor_url = basic_url+"sensors/pressure"
+    sensor_url = basic_url + "sensors/pressure"
     if (id != None) and (slot == None):
         params = {"id": id}
         response = requests.get(url=sensor_url, headers=headers, params=params)
@@ -2376,8 +2331,8 @@ cpdef   public  get_sensors_touch_value():
     """
     res = get_sensors_touch()
     if not __resIsSuccess(res):
-         logging.error("error code = %d msg = %s",res.get("code",-1),res.get("msg",""))
-         return "Failed to get touch sensor value."
+        logging.error("error code = %d msg = %s", res.get("code", -1), res.get("msg", ""))
+        return "Failed to get touch sensor value."
     values = res["data"]["touch"]
     if len(values) == 0:
         return "not connected to sensor."
@@ -2387,23 +2342,23 @@ cpdef   get_sensors_touch(id: int = None, slot: List[int] = None):
     """获取触摸传感器值
 
     Args:
-        id(array[Integer]): (int32) 传感器地址，可不填
-        slot(array[Integer]): (int32) 传感器槽位号，可不填
+        id(array[Integer]): (int32) 传感器地址，可不填
+        slot(array[Integer]): (int32) 传感器槽位号，可不填
 
     Returns:
            Dict:
            e.g::
- 
+ 
                 {
-                    code:integer (int32)返回码，0表示正常
+                    code:integer (int32)返回码，0表示正常
                     data:
-                                                {
+                                                {
                             touch:
-                                [ 
+                                [ 
                                     {
-                                        id: integer (int32) minimum:1 maximum:127传感器地址
-                                        slot: integer (int32) minimum:1 maximum:6传感器槽位号
-                                        value: integer (int32) 0 （未触摸）1 （触摸btn1）2 （触摸btn2）3 （触摸两边）
+                                        id: integer (int32) minimum:1 maximum:127传感器地址
+                                        slot: integer (int32) minimum:1 maximum:6传感器槽位号
+                                        value: integer (int32) 0 （未触摸）1 （触摸btn1）2 （触摸btn2）3 （触摸两边）
                                     }
                                 ]
                         }
@@ -2411,7 +2366,7 @@ cpdef   get_sensors_touch(id: int = None, slot: List[int] = None):
                 }
 
     """
-    sensor_url = basic_url+"sensors/touch"
+    sensor_url = basic_url + "sensors/touch"
     if (id != None) and (slot == None):
         params = {"id": id}
         response = requests.get(url=sensor_url, headers=headers, params=params)
@@ -2434,8 +2389,8 @@ cpdef   public get_sensors_ultrasonic_value():
     """
     res = get_sensors_ultrasonic()
     if not __resIsSuccess(res):
-         logging.error("error code = %d msg = %s",res.get("code",-1),res.get("msg",""))
-         return "Failed to get ultrasonic sensor value."
+        logging.error("error code = %d msg = %s", res.get("code", -1), res.get("msg", ""))
+        return "Failed to get ultrasonic sensor value."
     values = res["data"]["ultrasonic"]
     if len(values) == 0:
         return "not connected to sensor."
@@ -2445,23 +2400,23 @@ cpdef   get_sensors_ultrasonic(id=None, slot=None):
     """获取超声传感器值
 
     Args:
-        id(array[Integer]): (int32) 传感器地址，可不填
-        slot(array[Integer]): (int32) 传感器槽位号，可不填
+        id(array[Integer]): (int32) 传感器地址，可不填
+        slot(array[Integer]): (int32) 传感器槽位号，可不填
 
     Returns:
            Dict:
            e.g::
- 
+ 
                 {
-                    code: integer (int32)返回码，0表示正常
+                    code: integer (int32)返回码，0表示正常
                     data:
-                                                {
+                                                {
                             ultrasonic:
                                       [
                                         {
-                                            id: integer (int32) minimum:1 maximum:127传感器地址
-                                            slot:integer (int32) minimum:1 maximum:6传感器槽位号
-                                            value: integer (int32)距离值，单位毫米
+                                            id: integer (int32) minimum:1 maximum:127传感器地址
+                                            slot:integer (int32) minimum:1 maximum:6传感器槽位号
+                                            value: integer (int32)距离值，单位毫米
                                         }
                                       ]
                         }
@@ -2469,7 +2424,7 @@ cpdef   get_sensors_ultrasonic(id=None, slot=None):
                 }
 
     """
-    sensor_url = basic_url+"sensors/ultrasonic"
+    sensor_url = basic_url + "sensors/ultrasonic"
     if (id != None) and (slot == None):
         params = {"id": id}
         response = requests.get(url=sensor_url, headers=headers, params=params)
@@ -2493,7 +2448,7 @@ cpdef   public stop_voice_asr():
     Returns:
            Dict:
            e.g::
- 
+ 
                 {
                     "code": 0,
                     "data": {},
@@ -2501,11 +2456,10 @@ cpdef   public stop_voice_asr():
                 }
 
     """
-    voice_url = basic_url+"voice/asr"
+    voice_url = basic_url + "voice/asr"
     response = requests.delete(url=voice_url, headers=headers)
     res = json.loads(str(response.content.decode("utf-8")))
     return res
-
 
 cpdef  public  get_voice_asr_state():
     """获取语义理解工作状态
@@ -2513,29 +2467,31 @@ cpdef  public  get_voice_asr_state():
     Returns:
            Dict:
            e.g::
- 
+ 
                 {
                     code: 0,
                     status:string  idle 非执行状态 run 正在运行
-                    timestamp:integer (int32)时间戳, Unix标准时间
+                    timestamp:integer (int32)时间戳, Unix标准时间
                     data:
-                                                {
+                                                {
                             语音返回数据
                         }
-                    msg: string提示信息
+                    msg: string提示信息
                 }
 
     """
-    voice_url = basic_url+"voice/asr"
+    voice_url = basic_url + "voice/asr"
     response = requests.get(url=voice_url, headers=headers)
     res = json.loads(str(response.content.decode("utf-8")))
-    ret=get_robot_language()
-    if ret["data"]["language"]=="ko" :
+    ret = get_robot_language()
+    if ret["data"]["language"] == "ko":
         return res
     dataStr = res["data"].strip(b'\x00'.decode())
     res["data"] = json.loads(dataStr)
     return res
 
+cpdef public  start_voice_asr_impl(continues: bool, timestamp: int):
+    return start_voice_asr(continues, timestamp)
 
 cpdef   start_voice_asr(continues=False, timestamp=0):
     """开始语义理解
@@ -2544,12 +2500,12 @@ cpdef   start_voice_asr(continues=False, timestamp=0):
 
     Args:
         continues:boolean是否进行连续语意识别, 布尔值, true 需要， false不需要, 默认为false
-        timestamp:integer (int32)时间戳, Unix标准时间
+        timestamp:integer (int32)时间戳, Unix标准时间
 
     Returns:
            Dict:
            e.g::
- 
+ 
                 {
                     "code": 0,
                     "data": {},
@@ -2557,7 +2513,7 @@ cpdef   start_voice_asr(continues=False, timestamp=0):
                 }
 
     """
-    voice_url = basic_url+"voice/asr"
+    voice_url = basic_url + "voice/asr"
     param = {"continues": continues, "timestamp": timestamp}
     json_data = json.dumps(param)
     response = requests.put(url=voice_url, data=json_data, headers=headers)
@@ -2579,19 +2535,18 @@ cpdef  public  sync_do_voice_asr_value():
     """
     timestamp = int(time.time())
     start_voice_asr(timestamp=timestamp)
-    coroutine = __wait_result(timestamp,get_voice_asr_state)
+    coroutine = __wait_result(timestamp, get_voice_asr_state)
     loop = asyncio.get_event_loop()
     tasks = loop.create_task(coroutine)
     loop.run_until_complete(tasks)
     res = tasks.result()
-    if  not __resIsSuccess(res):
-        logging.error("error code = %d msg = %s",res.get("code",-1),res.get("msg",""))
+    if not __resIsSuccess(res):
+        logging.error("error code = %d msg = %s", res.get("code", -1), res.get("msg", ""))
         return None
-    ret=get_robot_language()
-    if ret["data"]["language"]=="ko" :
+    ret = get_robot_language()
+    if ret["data"]["language"] == "ko":
         return res["data"]
     return RobotAsrResult(res["data"]).retDict
-
 
 cpdef   public sync_do_voice_asr():
     """执行一次语义理解并获得返回结果
@@ -2599,16 +2554,16 @@ cpdef   public sync_do_voice_asr():
     Returns:
            Dict:
            e.g::
- 
+ 
                 {
-                    code: integer (int32)返回码，0表示正常
+                    code: integer (int32)返回码，0表示正常
                     status:string idle 非执行状态run 正在运行
-                    timestamp:integer (int32)时间戳, Unix标准时间
+                    timestamp:integer (int32)时间戳, Unix标准时间
                     data:
                         {
                             语义理解返回内容数据
                         }
-                    msg: string提示信息
+                    msg: string提示信息
                 }
 
     """
@@ -2622,7 +2577,6 @@ cpdef   public sync_do_voice_asr():
     loop.run_until_complete(tasks)
     return tasks.result()
 
-
 cpdef  public  delete_voice_asr_offline_syntax(grammar: str):
     """删除指定离线语法名称下的所有配置
 
@@ -2634,20 +2588,19 @@ cpdef  public  delete_voice_asr_offline_syntax(grammar: str):
     Returns:
            Dict:
            e.g::
- 
+ 
                 {
-                    code: integer (int32)返回码，0表示正常
-                    msg: string提示信息
+                    code: integer (int32)返回码，0表示正常
+                    msg: string提示信息
                 }
 
     """
-    voice_url = basic_url+"voice/asr/offlinesyntax"
+    voice_url = basic_url + "voice/asr/offlinesyntax"
     param = {"grammar": grammar}
     json_data = json.dumps(param)
     response = requests.delete(url=voice_url, data=json_data, headers=headers)
     res = json.loads(str(response.content.decode("utf-8")))
     return res
-
 
 cpdef   public get_voice_asr_offline_syntax(grammar: str):
     """获取指定语法名称下的所有配置
@@ -2658,13 +2611,13 @@ cpdef   public get_voice_asr_offline_syntax(grammar: str):
     Returns:
            Dict:
            e.g::
- 
+ 
                 {
                     grammar:string定义语法名称,请输入纯字母
                     slot:
                         [
                             声明槽,内容为字母不数字。所有的操作符及关键词均为半角字符,不支持全角字符。
-                                                        {
+                                                        {
                                 name:string槽名称
                             }
                         ]
@@ -2673,8 +2626,8 @@ cpdef   public get_voice_asr_offline_syntax(grammar: str):
                     rule:
                         [
                             所有的离线语法规则
-                                                        {
-                                name: string表示规则名称
+                                                        {
+                                name: string表示规则名称
                                 value:string表示规则内容
                             }
                         ]
@@ -2701,12 +2654,11 @@ cpdef   public get_voice_asr_offline_syntax(grammar: str):
             }
 
     """
-    voice_url = basic_url+"voice/asr/offlinesyntax"
+    voice_url = basic_url + "voice/asr/offlinesyntax"
     params = {"body": grammar}
     response = requests.get(url=voice_url, headers=headers, params=params)
     res = json.loads(str(response.content.decode("utf-8")))
     return res
-
 
 cpdef  public  create_voice_asr_offline_syntax(object: Dict):
     """创建一个新的离线语法名称配置
@@ -2743,7 +2695,7 @@ cpdef  public  create_voice_asr_offline_syntax(object: Dict):
     Returns:
            Dict:
            e.g::
- 
+ 
                 {
                     "code": 0,
                     "data": {},
@@ -2751,13 +2703,12 @@ cpdef  public  create_voice_asr_offline_syntax(object: Dict):
                 }
 
     """
-    voice_url = basic_url+"voice/asr/offlinesyntax"
+    voice_url = basic_url + "voice/asr/offlinesyntax"
     param = object
     json_data = json.dumps(param)
     response = requests.post(url=voice_url, data=json_data, headers=headers)
     res = json.loads(str(response.content.decode("utf-8")))
     return res
-
 
 cpdef  public  update_voice_asr_offline_syntax(object: Dict):
     """修改已有语法配置中的命令词和对应的返回值
@@ -2796,7 +2747,7 @@ cpdef  public  update_voice_asr_offline_syntax(object: Dict):
     Returns:
            Dict:
            e.g::
- 
+ 
                 {
                     "code": 0,
                     "data": {},
@@ -2804,13 +2755,12 @@ cpdef  public  update_voice_asr_offline_syntax(object: Dict):
                 }
 
     """
-    voice_url = basic_url+"voice/asr/offlinesyntax"
+    voice_url = basic_url + "voice/asr/offlinesyntax"
     param = object
     json_data = json.dumps(param)
     response = requests.put(url=voice_url, data=json_data, headers=headers)
     res = json.loads(str(response.content.decode("utf-8")))
     return res
-
 
 cpdef   public get_voice_asr_offline_syntax_grammars():
     """获取所有离线语法名称
@@ -2821,7 +2771,7 @@ cpdef   public get_voice_asr_offline_syntax_grammars():
     Returns:
            Dict:
            e.g::
- 
+ 
                 {
                     "grammar": [
                                     {
@@ -2834,11 +2784,10 @@ cpdef   public get_voice_asr_offline_syntax_grammars():
                 }
 
     """
-    voice_url = basic_url+"voice/asr/offlinesyntax/grammars"
+    voice_url = basic_url + "voice/asr/offlinesyntax/grammars"
     response = requests.get(url=voice_url, headers=headers)
     res = json.loads(str(response.content.decode("utf-8")))
     return res
-
 
 cpdef   public stop_voice_iat():
     """停止语音听写
@@ -2846,18 +2795,17 @@ cpdef   public stop_voice_iat():
     Returns:
            Dict:
            e.g::
- 
+ 
                 {
-                    code: integer (int32)返回码，0表示正常
-                    msg: string提示信息
+                    code: integer (int32)返回码，0表示正常
+                    msg: string提示信息
                 }
 
     """
-    voice_url = basic_url+"voice/iat"
+    voice_url = basic_url + "voice/iat"
     response = requests.delete(url=voice_url, headers=headers)
     res = json.loads(str(response.content.decode("utf-8")))
     return res
-
 
 cpdef   public get_voice_iat():
     """获取语音听写结果
@@ -2865,30 +2813,28 @@ cpdef   public get_voice_iat():
     Returns:
            Dict:
            e.g::
- 
+ 
                {
-                    code: integer (int32)返回码，0表示正常
-                    status: string  idle 非执行状态 run 正在运行
-                    timestamp: integer (int32)时间戳, Unix标准时间
+                    code: integer (int32)返回码，0表示正常
+                    status: string  idle 非执行状态 run 正在运行
+                    timestamp: integer (int32)时间戳, Unix标准时间
                     data:
-                                                {
+                                                {
                             语音听写返回数据
                         }
                     msg:string提示信息
                 }
 
     """
-    res=get_robot_language()
-    voice_url = basic_url+"voice/iat"
+    res = get_robot_language()
+    voice_url = basic_url + "voice/iat"
     response = requests.get(url=voice_url, headers=headers)
     res = json.loads(str(response.content.decode("utf-8")))
-    ret=get_robot_language()
-    if ret["data"]["language"]=="ko" :
+    ret = get_robot_language()
+    if ret["data"]["language"] == "ko":
         return res
-    res["data"] = json.loads(res["data"].strip(
-        b'\x00'.decode()))
+    res["data"] = json.loads(res["data"].strip(b'\x00'.decode()))
     return res
-
 
 cpdef   start_voice_iat(timestamp: int = 0):
     """开始语音听写
@@ -2896,12 +2842,12 @@ cpdef   start_voice_iat(timestamp: int = 0):
     当语音听写处于工作状态时，需要先停止当前的语音听写。
 
     Args:
-        timestamp: integer (int32)时间戳, Unix标准时间
+        timestamp: integer (int32)时间戳, Unix标准时间
 
     Returns:
            Dict:
            e.g::
- 
+ 
                 {
                     "code": 0,
                     "data": {},
@@ -2909,7 +2855,7 @@ cpdef   start_voice_iat(timestamp: int = 0):
                 }
 
     """
-    voice_url = basic_url+"voice/iat"
+    voice_url = basic_url + "voice/iat"
     param = {"timestamp": timestamp}
     json_data = json.dumps(param)
     response = requests.put(url=voice_url, data=json_data, headers=headers)
@@ -2927,16 +2873,16 @@ cpdef   public sync_do_voice_iat_value():
     successed = start_voice_iat(timestamp=timestamp)
     if not successed:
         return ""
-    coroutine = __wait_result(timestamp,get_voice_iat)
+    coroutine = __wait_result(timestamp, get_voice_iat)
     loop = asyncio.get_event_loop()
     task = loop.create_task(coroutine)
     loop.run_until_complete(task)
     res = task.result()
     if not __resIsSuccess(res):
-        logging.error("error code = %d msg = %s",res.get("code",-1),res.get("msg",""))
+        logging.error("error code = %d msg = %s", res.get("code", -1), res.get("msg", ""))
         return ""
-    ret=get_robot_language()
-    if ret["data"]["language"]=="ko" :
+    ret = get_robot_language()
+    if ret["data"]["language"] == "ko":
         return res["data"].strip()
     words = res["data"].get("text")
     if not words:
@@ -2956,23 +2902,24 @@ cpdef   public sync_do_voice_iat():
     Returns:
            Dict:
            e.g::
- 
+ 
                 {
-                    code: integer (int32)返回码，0表示正常
+                    code: integer (int32)返回码，0表示正常
                     status:string idle 非执行状态run 正在运行
-                    timestamp:integer (int32)时间戳, Unix标准时间
+                    timestamp:integer (int32)时间戳, Unix标准时间
                     data:
-                       {
+                       {
                             语义理解返回内容数据
                         }
-                    msg: string提示信息
+                    msg: string提示信息
             }
 
     """
     timestamp = int(time.time())
     res = start_voice_iat(timestamp=timestamp)
     if res['code'] != 0:
-        logging.error("do voice iat failed error code = %d msg = %s",res.get("code",-1),res.get("msg","unknow error"))
+        logging.error("do voice iat failed error code = %d msg = %s", res.get("code", -1),
+                      res.get("msg", "unknow error"))
         return res
     coroutine = __wait_result(timestamp, get_voice_iat)
     loop = asyncio.get_event_loop()
@@ -2981,14 +2928,13 @@ cpdef   public sync_do_voice_iat():
     #result = asyncio.run(coroutine)
     return task.result()
 
-
 cpdef   public stop_voice_tts():
     """停止语音播报任务
 
     Returns:
            Dict:
            e.g::
- 
+ 
                 {
                     "code": 0,
                     "data": {},
@@ -2996,12 +2942,13 @@ cpdef   public stop_voice_tts():
                 }
 
     """
-    voice_url = basic_url+"voice/tts"
+    voice_url = basic_url + "voice/tts"
     response = requests.delete(url=voice_url, headers=headers)
     res = json.loads(str(response.content.decode("utf-8")))
     return res
 
-
+cpdef public  get_voice_tts_state_impl(timestamp: int):
+    return get_voice_tts_state(timestamp)
 cpdef   get_voice_tts_state(timestamp: int = None):
     """获取指定或者当前工作状态
 
@@ -3013,30 +2960,31 @@ cpdef   get_voice_tts_state(timestamp: int = None):
     Returns:
            Dict:
            e.g::
- 
+ 
                 {
-                    code: integer (int32)返回码，0表示正常
-                    status: string
+                    code: integer (int32)返回码，0表示正常
+                    status: string
                     当任务为语语音合成的时候，状态如下：idle 任务不存在,run 播放该段语音,build 正在合成该段语音,wait 处于等待执行状态
-                    timestamp: integer (int32)时间戳, Unix标准时间
+                    timestamp: integer (int32)时间戳, Unix标准时间
                     data:
-                         {
+                         {
                             语音返回数据
                         }
                     msg:string提示信息
                 }
 
     """
-    voice_url = basic_url+"voice/tts"
+    voice_url = basic_url + "voice/tts"
     response = requests.get(url=voice_url, headers=headers)
     if timestamp != None:
         params = {'timestamp': timestamp}
         response = requests.get(url=voice_url, headers=headers, params=params)
     res = json.loads(str(response.content.decode("utf-8")))
-    res["data"] = json.loads(
-        str(res["data"].strip(b'\x00'.decode())))
+    res["data"] = json.loads(str(res["data"].strip(b'\x00'.decode())))
     return res
 
+cpdef  public start_voice_tts_impl(tts: str , interrupt: bool , timestamp: int):
+    return start_voice_tts(tts,interrupt,timestamp)
 
 cpdef   start_voice_tts(tts: str = "", interrupt: bool = True, timestamp: int = 0):
     """开始语音合成任务
@@ -3051,7 +2999,7 @@ cpdef   start_voice_tts(tts: str = "", interrupt: bool = True, timestamp: int = 
     Returns:
            Dict:
            e.g::
- 
+ 
                 {
                     "code": 0,
                     "data": {},
@@ -3059,13 +3007,15 @@ cpdef   start_voice_tts(tts: str = "", interrupt: bool = True, timestamp: int = 
                 }
 
     """
-    voice_url = basic_url+"voice/tts"
+    voice_url = basic_url + "voice/tts"
     param = {"tts": tts, "interrupt": interrupt, "timestamp": timestamp}
     json_data = json.dumps(param)
     response = requests.put(url=voice_url, data=json_data, headers=headers)
     res = json.loads(str(response.content.decode("utf-8")))
     return res
 
+cpdef public  sync_do_tts_impl(tts: str, interrupt: bool):
+    return sync_do_tts(tts,interrupt)
 
 cpdef   sync_do_tts(tts: str = "", interrupt: bool = True):
     """执行语音合成任务,合成完成后返回
@@ -3077,14 +3027,14 @@ cpdef   sync_do_tts(tts: str = "", interrupt: bool = True):
     Returns:
            Dict:
            e.g::
- 
+ 
                 {
-                    code: integer (int32)返回码，0表示正常
-                    status: string
+                    code: integer (int32)返回码，0表示正常
+                    status: string
                     当任务为语语音合成的时候，状态如下：idle 任务不存在,run 播放该段语音,build 正在合成该段语音,wait 处于等待执行状态
-                    timestamp: integer (int32)时间戳, Unix标准时间
+                    timestamp: integer (int32)时间戳, Unix标准时间
                     data:
-                        {
+                        {
                             语音返回数据
                         }
                     msg:string提示信息
@@ -3092,9 +3042,9 @@ cpdef   sync_do_tts(tts: str = "", interrupt: bool = True):
 
     """
     t = int(time.time())
-    res = start_voice_tts(tts = tts, interrupt = interrupt, timestamp = t)
+    res = start_voice_tts(tts=tts, interrupt=interrupt, timestamp=t)
     if res['code'] != 0:
-        logging.error("do tts failed error code = %d msg = %s",res.get("code",-1),res.get("msg","unknow error"))
+        logging.error("do tts failed error code = %d msg = %s", res.get("code", -1), res.get("msg", "unknow error"))
         return res
     coroutine = __wait_result_common(timestamp=t, getFuc=get_voice_tts_state, args=(t,))
     loop = asyncio.get_event_loop()
@@ -3116,45 +3066,44 @@ cpdef   public get_visual_task_result(option: str, type: str):
     Returns:
            Dict:
            e.g::
- 
+ 
                 {
-                    code: integer返回码，0表示正常
+                    code: integer返回码，0表示正常
                     type:string消息类型。 一次只返回一种类型的数据。 type 允许的值为:recognition,tracking,gender,age_group,quantity,color_detect,age,expression
                     data:
-                                                {
-                            analysis: {
-                                        age: integer
-                                        group: string
-                                        gender: string
-                                        expression: string
+                                                {
+                            analysis: {
+                                        age: integer
+                                        group: string
+                                        gender: string
+                                        expression: string
                                     }
                             recognition:
-                                                                                {
+                                                                                {
                                             name:string
                                         }
-                            quantity: integer数量 (整数)
+                            quantity: integer数量 (整数)
                             color:
                                 [
                                     所有可返回的颜色列表, 列表值有none、black、gray、white、red、orange、yellow、green、cyan、blue、purple
-                                                                        {
+                                                                        {
                                         name:string
                                     }
                                 ]
                         }
-                    timestamp:integer (int64)任务时间戳
-                    status: string状态
-                    msg: string提示信息
+                    timestamp:integer (int64)任务时间戳
+                    status: string状态
+                    msg: string提示信息
                 }
 
     """
-    visions_url = basic_url+"visions"
+    visions_url = basic_url + "visions"
     params = {'option': option, 'type': type}
     response = requests.get(url=visions_url, headers=headers, params=params)
     res = json.loads(str(response.content.decode("utf-8")))
     return res
 
-
-def   __control_visual_task(option: str, type: str, operation: str = "start", timestamp: int = 0):
+def __control_visual_task(option: str, type: str, operation: str = "start", timestamp: int = 0):
     """指定视觉任务停止或开始
 
     Args:
@@ -3191,7 +3140,7 @@ def   __control_visual_task(option: str, type: str, operation: str = "start", ti
     Returns:
            Dict:
            e.g::
- 
+ 
                 {
                     "code": 0,
                     "data": {},
@@ -3199,9 +3148,8 @@ def   __control_visual_task(option: str, type: str, operation: str = "start", ti
                 }
 
     """
-    visions_url = basic_url+"visions"
-    param = {"option": option, "type": type,
-             "operation": operation, "timestamp": timestamp}
+    visions_url = basic_url + "visions"
+    param = {"option": option, "type": type, "operation": operation, "timestamp": timestamp}
     json_data = json.dumps(param)
     response = requests.put(url=visions_url, data=json_data, headers=headers)
     res = json.loads(str(response.content.decode("utf-8")))
@@ -3217,14 +3165,14 @@ cpdef   start_face_recognition(type: str, timestamp: int = 0):
     Returns:
            Dict:
            e.g::
- 
+ 
                 {
                     "code": 0,
                     "data": {},
                     "msg": "Success"
                 }
     """
-    return __control_visual_task(option = 'face',type=type,operation='start',timestamp = timestamp)
+    return __control_visual_task(option='face', type=type, operation='start', timestamp=timestamp)
 
 cpdef   stop_face_recognition(type: str, timestamp: int = 0):
     """停止人脸识别
@@ -3236,16 +3184,16 @@ cpdef   stop_face_recognition(type: str, timestamp: int = 0):
     Returns:
            Dict:
            e.g::
- 
+ 
                 {
                     "code": 0,
                     "data": {},
                     "msg": "Success"
                 }
     """
-    return __control_visual_task(option = 'face',type=type,operation='stop',timestamp = timestamp)
+    return __control_visual_task(option='face', type=type, operation='stop', timestamp=timestamp)
 
-cpdef  public  sync_do_face_recognition_value(type:str):
+cpdef  public  sync_do_face_recognition_value(type: str):
     """执行人脸识别,识别完成后返回
 
     Args:
@@ -3270,7 +3218,7 @@ cpdef  public  sync_do_face_recognition_value(type:str):
 
     """
     timestamp = int(time.time())
-    startSuccess = start_face_recognition(type,timestamp)
+    startSuccess = start_face_recognition(type, timestamp)
     if not startSuccess:
         return None
     coroutine = __wait_result_common(timestamp=timestamp, getFuc=get_visual_task_result, args=("face", type))
@@ -3279,10 +3227,10 @@ cpdef  public  sync_do_face_recognition_value(type:str):
     loop.run_until_complete(tasks)
     ret = tasks.result()
     if not __resIsSuccess(ret):
-        logging.error("error code = %d msg = %s",ret.get("code",-1),ret.get("msg",""))
+        logging.error("error code = %d msg = %s", ret.get("code", -1), ret.get("msg", ""))
         return None
     faceRes = RobotVisualTaskResult(ret["data"])
-    ret = getattr(faceRes,type)
+    ret = getattr(faceRes, type)
     return ret
 
 cpdef   public sync_do_face_recognition(type: str):
@@ -3294,31 +3242,32 @@ cpdef   public sync_do_face_recognition(type: str):
     Returns:
            Dict:
            e.g::
- 
+ 
                 {
-                    code: integer返回码，0表示正常
+                    code: integer返回码，0表示正常
                     type:string消息类型。 一次只返回一种类型的数据。 type 允许的值为:recognition,tracking,gender,age_group,quantity,color_detect,age,expression,mask,glass
                     data:
-                          {
-                            analysis: {
-                                        age: integer
-                                        group: string
-                                        gender: string
-                                        expression: string
+                          {
+                            analysis: {
+                                        age: integer
+                                        group: string
+                                        gender: string
+                                        expression: string
                                         mask: string  口罩识别结果(masked、unmasked、not masked well)
                                         glass: string 眼镜识别结果(grayglass、normalglass、noglass)
                                     }
-                            quantity: integer数量 (整数)
+                            quantity: integer数量 (整数)
                         }
-                    timestamp:integer (int64)任务时间戳
-                    status: string状态
-                    msg: string提示信息
+                    timestamp:integer (int64)任务时间戳
+                    status: string状态
+                    msg: string提示信息
                 }
     """
     timestamp = int(time.time())
-    res = start_face_recognition(type,timestamp)
+    res = start_face_recognition(type, timestamp)
     if res['code'] != 0:
-        logging.error("do face recognition failed error code = %d msg = %s",res.get("code",-1),res.get("msg","unknow error"))
+        logging.error("do face recognition failed error code = %d msg = %s", res.get("code", -1),
+                      res.get("msg", "unknow error"))
         return res
     coroutine = __wait_result_common(timestamp=timestamp, getFuc=get_visual_task_result, args=("face", type))
     loop = asyncio.get_event_loop()
@@ -3335,14 +3284,14 @@ cpdef   start_gesture_recognition(timestamp: int = 0):
     Returns:
            Dict:
            e.g::
- 
+ 
                 {
                     "code": 0,
                     "data": {},
                     "msg": "Success"
                 }
     """
-    return __control_visual_task(option = 'hand',type='gesture',operation='start',timestamp = timestamp)
+    return __control_visual_task(option='hand', type='gesture', operation='start', timestamp=timestamp)
 
 cpdef   stop_gesture_recognition(timestamp: int = 0):
     """停止手势识别
@@ -3353,14 +3302,14 @@ cpdef   stop_gesture_recognition(timestamp: int = 0):
     Returns:
            Dict:
            e.g::
- 
+ 
                 {
                     "code": 0,
                     "data": {},
                     "msg": "Success"
                 }
     """
-    return __control_visual_task(option = 'hand',type='gesture',operation='stop',timestamp = timestamp)
+    return __control_visual_task(option='hand', type='gesture', operation='stop', timestamp=timestamp)
 
 cpdef  public  sync_do_gesture_recognition():
     """执行手势识别,识别完成后返回
@@ -3378,7 +3327,7 @@ cpdef  public  sync_do_gesture_recognition():
     Returns:
            Dict:
            e.g::
- 
+ 
                 {
                     "code": 0,
                     "data": {
@@ -3393,9 +3342,10 @@ cpdef  public  sync_do_gesture_recognition():
     timestamp = int(time.time())
     res = start_gesture_recognition(timestamp)
     if res['code'] != 0:
-        logging.error("do gesture recognition failed error code = %d msg = %s",res.get("code",-1),res.get("msg","unknow error"))
+        logging.error("do gesture recognition failed error code = %d msg = %s", res.get("code", -1),
+                      res.get("msg", "unknow error"))
         return res
-    coroutine = __wait_result_common(timestamp=timestamp, getFuc=get_visual_task_result, args=("hand",'gesture'))
+    coroutine = __wait_result_common(timestamp=timestamp, getFuc=get_visual_task_result, args=("hand", 'gesture'))
     loop = asyncio.get_event_loop()
     tasks = loop.create_task(coroutine)
     loop.run_until_complete(tasks)
@@ -3410,14 +3360,14 @@ cpdef  start_color_recognition(timestamp: int = 0):
     Returns:
            Dict:
            e.g::
- 
+ 
                 {
                     "code": 0,
                     "data": {},
                     "msg": "Success"
                 }
     """
-    return __control_visual_task(option = 'color',type="color_detect",operation='start',timestamp = timestamp)
+    return __control_visual_task(option='color', type="color_detect", operation='start', timestamp=timestamp)
 
 cpdef   stop_color_recognition(timestamp: int = 0):
     """停止颜色识别
@@ -3428,14 +3378,14 @@ cpdef   stop_color_recognition(timestamp: int = 0):
     Returns:
            Dict:
            e.g::
- 
+ 
                 {
                     "code": 0,
                     "data": {},
                     "msg": "Success"
                 }
     """
-    return __control_visual_task(option = 'color',type="color_detect",operation='stop',timestamp = timestamp)
+    return __control_visual_task(option='color', type="color_detect", operation='stop', timestamp=timestamp)
 
 cpdef   public sync_do_color_recognition():
     """执行颜色识别,识别完成后返回
@@ -3443,29 +3393,30 @@ cpdef   public sync_do_color_recognition():
     Returns:
            Dict:
            e.g::
- 
+ 
                 {
-                    code: integer返回码，0表示正常
+                    code: integer返回码，0表示正常
                     type:string消息类型。 一次只返回一种类型的数据。 type 允许的值为:recognition,tracking,gender,age_group,quantity,color_detect,age,expression
                     data:
-                          {
+                          {
                             color:
                                 [
                                     所有可返回的颜色列表, 列表值有none、black、gray、white、red、orange、yellow、green、cyan、blue、purple
-                                    {
+                                    {
                                         name:string
                                     }
                                 ]
                         }
-                    timestamp:integer (int64)任务时间戳
-                    status: string状态
-                    msg: string提示信息
+                    timestamp:integer (int64)任务时间戳
+                    status: string状态
+                    msg: string提示信息
                 }
     """
     timestamp = int(time.time())
     res = start_color_recognition(timestamp)
     if res['code'] != 0:
-        logging.error("do color recognition failed error code = %d msg = %s",res.get("code",-1),res.get("msg","unknow error"))
+        logging.error("do color recognition failed error code = %d msg = %s", res.get("code", -1),
+                      res.get("msg", "unknow error"))
         return res
     coroutine = __wait_result_common(timestamp=timestamp, getFuc=get_visual_task_result, args=("color", "color_detect"))
     loop = asyncio.get_event_loop()
@@ -3482,14 +3433,14 @@ cpdef   start_object_recognition(timestamp: int = 0):
     Returns:
            Dict:
            e.g::
- 
+ 
                 {
                     "code": 0,
                     "data": {},
                     "msg": "Success"
                 }
     """
-    return __control_visual_task(option = 'object',type="recognition",operation='start',timestamp = timestamp)
+    return __control_visual_task(option='object', type="recognition", operation='start', timestamp=timestamp)
 
 cpdef   stop_object_recognition(timestamp: int = 0):
     """停止物体识别
@@ -3500,14 +3451,14 @@ cpdef   stop_object_recognition(timestamp: int = 0):
     Returns:
            Dict:
            e.g::
- 
+ 
                 {
                     "code": 0,
                     "data": {},
                     "msg": "Success"
                 }
     """
-    return __control_visual_task(option = 'object',type="recognition",operation='stop',timestamp = timestamp)
+    return __control_visual_task(option='object', type="recognition", operation='stop', timestamp=timestamp)
 
 cpdef   public sync_do_object_recognition():
     """执行物体识别,识别完成后返回
@@ -3515,27 +3466,28 @@ cpdef   public sync_do_object_recognition():
     Returns:
            Dict:
            e.g::
- 
+ 
                 {
-                    code: integer返回码，0表示正常
+                    code: integer返回码，0表示正常
                     type:string消息类型。 一次只返回一种类型的数据。 type 允许的值为:recognition,tracking,gender,age_group,quantity,color_detect,age,expression
                     data:
-                          {
+                          {
                             recognition:
-                                        {
+                                        {
                                             name:string
                                         }
-                            quantity: integer数量 (整数)
+                            quantity: integer数量 (整数)
                         }
-                    timestamp:integer (int64)任务时间戳
-                    status: string状态
-                    msg: string提示信息
+                    timestamp:integer (int64)任务时间戳
+                    status: string状态
+                    msg: string提示信息
                 }
     """
     timestamp = int(time.time())
     res = start_object_recognition(timestamp)
     if res['code'] != 0:
-        logging.error("do object recognition failed error code = %d msg = %s",res.get("code",-1),res.get("msg","unknow error"))
+        logging.error("do object recognition failed error code = %d msg = %s", res.get("code", -1),
+                      res.get("msg", "unknow error"))
         return res
     coroutine = __wait_result_common(timestamp=timestamp, getFuc=get_visual_task_result, args=("object", "recognition"))
     loop = asyncio.get_event_loop()
@@ -3543,7 +3495,7 @@ cpdef   public sync_do_object_recognition():
     loop.run_until_complete(tasks)
     return tasks.result()
 
-cpdef  public  do_face_entry(name:str):
+cpdef  public  do_face_entry(name: str):
     """进行人脸录入
 
     Args:
@@ -3555,9 +3507,10 @@ cpdef  public  do_face_entry(name:str):
     """
     res = take_vision_photo()
     if not __resIsSuccess(res):
-        logging.error("do face entry failed error code = %d msg = %s",res.get("code",-1),res.get("msg","unknow error"))
+        logging.error("do face entry failed error code = %d msg = %s", res.get("code", -1),
+                      res.get("msg", "unknow error"))
         return False
-    path = os.path.expanduser("~")+"/"
+    path = os.path.expanduser("~") + "/"
     get_vision_photo(res["data"]["name"], path)
     photo = path + res["data"]["name"]
     photo_name = res["data"]["name"]
@@ -3566,15 +3519,16 @@ cpdef  public  do_face_entry(name:str):
     if os.path.exists(photo) and os.path.isfile(photo):  # 如果文件存在
         os.remove(photo)
     if not __resIsSuccess(res):
-        logging.error("do face entry failed error code = %d msg = %s",res.get("code",-1),res.get("msg","unknow error"))
+        logging.error("do face entry failed error code = %d msg = %s", res.get("code", -1),
+                      res.get("msg", "unknow error"))
         return False
     #为图片数据打tag
-    res = set_vision_tag([photo_name],name)
+    res = set_vision_tag([photo_name], name)
     if not __resIsSuccess(res):
-        logging.error("do face entry failed error code = %d msg = %s",res.get("code",-1),res.get("msg","unknow error"))
+        logging.error("do face entry failed error code = %d msg = %s", res.get("code", -1),
+                      res.get("msg", "unknow error"))
         return False
     return True
-
 
 cpdef   public delete_vision_photo(name: str):
     """删除指定名称的图片
@@ -3584,7 +3538,7 @@ cpdef   public delete_vision_photo(name: str):
     Returns:
            Dict:
            e.g::
- 
+ 
                 {
                     "code": 0,
                     "data": {},
@@ -3592,14 +3546,12 @@ cpdef   public delete_vision_photo(name: str):
                 }
 
     """
-    visions_url = basic_url+"visions/photos"
+    visions_url = basic_url + "visions/photos"
     param = {"name": name}
     json_data = json.dumps(param)
-    response = requests.delete(
-        url=visions_url, data=json_data, headers=headers)
+    response = requests.delete(url=visions_url, data=json_data, headers=headers)
     res = json.loads(str(response.content.decode("utf-8")))
     return res
-
 
 cpdef   get_vision_photo(name: str, savePath: str = "./"):
     """获取指定名称的照片，并保存到特定路径下面
@@ -3612,14 +3564,13 @@ cpdef   get_vision_photo(name: str, savePath: str = "./"):
            data:图片内容
 
     """
-    visions_url = basic_url+"visions/photos"
+    visions_url = basic_url + "visions/photos"
     params = {'body': name}
     response = requests.get(url=visions_url, headers=headers, params=params)
     res = response.content
-    with open(savePath+name, "wb") as fp:
+    with open(savePath + name, "wb") as fp:
         fp.write(res)
     return res
-
 
 cpdef   take_vision_photo(resolution: str = "640x480"):
     """拍一张照片
@@ -3632,7 +3583,7 @@ cpdef   take_vision_photo(resolution: str = "640x480"):
     Returns:
            Dict:
            e.g::
- 
+ 
                 {
                     "code": 0,
                     "data": {name:string 拍摄的照片名},
@@ -3640,13 +3591,12 @@ cpdef   take_vision_photo(resolution: str = "640x480"):
                 }
 
     """
-    visions_url = basic_url+"visions/photos"
+    visions_url = basic_url + "visions/photos"
     param = {"resolution": resolution}
     json_data = json.dumps(param)
     response = requests.post(url=visions_url, data=json_data, headers=headers)
     res = json.loads(str(response.content.decode("utf-8")))
     return res
-
 
 cpdef   public get_vision_photo_list():
     """获取机器人照片列表
@@ -3654,7 +3604,7 @@ cpdef   public get_vision_photo_list():
     Returns:
            Dict:
            e.g::
- 
+ 
                 {
                     "code": 0,
                     "data": [
@@ -3665,15 +3615,14 @@ cpdef   public get_vision_photo_list():
                                      "name": "name"
                                  }
                             ],
-                    msg: string提示信息
+                    msg: string提示信息
                 }
 
     """
-    visions_url = basic_url+"visions/photos/list"
+    visions_url = basic_url + "visions/photos/list"
     response = requests.get(url=visions_url, headers=headers)
     res = json.loads(str(response.content.decode("utf-8")))
     return res
-
 
 cpdef   public delete_vision_photo_sample(name: str):
     """删除指定名称的样本照片
@@ -3684,7 +3633,7 @@ cpdef   public delete_vision_photo_sample(name: str):
     Returns:
            Dict:
            e.g::
- 
+ 
                 {
                     "code": 0,
                     "data": {},
@@ -3692,14 +3641,12 @@ cpdef   public delete_vision_photo_sample(name: str):
                 }
 
     """
-    visions_url = basic_url+"visions/photosamples"
+    visions_url = basic_url + "visions/photosamples"
     param = {"name": name}
     json_data = json.dumps(param)
-    response = requests.delete(
-        url=visions_url, data=json_data, headers=headers)
+    response = requests.delete(url=visions_url, data=json_data, headers=headers)
     res = json.loads(str(response.content.decode("utf-8")))
     return res
-
 
 cpdef  public  get_vision_photo_samples():
     """获取样本照片列表
@@ -3707,7 +3654,7 @@ cpdef  public  get_vision_photo_samples():
     Returns:
            Dict:
            e.g::
- 
+ 
                 {
                     "code": 0,
                     "data": [
@@ -3718,15 +3665,14 @@ cpdef  public  get_vision_photo_samples():
                                      "name": "name"
                                  }
                             ],
-                    msg: string提示信息
+                    msg: string提示信息
                 }
 
     """
-    visions_url = basic_url+"visions/photosamples"
+    visions_url = basic_url + "visions/photosamples"
     response = requests.get(url=visions_url, headers=headers)
     res = json.loads(str(response.content.decode("utf-8")))
     return res
-
 
 cpdef  public  upload_vision_photo_sample(filePath: str):
     """上传样本图片到特定文件夹
@@ -3750,18 +3696,17 @@ cpdef  public  upload_vision_photo_sample(filePath: str):
             }
 
     """
-    visions_url = basic_url+"visions/photosamples"
+    visions_url = basic_url + "visions/photosamples"
     headers = {'Authorization': 'multipart/form-data'}
     files = {'file': open(filePath, 'rb')}
     response = requests.post(url=visions_url, files=files, headers=headers)
     res = json.loads(str(response.content.decode("utf-8")))
     return res
 
-
 cpdef   open_vision_stream(resolution: str = "640x480"):
     """打开摄像头网络视频流
 
-    用户可以通过浏览器直接接收视频．视频将以mjpg格式通过http的形式发布url: http://机器人ip地址:8000。
+    用户可以通过浏览器直接接收视频．视频将以mjpg格式通过http的形式发布url: http://机器人ip地址:8000。
 
     Args:
         resolution(str):视频分辨率。默认视频分辨率为640x480
@@ -3769,7 +3714,7 @@ cpdef   open_vision_stream(resolution: str = "640x480"):
     Returns:
            Dict:
            e.g::
- 
+ 
                 {
                     "code": 0,
                     "data": {},
@@ -3777,13 +3722,12 @@ cpdef   open_vision_stream(resolution: str = "640x480"):
                 }
 
     """
-    visions_url = basic_url+"visions/streams"
+    visions_url = basic_url + "visions/streams"
     param = {"resolution": resolution}
     json_data = json.dumps(param)
     response = requests.post(url=visions_url, data=json_data, headers=headers)
     res = json.loads(str(response.content.decode("utf-8")))
     return res
-
 
 cpdef  public  close_vision_stream():
     """关闭摄像头网络视频流
@@ -3791,7 +3735,7 @@ cpdef  public  close_vision_stream():
     Returns:
            Dict:
            e.g::
- 
+ 
                 {
                     "code": 0,
                     "data": {},
@@ -3799,13 +3743,12 @@ cpdef  public  close_vision_stream():
                 }
 
     """
-    visions_url = basic_url+"visions/streams"
+    visions_url = basic_url + "visions/streams"
     response = requests.delete(url=visions_url, headers=headers)
     res = json.loads(str(response.content.decode("utf-8")))
     return res
 
-
-cpdef   delete_vision_tag(tag: str,mode:str = "all"):
+cpdef   delete_vision_tag(tag: str, mode: str = "all"):
     """删除指定标签
 
     Args:
@@ -3814,7 +3757,7 @@ cpdef   delete_vision_tag(tag: str,mode:str = "all"):
     Returns:
            Dict:
            e.g::
- 
+ 
                 {
                     "code": 0,
                     "data": {},
@@ -3822,14 +3765,12 @@ cpdef   delete_vision_tag(tag: str,mode:str = "all"):
                 }
 
     """
-    visions_url = basic_url+"visions/tags"
-    param = {"tags": tag,"mode":mode}
+    visions_url = basic_url + "visions/tags"
+    param = {"tags": tag, "mode": mode}
     json_data = json.dumps(param)
-    response = requests.delete(
-        url=visions_url, data=json_data, headers=headers)
+    response = requests.delete(url=visions_url, data=json_data, headers=headers)
     res = json.loads(str(response.content.decode("utf-8")))
     return res
-
 
 cpdef   public get_vision_tags():
     """获取样本标签列表
@@ -3837,7 +3778,7 @@ cpdef   public get_vision_tags():
     Returns:
            Dict:
            e.g::
- 
+ 
                 {
                     code (integer): Return code, 0 means success ,
                     data (list[VisionsPutTags], optional),
@@ -3871,11 +3812,10 @@ cpdef   public get_vision_tags():
                      "msg": "Success"
                  }
     """
-    visions_url = basic_url+"visions/tags"
+    visions_url = basic_url + "visions/tags"
     response = requests.get(url=visions_url, headers=headers)
     res = json.loads(str(response.content.decode("utf-8")))
     return res
-
 
 cpdef   public  set_vision_tag(resources: List[str], tag: str):
     """给已有样本图片打标签
@@ -3889,7 +3829,7 @@ cpdef   public  set_vision_tag(resources: List[str], tag: str):
     Returns:
            Dict:
            e.g::
- 
+ 
                 {
                     "code": 0,
                     "data": {},
@@ -3897,7 +3837,7 @@ cpdef   public  set_vision_tag(resources: List[str], tag: str):
                 }
 
     """
-    visions_url = basic_url+"visions/tags"
+    visions_url = basic_url + "visions/tags"
     param = {"resources": resources, "tags": tag}
     json_data = json.dumps(param)
     response = requests.put(url=visions_url, data=json_data, headers=headers)
@@ -3922,14 +3862,14 @@ cpdef   public do_visions_visible(operation, task):
 	}
     """
     vision_visible_url = basic_url + "visions_visible"
-    param = {"operation":operation, "type":task}
+    param = {"operation": operation, "type": task}
     json_data = json.dumps(param)
-    response = requests.put(url = vision_visible_url, data = json_data, headers=headers)
+    response = requests.put(url=vision_visible_url, data=json_data, headers=headers)
     res = json.loads(str(response.content.decode("utf-8")))
     print(res)
     if operation == 'start':
         try:
-            print("url --> %s"%res['data']['url'])
+            print("url --> %s" % res['data']['url'])
         except:
             pass
     return res
@@ -3946,13 +3886,13 @@ cpdef   public show_visions_result(operation):
     counter = 0
     #camera_list = [None, None, None]
     try:
-        res = do_visions_visible('start',operation)
+        res = do_visions_visible('start', operation)
         if res['code'] == 20003:
             if ip != "127.0.0.1":
                 port = res['data']['url'][7:][res['data']['url'][7:].find(':') + 1:]
-                print("port --> %s"%port)
+                print("port --> %s" % port)
                 url = "http://" + ip + ":" + port
-                print("new url:%s"%url)
+                print("new url:%s" % url)
             else:
                 url = res['data']['url']
         elif res['code'] == 0:
@@ -3964,7 +3904,7 @@ cpdef   public show_visions_result(operation):
         print("Something wrong I can not open...")
         cv2.destroyAllWindows()
         cv2.waitKey(1)
-        do_visions_visible('stop',operation)
+        do_visions_visible('stop', operation)
         return
     camera = cv2.VideoCapture(url)
     ret = camera.isOpened()
@@ -3972,7 +3912,7 @@ cpdef   public show_visions_result(operation):
         print('Unable to accquire data')
         cv2.destroyAllWindows()
         cv2.waitKey(1)
-        do_visions_visible('stop',operation)
+        do_visions_visible('stop', operation)
         return
     try:
         while ret:
@@ -3991,11 +3931,11 @@ cpdef   public show_visions_result(operation):
                     camera.release()
                     counter += 1
                     try:
-                        res = do_visions_visible('start',operation)
+                        res = do_visions_visible('start', operation)
                         url = res['data']['url']
-                        ret = 1 # give it a try...
+                        ret = 1  # give it a try...
                     except:
-                         exit(0)
+                        exit(0)
                     print('new url --> %s' % url)
                     camera = cv2.VideoCapture(url)
                     continue
@@ -4007,12 +3947,12 @@ cpdef   public show_visions_result(operation):
                 break
         cv2.destroyAllWindows()
         cv2.waitKey(1)
-        do_visions_visible('stop',operation)
+        do_visions_visible('stop', operation)
     except:
         print('program crash')
         cv2.destroyAllWindows()
         cv2.waitKey(1)
-        do_visions_visible('stop',operation)
+        do_visions_visible('stop', operation)
 ####Subscriptions####
 
 
@@ -4025,7 +3965,7 @@ cpdef  public  stop_subscribe_motion(url: str):
     Returns:
            Dict:
            e.g::
- 
+ 
                 {
                     "code": 0,
                     "data": {},
@@ -4033,26 +3973,24 @@ cpdef  public  stop_subscribe_motion(url: str):
                 }
 
     """
-    subscriptions_url = basic_url+"subscriptions/motions"
+    subscriptions_url = basic_url + "subscriptions/motions"
     param = {"url": url}
     json_data = json.dumps(param)
-    response = requests.delete(
-        url=subscriptions_url, data=json_data, headers=headers)
+    response = requests.delete(url=subscriptions_url, data=json_data, headers=headers)
     res = json.loads(str(response.content.decode("utf-8")))
     return res
-
 
 cpdef   start_subscribe_motion(url: str, timeout: int = 10):
     """订阅运动控制状态信息
 
     Args:
         url(str):订阅的接收地址
-        timeout(int):订阅超时的时间，单位：秒Default: 10  minimum:1 maximum:60
+        timeout(int):订阅超时的时间，单位：秒Default: 10  minimum:1 maximum:60
 
     Returns:
            Dict:
            e.g::
- 
+ 
                 {
                     "code": 0,
                     "data": {},
@@ -4060,14 +3998,12 @@ cpdef   start_subscribe_motion(url: str, timeout: int = 10):
                 }
 
     """
-    subscriptions_url = basic_url+"subscriptions/motions"
+    subscriptions_url = basic_url + "subscriptions/motions"
     param = {"url": url, "timeout": timeout}
     json_data = json.dumps(param)
-    response = requests.post(url=subscriptions_url,
-                             data=json_data, headers=headers)
+    response = requests.post(url=subscriptions_url, data=json_data, headers=headers)
     res = json.loads(str(response.content.decode("utf-8")))
     return res
-
 
 cpdef   public stop_subscribe_motion_gait(url: str):
     """停止步态运动控制状态信息订阅
@@ -4078,7 +4014,7 @@ cpdef   public stop_subscribe_motion_gait(url: str):
     Returns:
            Dict:
            e.g::
- 
+ 
                 {
                     "code": 0,
                     "data": {},
@@ -4086,26 +4022,24 @@ cpdef   public stop_subscribe_motion_gait(url: str):
                 }
 
     """
-    subscriptions_url = basic_url+"subscriptions/motions/gait"
+    subscriptions_url = basic_url + "subscriptions/motions/gait"
     param = {"url": url}
     json_data = json.dumps(param)
-    response = requests.delete(
-        url=subscriptions_url, data=json_data, headers=headers)
+    response = requests.delete(url=subscriptions_url, data=json_data, headers=headers)
     res = json.loads(str(response.content.decode("utf-8")))
     return res
-
 
 cpdef   start_subscribe_motion_gait(url: str, timeout: int = 10):
     """订阅步态运动控制状态信息
 
     Args:
         url(str):订阅的接收地址
-        timeout(int):订阅超时的时间，单位：秒Default: 10  minimum:1 maximum:60
+        timeout(int):订阅超时的时间，单位：秒Default: 10  minimum:1 maximum:60
 
     Returns:
            Dict:
            e.g::
- 
+ 
                 {
                     "code": 0,
                     "data": {},
@@ -4113,28 +4047,26 @@ cpdef   start_subscribe_motion_gait(url: str, timeout: int = 10):
                 }
 
     """
-    subscriptions_url = basic_url+"subscriptions/motions/gait"
+    subscriptions_url = basic_url + "subscriptions/motions/gait"
     param = {"url": url, "timeout": timeout}
     json_data = json.dumps(param)
-    response = requests.post(url=subscriptions_url,
-                             data=json_data, headers=headers)
+    response = requests.post(url=subscriptions_url, data=json_data, headers=headers)
     res = json.loads(str(response.content.decode("utf-8")))
     return res
-
 
 cpdef   stop_subscribe_sensor(url, type, id=0, slot=0):
     """停止传感器订阅服务。
 
     Args:
         url(str):订阅的接收地址
-        type(str):传感器类型，可选取值（gyro, ultrasonic, environment, infrared, touch, pressure）
-        id(int):minimum:1 maximum:126传感器地址，可不填
+        type(str):传感器类型，可选取值（gyro, ultrasonic, environment, infrared, touch, pressure）
+        id(int):minimum:1 maximum:126传感器地址，可不填
         slot(int):maximum:6传感器槽位号
 
     Returns:
            Dict:
            e.g::
- 
+ 
                 {
                     "code": 0,
                     "data": {},
@@ -4142,34 +4074,32 @@ cpdef   stop_subscribe_sensor(url, type, id=0, slot=0):
                 }
 
     """
-    subscriptions_url = basic_url+"subscriptions/sensors"
+    subscriptions_url = basic_url + "subscriptions/sensors"
     param = {"url": url, "type": type}
     if (id != 0):
         param["id"] = id
     if (slot != 0):
         param["slot"] = slot
     json_data = json.dumps(param)
-    response = requests.delete(
-        url=subscriptions_url, data=json_data, headers=headers)
+    response = requests.delete(url=subscriptions_url, data=json_data, headers=headers)
     res = json.loads(str(response.content.decode("utf-8")))
     return res
-
 
 cpdef   start_subscribe_sensor(url: str, type: str, id=0, slot=0, timeval=100, timeout=10):
     """订阅传感器消息
 
     Args:
         url(str):订阅的接收地址
-        type(str): 传感器类型，取值如下：gyro, ultrasonic, environment, infrared, touch, pressure
-        id(int):传感器地址，可不填 minimum:1 maximum:126
+        type(str): 传感器类型，取值如下：gyro, ultrasonic, environment, infrared, touch, pressure
+        id(int):传感器地址，可不填 minimum:1 maximum:126
         slot(int):传感器槽位号 maximum:6
-        timeval(int):上报的最短时间间隔，单位ms minimum:100 maximum:5000
-        timeout(int):订阅的最大重试时间，单位：秒 Default 10 minimum:1 maximum:60
+        timeval(int):上报的最短时间间隔，单位ms minimum:100 maximum:5000
+        timeout(int):订阅的最大重试时间，单位：秒 Default 10 minimum:1 maximum:60
 
     Returns:
            Dict:
            e.g::
- 
+ 
                 {
                     "code": 0,
                     "data": {},
@@ -4177,30 +4107,28 @@ cpdef   start_subscribe_sensor(url: str, type: str, id=0, slot=0, timeval=100, t
                 }
 
     """
-    subscriptions_url = basic_url+"subscriptions/sensors"
+    subscriptions_url = basic_url + "subscriptions/sensors"
     param = {"url": url, "type": type, "timeval": timeval, "timeout": timeout}
     if (id != 0):
         param["id"] = id
     if (slot != 0):
         param["slot"] = slot
     json_data = json.dumps(param)
-    response = requests.post(url=subscriptions_url,
-                             data=json_data, headers=headers)
+    response = requests.post(url=subscriptions_url, data=json_data, headers=headers)
     res = json.loads(str(response.content.decode("utf-8")))
     return res
-
 
 cpdef   public stop_subscribe_vision(url: str, type: str):
     """停止指定视觉任务订阅
 
     Args:
-        type(str):消息类型。type 允许上传的值有 face_recognition, object_recognition, gender, age, age_group, face_quantity, expression, color_detect
+        type(str):消息类型。type 允许上传的值有 face_recognition, object_recognition, gender, age, age_group, face_quantity, expression, color_detect
         url(str):订阅的接收地址
 
     Returns:
            Dict:
            e.g::
- 
+ 
                 {
                     "code": 0,
                     "data": {},
@@ -4208,28 +4136,26 @@ cpdef   public stop_subscribe_vision(url: str, type: str):
                 }
 
     """
-    subscriptions_url = basic_url+"subscriptions/visions"
+    subscriptions_url = basic_url + "subscriptions/visions"
     param = {"url": url, "type": type}
     json_data = json.dumps(param)
-    response = requests.delete(
-        url=subscriptions_url, data=json_data, headers=headers)
+    response = requests.delete(url=subscriptions_url, data=json_data, headers=headers)
     res = json.loads(str(response.content.decode("utf-8")))
     return res
 
-
-cpdef   start_subscribe_vision(url: str, type: str, timeout:int=10):
+cpdef   start_subscribe_vision(url: str, type: str, timeout: int = 10):
     """订阅指定视觉任务消息
 
     Args:
         type(str):消息类型。type 允许上传的值有
-        face_recognition, object_recognition, gender, age, age_group, face_quantity, expression, color_detect
-        url(str): 订阅的接收地址
-        timeout(int):minimum:1 maximum:60订阅的最大重试时间，单位：秒 Default 10
+        face_recognition, object_recognition, gender, age, age_group, face_quantity, expression, color_detect
+        url(str): 订阅的接收地址
+        timeout(int):minimum:1 maximum:60订阅的最大重试时间，单位：秒 Default 10
 
     Returns:
            Dict:
            e.g::
- 
+ 
                 {
                     "code": 0,
                     "data": {},
@@ -4237,14 +4163,12 @@ cpdef   start_subscribe_vision(url: str, type: str, timeout:int=10):
                 }
 
     """
-    subscriptions_url = basic_url+"subscriptions/visions"
+    subscriptions_url = basic_url + "subscriptions/visions"
     param = {"url": url, "type": type, "timeout": timeout}
     json_data = json.dumps(param)
-    response = requests.post(url=subscriptions_url,
-                             data=json_data, headers=headers)
+    response = requests.post(url=subscriptions_url, data=json_data, headers=headers)
     res = json.loads(str(response.content.decode("utf-8")))
     return res
-
 
 cpdef   public stop_subscribe_voice_asr(url: str):
     """停止订阅语义理解消息
@@ -4255,7 +4179,7 @@ cpdef   public stop_subscribe_voice_asr(url: str):
     Returns:
            Dict:
            e.g::
- 
+ 
                 {
                     "code": 0,
                     "data": {},
@@ -4263,26 +4187,24 @@ cpdef   public stop_subscribe_voice_asr(url: str):
                 }
 
     """
-    subscriptions_url = basic_url+"subscriptions/voice/asr"
+    subscriptions_url = basic_url + "subscriptions/voice/asr"
     param = {"url": url}
     json_data = json.dumps(param)
-    response = requests.delete(
-        url=subscriptions_url, data=json_data, headers=headers)
+    response = requests.delete(url=subscriptions_url, data=json_data, headers=headers)
     res = json.loads(str(response.content.decode("utf-8")))
     return res
-
 
 cpdef   start_subscribe_voice_asr(url: str, timeout: int = 10):
     """订阅语义理解消息
 
     Args:
         url(str):需要停止的订阅的接收地址
-        timeout(int):订阅超时的时间，单位：秒Default: 10 minimum:1 maximum:60
+        timeout(int):订阅超时的时间，单位：秒Default: 10 minimum:1 maximum:60
 
     Returns:
            Dict:
            e.g::
- 
+ 
                 {
                     "code": 0,
                     "data": {},
@@ -4290,14 +4212,12 @@ cpdef   start_subscribe_voice_asr(url: str, timeout: int = 10):
                 }
 
     """
-    subscriptions_url = basic_url+"subscriptions/voice/asr"
+    subscriptions_url = basic_url + "subscriptions/voice/asr"
     param = {"url": url, "timeout": timeout}
     json_data = json.dumps(param)
-    response = requests.post(url=subscriptions_url,
-                             data=json_data, headers=headers)
+    response = requests.post(url=subscriptions_url, data=json_data, headers=headers)
     res = json.loads(str(response.content.decode("utf-8")))
     return res
-
 
 cpdef   public  stop_subscribe_voice_iat(url: str):
     """停止订阅语音听写消息
@@ -4308,7 +4228,7 @@ cpdef   public  stop_subscribe_voice_iat(url: str):
     Returns:
            Dict:
            e.g::
- 
+ 
                 {
                     "code": 0,
                     "data": {},
@@ -4316,26 +4236,24 @@ cpdef   public  stop_subscribe_voice_iat(url: str):
                 }
 
     """
-    subscriptions_url = basic_url+"subscriptions/voice/iat"
+    subscriptions_url = basic_url + "subscriptions/voice/iat"
     param = {"url": url}
     json_data = json.dumps(param)
-    response = requests.delete(
-        url=subscriptions_url, data=json_data, headers=headers)
+    response = requests.delete(url=subscriptions_url, data=json_data, headers=headers)
     res = json.loads(str(response.content.decode("utf-8")))
     return res
-
 
 cpdef   start_subscribe_voice_iat(url: str, timeout=10):
     """订阅语音听写消息
 
     Args:
         url(str):需要停止的订阅的接收地址
-        timeout(int):订阅超时的时间，单位：秒Default: 10 minimum:1 maximum:60
+        timeout(int):订阅超时的时间，单位：秒Default: 10 minimum:1 maximum:60
 
     Returns:
            Dict:
            e.g::
- 
+ 
                 {
                     "code": 0,
                     "data": {},
@@ -4343,14 +4261,12 @@ cpdef   start_subscribe_voice_iat(url: str, timeout=10):
                 }
 
     """
-    subscriptions_url = basic_url+"subscriptions/voice/iat"
+    subscriptions_url = basic_url + "subscriptions/voice/iat"
     param = {"url": url, "timeout": timeout}
     json_data = json.dumps(param)
-    response = requests.post(url=subscriptions_url,
-                             data=json_data, headers=headers)
+    response = requests.post(url=subscriptions_url, data=json_data, headers=headers)
     res = json.loads(str(response.content.decode("utf-8")))
     return res
-
 
 cpdef   public  stop_subscribe_voice_tts(url: str):
     """停止订阅语音播报消息
@@ -4361,7 +4277,7 @@ cpdef   public  stop_subscribe_voice_tts(url: str):
     Returns:
            Dict:
            e.g::
- 
+ 
                 {
                     "code": 0,
                     "data": {},
@@ -4369,11 +4285,10 @@ cpdef   public  stop_subscribe_voice_tts(url: str):
                 }
 
     """
-    subscriptions_url = basic_url+"subscriptions/voice/tts"
+    subscriptions_url = basic_url + "subscriptions/voice/tts"
     param = {"url": url}
     json_data = json.dumps(param)
-    response = requests.delete(
-        url=subscriptions_url, data=json_data, headers=headers)
+    response = requests.delete(url=subscriptions_url, data=json_data, headers=headers)
     res = json.loads(str(response.content.decode("utf-8")))
     return res
 
@@ -4384,7 +4299,7 @@ cpdef public start_subscribe_voice_tts_impl(url: str, timeout: int):
     Returns:
            Dict:
            e.g::
- 
+ 
                 {
                     "code": 0,
                     "data": {},
@@ -4392,15 +4307,14 @@ cpdef public start_subscribe_voice_tts_impl(url: str, timeout: int):
                 }
 
     """
-    subscriptions_url = basic_url+"subscriptions/voice/tts"
+    subscriptions_url = basic_url + "subscriptions/voice/tts"
     param = {"url": url, "timeout": timeout}
     json_data = json.dumps(param)
-    response = requests.post(url=subscriptions_url,
-                             data=json_data, headers=headers)
+    response = requests.post(url=subscriptions_url, data=json_data, headers=headers)
     res = json.loads(str(response.content.decode("utf-8")))
     return res
 cpdef   start_subscribe_voice_tts(url: str, timeout: int = 10):
-    return start_subscribe_voice_tts_impl(url,timeout)
+    return start_subscribe_voice_tts_impl(url, timeout)
 
 # # @unique
 # cpdef public class GamepadKey(Enum):
@@ -4438,7 +4352,6 @@ cpdef   start_subscribe_voice_tts(url: str, timeout: int = 10):
 #     START = "key_START"
 #     POWER = "key_POWER"
 #     RESERVE = "key_RESERVE"
-
 
 
 cpdef public enum GamepadKey:
@@ -4538,7 +4451,6 @@ def gamepad_key_to_string(GamepadKey key):
         return "Unknown"
 
 
-
 class GamepadKeymap():
     """手柄按键和动作文件映射
 
@@ -4567,6 +4479,7 @@ class GamepadKeymap():
     @property
     def long_press(self):
         return self.longPress
+
 
 # cdef public class GamepadKeymap[object GamepadKeymap, type GamepadKeymap_Type]: #
 #     cdef object keyName
@@ -4597,7 +4510,7 @@ cpdef   public  get_gamepad_keymap():
     Returns:
            Dict:
            e.g::
- 
+ 
                {
                   "code": 0,
                   "data": [
@@ -4611,7 +4524,7 @@ cpdef   public  get_gamepad_keymap():
                   "msg": "Success"
                 }
     """
-    voice_url = basic_url+"gamepad/keymap/get"
+    voice_url = basic_url + "gamepad/keymap/get"
     response = requests.get(url=voice_url, headers=headers)
     res = json.loads(str(response.content.decode("utf-8")))
     return res
@@ -4625,19 +4538,18 @@ cpdef public set_gamepad_keymap_impl(key_name: GamepadKey, hts_name: str, bint l
           hts_name(str): 动作文件名
           long_press(bool): 是否需要长按
       Returns:
-             json: 
+             json: 
              e.g::
                   {
-                      code: integer (int32)返回码，0表示正常
-                      msg: string提示信息
+                      code: integer (int32)返回码，0表示正常
+                      msg: string提示信息
                    }
 
     """
-    return set_gamepad_keymaps([GamepadKeymap(key_name , hts_name, long_press)])
+    return set_gamepad_keymaps([GamepadKeymap(key_name, hts_name, long_press)])
 
 def set_gamepad_keymap(key_name: GamepadKey, hts_name: str, long_press: bool = False):
     return set_gamepad_keymap_impl(key_name, hts_name, long_press)
-
 
 def set_gamepad_keymaps(keymaps: List[GamepadKeymap]):
     """设置多个按键的动作
@@ -4646,19 +4558,17 @@ def set_gamepad_keymaps(keymaps: List[GamepadKeymap]):
           keymaps(List[GamepadKeymap]): 按键映射对象列表
 
       Returns:
-             json: 
+             json: 
              e.g::
                   {
-                      code: integer (int32)返回码，0表示正常
-                      msg: string提示信息
+                      code: integer (int32)返回码，0表示正常
+                      msg: string提示信息
                    }
 
     """
     servos_url = basic_url + "gamepad/keymap/set"
 
-    param = {
-        "keymaps": keymaps
-    }
+    param = {"keymaps": keymaps}
 
     def default(obj):
         if isinstance(obj, GamepadKeymap):
@@ -4671,7 +4581,6 @@ def set_gamepad_keymaps(keymaps: List[GamepadKeymap]):
     res = json.loads(str(response.content.decode("utf-8")))
     return res
 
-
 cpdef public reset_gamepad_keymap(key_name: GamepadKey):
     """重置单个按键到默认配置
 
@@ -4679,29 +4588,28 @@ cpdef public reset_gamepad_keymap(key_name: GamepadKey):
           key_name(GamepadKey): 按键名
 
       Returns:
-             json: 
+             json: 
              e.g::
                   {
-                      code: integer (int32)返回码，0表示正常
-                      msg: string提示信息
+                      code: integer (int32)返回码，0表示正常
+                      msg: string提示信息
                    }
 
     """
     return reset_gamepad_keymaps([key_name])
 
-
-def   reset_gamepad_keymaps(key_name_list: List[GamepadKey] = None, reset_all: bool = False):
+def reset_gamepad_keymaps(key_name_list: List[GamepadKey] = None, reset_all: bool = False):
     """重置多个按键或者全部按键到默认配置
 
       Args:
           key_name_list(List[GamepadKey]): 按键名列表
           reset_all(bool): 是否重置全部按键，默认False
       Returns:
-             json: 
+             json: 
              e.g::
                   {
-                      code: integer (int32)返回码，0表示正常
-                      msg: string提示信息
+                      code: integer (int32)返回码，0表示正常
+                      msg: string提示信息
                    }
 
     """
@@ -4710,14 +4618,11 @@ def   reset_gamepad_keymaps(key_name_list: List[GamepadKey] = None, reset_all: b
     if key_name_list is None:
         key_name_list = []
 
-    param = {
-        "keynames": key_name_list,
-        "resetall": reset_all
-    }
+    param = {"keynames": key_name_list, "resetall": reset_all}
 
     def default(obj):
         if isinstance(obj, GamepadKey):
-            return gamepad_key_to_string(obj) # .value
+            return gamepad_key_to_string(obj)  # .value
         return obj
 
     json_data = json.dumps(param, default=default)
@@ -4726,18 +4631,17 @@ def   reset_gamepad_keymaps(key_name_list: List[GamepadKey] = None, reset_all: b
     res = json.loads(str(response.content.decode("utf-8")))
     return res
 
-
 async def __wait_result(timestamp, getFuc):
     while True:
         res = getFuc()
-        if(timestamp == res["timestamp"]):
+        if (timestamp == res["timestamp"]):
             status = res["status"]
             if status == "idle":
                 return res
             else:
                 await asyncio.sleep(1)
 
-async def __wait_result_QR(getFuc,timeOut,checkStream = False):
+async def __wait_result_QR(getFuc, timeOut, checkStream = False):
     timeCount = 0
     beginTime = time.time()
     global PqrStream
@@ -4747,10 +4651,10 @@ async def __wait_result_QR(getFuc,timeOut,checkStream = False):
             stop_QR_code_recognition()
             return res
         nowTime = time.time()
-        if timeOut > 0 and int(nowTime - beginTime)>timeOut:
+        if timeOut > 0 and int(nowTime - beginTime) > timeOut:
             stop_QR_code_recognition()
             return res
-        if("idle" == res["status"]) or len(res["data"]["contents"]) !=0:
+        if ("idle" == res["status"]) or len(res["data"]["contents"]) != 0:
             if not (PqrStream is None):
                 PqrStream.terminate()
                 PqrStream = None
@@ -4763,7 +4667,7 @@ async def __wait_result_common(timestamp, getFuc, args=()):
     while True:
         res = getFuc(*args)
         # print(res)
-        if(timestamp == res["timestamp"]):
+        if (timestamp == res["timestamp"]):
             status = res["status"]
             if status == "idle":
                 return res
@@ -4827,7 +4731,6 @@ async def __wait_result_by_time(time):
     await asyncio.sleep(time)
 
 async def __wait_result_color(type, color, mode, getFuc):
-
     while True:
         res = getFuc()
         for item in res['data']:
@@ -4840,25 +4743,20 @@ async def __wait_result_gait(start_time, type, getFuc):
         res = getFuc()
         # print(res)
         if res['data']['timestamp'] == start_time:
-            if type == "start": # walking
+            if type == "start":  # walking
                 if 0 <= res['data']['status'] <= 2:
                     await asyncio.sleep(1)
                 else:
-                    return res
-            #else: # up
-            #    if 0 <= res['status'] <= 2:
-            #        await asyncio.sleep(1)
-            #    else:
-            #        return
+                    return res  #else: # up  #    if 0 <= res['status'] <= 2:  #        await asyncio.sleep(1)  #    else:  #        return
         elif res['data']['timestamp'] > start_time:
             return res
 
-def   __resIsSuccess(res):
-    if not isinstance(res,Dict):
+def __resIsSuccess(res):
+    if not isinstance(res, Dict):
         return False
     if not "code" in res:
         return False
-    return (res["code"]==0)
+    return (res["code"] == 0)
 
 
 @unique
@@ -4896,6 +4794,7 @@ class RobotButtonLedColor(Enum):
     purple = "purple"
     cyan = "cyan"
 
+
 @unique
 class RobotButtonLedMode(Enum):
     """机器人胸口按钮灯模式（开，关，呼吸，闪烁）
@@ -4907,6 +4806,7 @@ class RobotButtonLedMode(Enum):
     blink = "blink"
     breath = "breath"
 
+
 @unique
 class RobotEyeLedColor(Enum):
     """机器人摄像头指示灯颜色
@@ -4916,6 +4816,7 @@ class RobotEyeLedColor(Enum):
     red = "red"
     green = "green"
     blue = "blue"
+
 
 @unique
 class RobotEyeLedMode(Enum):
@@ -4958,6 +4859,7 @@ class RobotBuiltInMotion(Enum):
     #鞠躬
     bow = "bow"
 
+
 @unique
 class RobotMotionDirection(Enum):
     """机器人内置动作运行方向
@@ -4974,6 +4876,7 @@ class RobotMotionDirection(Enum):
     forward = "forward"
     backward = "backward"
 
+
 @unique
 class RobotMotionSpeed(Enum):
     """机器人动作运行速度
@@ -4985,6 +4888,7 @@ class RobotMotionSpeed(Enum):
     normal = "normal"
     fast = "fast"
     veryFast = "very fast"
+
 
 @unique
 class RobotFaceRecognitionType(Enum):
@@ -5069,20 +4973,20 @@ class RobotJointInfo():
         ID16舵机可运行角度范围为0-115,超出范围运动存在风险.
         ID17舵机可运行角度范围为15-165,超出范围运动存在风险.
     """
-    def __init__(self,jointType,angel:int):
-        if isinstance(jointType,str):
-            strlist = jointType.split('_')	# 用_分割str字符串，并保存到列表
+    def __init__(self, jointType, angel: int):
+        if isinstance(jointType, str):
+            strlist = jointType.split('_')  # 用_分割str字符串，并保存到列表
             newStrList = []
             newStr = ""
-            if len(strlist)==1:
+            if len(strlist) == 1:
                 newStr = strlist[0]
             else:
                 for strItem in strlist:
                     newStrList.append(strItem.title())
                 for strItem in newStrList:
-                    newStr = newStr+strItem
+                    newStr = newStr + strItem
             self.jointType = RobotJointType(newStr)
-        elif isinstance(jointType,RobotJointType):
+        elif isinstance(jointType, RobotJointType):
             self.jointType = jointType
         else:
             raise ValueError("jointType value error")
@@ -5091,16 +4995,16 @@ class RobotJointInfo():
 
 #动作帧
 class RobotActionFrame():
-    def __init__(self,actionFrame:Dict):
+    def __init__(self, actionFrame: Dict):
         self._actionFrame = {}
-        for key,value in actionFrame.items():
-            jointInfo = RobotJointInfo(key,value)
+        for key, value in actionFrame.items():
+            jointInfo = RobotJointInfo(key, value)
             self._actionFrame[jointInfo.jointType.value] = jointInfo
 
     @property
     def interfaceDict(self):
         ret = {}
-        for key,value in self._actionFrame.items():
+        for key, value in self._actionFrame.items():
             ret[key] = value.angel
         return ret
 
@@ -5112,11 +5016,12 @@ class RobotActionFrame():
             return -1
         return jointInfo.angel
 
-    def addOrUpdateJointInfo(self,jointInfo:RobotJointInfo):
+    def addOrUpdateJointInfo(self, jointInfo: RobotJointInfo):
         self._actionFrame[jointInfo.jointType.value] = jointInfo
 
-    def delJointInfo(self,jointType:RobotJointType):
-         self._actionFrame.pop(jointType.value)
+    def delJointInfo(self, jointType: RobotJointType):
+        self._actionFrame.pop(jointType.value)
+
 
 class RobotBatteryInfo():
     """机器人电源信息
@@ -5158,7 +5063,7 @@ class RobotVersionInfo():
         if data:
             self.updateWithData(data)
 
-    def updateWithData(self,data:dict):
+    def updateWithData(self, data: dict):
         if "core" in data:
             self._coreVersion = data["core"]
         if "servo" in data:
@@ -5214,6 +5119,7 @@ class RobotLedInfo():
     def eyeLedMode(self):
         return self._eyeLedMode
 
+
 class RobotAsrResult():
     """机器人ASR识别结果
 
@@ -5230,7 +5136,7 @@ class RobotAsrResult():
                 self._answer = "empty"
     @property
     def retDict(self):
-        return {"question":self._question,"answer":self._answer}
+        return {"question": self._question, "answer": self._answer}
 
     @property
     def question(self):
@@ -5239,6 +5145,7 @@ class RobotAsrResult():
     @property
     def answer(self):
         return self._answer
+
 
 class RobotVisualTaskResult():
     """机器人视觉识别结果
@@ -5259,22 +5166,22 @@ class RobotVisualTaskResult():
         if not data:
             return
         colorList = data.get("color")
-        if colorList!=None and (len(colorList)>0):
+        if colorList != None and (len(colorList) > 0):
             self._color = colorList[0]["name"]
-        self._quantity = data.get("quantity",0)
-        self._gesture = data.get("gesture","")
+        self._quantity = data.get("quantity", 0)
+        self._gesture = data.get("gesture", "")
         recognitionItem = data.get("recognition")
         if recognitionItem:
-            self._name = recognitionItem.get("name","")
+            self._name = recognitionItem.get("name", "")
         analysisItem = data.get("analysis")
         if not analysisItem:
             return
-        self._age = analysisItem.get("age",0)
-        self._gender = analysisItem.get("gender","")
-        self._age_group = analysisItem.get("group","")
-        self._expression = analysisItem.get("expression","")
-        self._mask = analysisItem.get("mask","")
-        self._glass = analysisItem.get("glass","")
+        self._age = analysisItem.get("age", 0)
+        self._gender = analysisItem.get("gender", "")
+        self._age_group = analysisItem.get("group", "")
+        self._expression = analysisItem.get("expression", "")
+        self._mask = analysisItem.get("mask", "")
+        self._glass = analysisItem.get("glass", "")
 
     @property
     def color(self):
@@ -5320,7 +5227,9 @@ class RobotVisualTaskResult():
     def gesture(self):
         return self._gesture
 
+
 ######## Yanshee Voice Class ##################################
+
 
 class Voice(object):
     """通过Voice语音类来控制Yanshee机器人实现语音识别、自然语言处理和TTS等功能的接口类
@@ -5329,10 +5238,11 @@ class Voice(object):
     def __init__(self):
         pass
     def get_robot_language(self):
-        languages_url = basic_url+"devices/languages"
+        languages_url = basic_url + "devices/languages"
         response = requests.get(url=languages_url, headers=headers)
         res = json.loads(str(response.content.decode("utf-8")))
         return res
+
     ################ ASR #############
     def stop_voice_asr(self):
         """停止语音听写
@@ -5340,14 +5250,14 @@ class Voice(object):
         Returns:
             Dict:
             e.g::
-     
+     
                     {
-                        code: integer (int32)返回码，0表示正常
-                        msg: string提示信息
+                        code: integer (int32)返回码，0表示正常
+                        msg: string提示信息
                     }
 
         """
-        voice_url = basic_url+"voice/iat"
+        voice_url = basic_url + "voice/iat"
         response = requests.delete(url=voice_url, headers=headers)
         res = json.loads(str(response.content.decode("utf-8")))
         return res
@@ -5358,41 +5268,40 @@ class Voice(object):
         Returns:
             Dict:
             e.g::
-     
+     
                 {
-                        code: integer (int32)返回码，0表示正常
-                        status: string  idle 非执行状态 run 正在运行
-                        timestamp: integer (int32)时间戳, Unix标准时间
+                        code: integer (int32)返回码，0表示正常
+                        status: string  idle 非执行状态 run 正在运行
+                        timestamp: integer (int32)时间戳, Unix标准时间
                         data:
-                                                    {
+                                                    {
                                 语音听写返回数据
                             }
                         msg:string提示信息
                     }
 
         """
-        voice_url = basic_url+"voice/iat"
+        voice_url = basic_url + "voice/iat"
         response = requests.get(url=voice_url, headers=headers)
         res = json.loads(str(response.content.decode("utf-8")))
-        ret=self.get_robot_language()
-        if ret["data"]["language"]=="ko" :
+        ret = self.get_robot_language()
+        if ret["data"]["language"] == "ko":
             return res
-        res["data"] = json.loads(res["data"].strip(
-            b'\x00'.decode()))
+        res["data"] = json.loads(res["data"].strip(b'\x00'.decode()))
         return res
 
-    def start_voice_asr(self,timestamp: int = 0):
+    def start_voice_asr(self, timestamp: int = 0):
         """开始语音听写
 
         当语音听写处于工作状态时，需要先停止当前的语音听写。
 
         Args:
-            timestamp: integer (int32)时间戳, Unix标准时间
+            timestamp: integer (int32)时间戳, Unix标准时间
 
         Returns:
             Dict:
             e.g::
-     
+     
                     {
                         "code": 0,
                         "data": {},
@@ -5400,7 +5309,7 @@ class Voice(object):
                     }
 
         """
-        voice_url = basic_url+"voice/iat"
+        voice_url = basic_url + "voice/iat"
         param = {"timestamp": timestamp}
         json_data = json.dumps(param)
         response = requests.put(url=voice_url, data=json_data, headers=headers)
@@ -5418,16 +5327,16 @@ class Voice(object):
         successed = self.start_voice_asr(timestamp=timestamp)
         if not successed:
             return ""
-        coroutine = self.__wait_result(timestamp,self.get_voice_asr)
+        coroutine = self.__wait_result(timestamp, self.get_voice_asr)
         loop = asyncio.get_event_loop()
         task = loop.create_task(coroutine)
         loop.run_until_complete(task)
         res = task.result()
         if not self.__resIsSuccess(res):
-            logging.error("error code = %d msg = %s",res.get("code",-1),res.get("msg",""))
+            logging.error("error code = %d msg = %s", res.get("code", -1), res.get("msg", ""))
             return ""
-        ret=self.get_robot_language()
-        if ret["data"]["language"]=="ko" :
+        ret = self.get_robot_language()
+        if ret["data"]["language"] == "ko":
             return res["data"].strip()
         words = res["data"].get("text")
         if not words:
@@ -5446,23 +5355,24 @@ class Voice(object):
         Returns:
             Dict:
             e.g::
-     
+     
                     {
-                        code: integer (int32)返回码，0表示正常
+                        code: integer (int32)返回码，0表示正常
                         status:string idle 非执行状态run 正在运行
-                        timestamp:integer (int32)时间戳, Unix标准时间
+                        timestamp:integer (int32)时间戳, Unix标准时间
                         data:
-                           {
+                           {
                                 语音听写返回内容数据
                             }
-                        msg: string提示信息
+                        msg: string提示信息
                 }
 
         """
         timestamp = int(time.time())
         res = self.start_voice_asr(timestamp=timestamp)
         if res['code'] != 0:
-            logging.error("do voice iat failed error code = %d msg = %s",res.get("code",-1),res.get("msg","unknow error"))
+            logging.error("do voice iat failed error code = %d msg = %s", res.get("code", -1),
+                          res.get("msg", "unknow error"))
             return res
         coroutine = self.__wait_result(timestamp, self.get_voice_asr)
         loop = asyncio.get_event_loop()
@@ -5472,7 +5382,8 @@ class Voice(object):
         return task.result()
 
     ################ ASR Offline #############
-    def delete_voice_asr_offline_syntax(self,grammar: str):
+
+    def delete_voice_asr_offline_syntax(self, grammar: str):
         """删除指定离线语法名称下的所有配置
 
         可以先获取系统所有的离线语法名称，请注意系统默认的离线语法名称为defaut, 它不可以通过API来添加，删除以及修改
@@ -5483,21 +5394,21 @@ class Voice(object):
         Returns:
             Dict:
             e.g::
-     
+     
                     {
-                        code: integer (int32)返回码，0表示正常
-                        msg: string提示信息
+                        code: integer (int32)返回码，0表示正常
+                        msg: string提示信息
                     }
 
         """
-        voice_url = basic_url+"voice/asr/offlinesyntax"
+        voice_url = basic_url + "voice/asr/offlinesyntax"
         param = {"grammar": grammar}
         json_data = json.dumps(param)
         response = requests.delete(url=voice_url, data=json_data, headers=headers)
         res = json.loads(str(response.content.decode("utf-8")))
         return res
 
-    def get_voice_asr_offline_syntax(self,grammar: str):
+    def get_voice_asr_offline_syntax(self, grammar: str):
         """获取指定语法名称下的所有配置
 
         Args:
@@ -5506,13 +5417,13 @@ class Voice(object):
         Returns:
             Dict:
             e.g::
-     
+     
                     {
                         grammar:string定义语法名称,请输入纯字母
                         slot:
                             [
                                 声明槽,内容为字母不数字。所有的操作符及关键词均为半角字符,不支持全角字符。
-                                                            {
+                                                            {
                                     name:string槽名称
                                 }
                             ]
@@ -5521,8 +5432,8 @@ class Voice(object):
                         rule:
                             [
                                 所有的离线语法规则
-                                                            {
-                                    name: string表示规则名称
+                                                            {
+                                    name: string表示规则名称
                                     value:string表示规则内容
                                 }
                             ]
@@ -5549,13 +5460,13 @@ class Voice(object):
                 }
 
         """
-        voice_url = basic_url+"voice/asr/offlinesyntax"
+        voice_url = basic_url + "voice/asr/offlinesyntax"
         params = {"body": grammar}
         response = requests.get(url=voice_url, headers=headers, params=params)
         res = json.loads(str(response.content.decode("utf-8")))
         return res
 
-    def create_voice_asr_offline_syntax(self,object: Dict):
+    def create_voice_asr_offline_syntax(self, object: Dict):
         """创建一个新的离线语法名称配置
 
         Args:
@@ -5590,7 +5501,7 @@ class Voice(object):
         Returns:
             Dict:
             e.g::
-     
+     
                     {
                         "code": 0,
                         "data": {},
@@ -5598,14 +5509,14 @@ class Voice(object):
                     }
 
         """
-        voice_url = basic_url+"voice/asr/offlinesyntax"
+        voice_url = basic_url + "voice/asr/offlinesyntax"
         param = object
         json_data = json.dumps(param)
         response = requests.post(url=voice_url, data=json_data, headers=headers)
         res = json.loads(str(response.content.decode("utf-8")))
         return res
 
-    def update_voice_asr_offline_syntax(self,object: Dict):
+    def update_voice_asr_offline_syntax(self, object: Dict):
         """修改已有语法配置中的命令词和对应的返回值
 
         可用于配置或添加新的离线命令词
@@ -5642,7 +5553,7 @@ class Voice(object):
         Returns:
             Dict:
             e.g::
-     
+     
                     {
                         "code": 0,
                         "data": {},
@@ -5650,7 +5561,7 @@ class Voice(object):
                     }
 
         """
-        voice_url = basic_url+"voice/asr/offlinesyntax"
+        voice_url = basic_url + "voice/asr/offlinesyntax"
         param = object
         json_data = json.dumps(param)
         response = requests.put(url=voice_url, data=json_data, headers=headers)
@@ -5666,7 +5577,7 @@ class Voice(object):
         Returns:
             Dict:
             e.g::
-     
+     
                     {
                         "grammar": [
                                         {
@@ -5679,7 +5590,7 @@ class Voice(object):
                     }
 
         """
-        voice_url = basic_url+"voice/asr/offlinesyntax/grammars"
+        voice_url = basic_url + "voice/asr/offlinesyntax/grammars"
         response = requests.get(url=voice_url, headers=headers)
         res = json.loads(str(response.content.decode("utf-8")))
         return res
@@ -5691,7 +5602,7 @@ class Voice(object):
         Returns:
             Dict:
             e.g::
-     
+     
                     {
                         "code": 0,
                         "data": {},
@@ -5699,7 +5610,7 @@ class Voice(object):
                     }
 
         """
-        voice_url = basic_url+"voice/asr"
+        voice_url = basic_url + "voice/asr"
         response = requests.delete(url=voice_url, headers=headers)
         res = json.loads(str(response.content.decode("utf-8")))
         return res
@@ -5710,42 +5621,42 @@ class Voice(object):
         Returns:
             Dict:
             e.g::
-     
+     
                     {
                         code: 0,
                         status:string  idle 非执行状态 run 正在运行
-                        timestamp:integer (int32)时间戳, Unix标准时间
+                        timestamp:integer (int32)时间戳, Unix标准时间
                         data:
-                                                    {
+                                                    {
                                 语音返回数据
                             }
-                        msg: string提示信息
+                        msg: string提示信息
                     }
 
         """
-        voice_url = basic_url+"voice/asr"
+        voice_url = basic_url + "voice/asr"
         response = requests.get(url=voice_url, headers=headers)
         res = json.loads(str(response.content.decode("utf-8")))
-        ret=self.get_robot_language()
-        if ret["data"]["language"]=="ko" :
+        ret = self.get_robot_language()
+        if ret["data"]["language"] == "ko":
             return res
         dataStr = res["data"].strip(b'\x00'.decode())
         res["data"] = json.loads(dataStr)
         return res
 
-    def start_voice_nlp(self,continues=False, timestamp=0):
+    def start_voice_nlp(self, continues=False, timestamp=0):
         """开始语义理解
 
         当语义理解(单次/多次)处于工作状态时，需要先停止当前的语义理解。
 
         Args:
             continues:boolean是否进行连续语意识别, 布尔值, true 需要， false不需要, 默认为false
-            timestamp:integer (int32)时间戳, Unix标准时间
+            timestamp:integer (int32)时间戳, Unix标准时间
 
         Returns:
             Dict:
             e.g::
-     
+     
                     {
                         "code": 0,
                         "data": {},
@@ -5753,7 +5664,7 @@ class Voice(object):
                     }
 
         """
-        voice_url = basic_url+"voice/asr"
+        voice_url = basic_url + "voice/asr"
         param = {"continues": continues, "timestamp": timestamp}
         json_data = json.dumps(param)
         response = requests.put(url=voice_url, data=json_data, headers=headers)
@@ -5775,16 +5686,16 @@ class Voice(object):
         """
         timestamp = int(time.time())
         self.start_voice_nlp(timestamp=timestamp)
-        coroutine = self.__wait_result(timestamp,self.get_voice_nlp_state)
+        coroutine = self.__wait_result(timestamp, self.get_voice_nlp_state)
         loop = asyncio.get_event_loop()
         tasks = loop.create_task(coroutine)
         loop.run_until_complete(tasks)
         res = tasks.result()
-        if  not self.__resIsSuccess(res):
-            logging.error("error code = %d msg = %s",res.get("code",-1),res.get("msg",""))
+        if not self.__resIsSuccess(res):
+            logging.error("error code = %d msg = %s", res.get("code", -1), res.get("msg", ""))
             return None
-        ret=self.get_robot_language()
-        if ret["data"]["language"]=="ko" :
+        ret = self.get_robot_language()
+        if ret["data"]["language"] == "ko":
             return res["data"]
         return RobotAsrResult(res["data"]).retDict
 
@@ -5794,16 +5705,16 @@ class Voice(object):
         Returns:
             Dict:
             e.g::
-     
+     
                     {
-                        code: integer (int32)返回码，0表示正常
+                        code: integer (int32)返回码，0表示正常
                         status:string idle 非执行状态run 正在运行
-                        timestamp:integer (int32)时间戳, Unix标准时间
+                        timestamp:integer (int32)时间戳, Unix标准时间
                         data:
                             {
                                 语义理解返回内容数据
                             }
-                        msg: string提示信息
+                        msg: string提示信息
                     }
 
         """
@@ -5824,7 +5735,7 @@ class Voice(object):
         Returns:
             Dict:
             e.g::
-     
+     
                     {
                         "code": 0,
                         "data": {},
@@ -5832,12 +5743,12 @@ class Voice(object):
                     }
 
         """
-        voice_url = basic_url+"voice/tts"
+        voice_url = basic_url + "voice/tts"
         response = requests.delete(url=voice_url, headers=headers)
         res = json.loads(str(response.content.decode("utf-8")))
         return res
 
-    def get_voice_tts_state(self,timestamp: int = None):
+    def get_voice_tts_state(self, timestamp: int = None):
         """获取指定或者当前工作状态
 
         带时间戳为指定任务工作状态，如果无时间戳则当前任务。
@@ -5848,31 +5759,30 @@ class Voice(object):
         Returns:
             Dict:
             e.g::
-     
+     
                     {
-                        code: integer (int32)返回码，0表示正常
-                        status: string
+                        code: integer (int32)返回码，0表示正常
+                        status: string
                         当任务为语语音合成的时候，状态如下：idle 任务不存在,run 播放该段语音,build 正在合成该段语音,wait 处于等待执行状态
-                        timestamp: integer (int32)时间戳, Unix标准时间
+                        timestamp: integer (int32)时间戳, Unix标准时间
                         data:
-                             {
+                             {
                                 语音返回数据
                             }
                         msg:string提示信息
                     }
 
         """
-        voice_url = basic_url+"voice/tts"
+        voice_url = basic_url + "voice/tts"
         response = requests.get(url=voice_url, headers=headers)
         if timestamp != None:
             params = {'timestamp': timestamp}
             response = requests.get(url=voice_url, headers=headers, params=params)
         res = json.loads(str(response.content.decode("utf-8")))
-        res["data"] = json.loads(
-            str(res["data"].strip(b'\x00'.decode())))
+        res["data"] = json.loads(str(res["data"].strip(b'\x00'.decode())))
         return res
 
-    def start_voice_tts(self,tts: str = "", interrupt: bool = True, timestamp: int = 0):
+    def start_voice_tts(self, tts: str = "", interrupt: bool = True, timestamp: int = 0):
         """开始语音合成任务
 
         合成指定的语句并播放。当语音合成处于工作状态时可以接受新的语音合成任务.
@@ -5885,7 +5795,7 @@ class Voice(object):
         Returns:
             Dict:
             e.g::
-     
+     
                     {
                         "code": 0,
                         "data": {},
@@ -5893,14 +5803,14 @@ class Voice(object):
                     }
 
         """
-        voice_url = basic_url+"voice/tts"
+        voice_url = basic_url + "voice/tts"
         param = {"tts": tts, "interrupt": interrupt, "timestamp": timestamp}
         json_data = json.dumps(param)
         response = requests.put(url=voice_url, data=json_data, headers=headers)
         res = json.loads(str(response.content.decode("utf-8")))
         return res
 
-    def sync_do_tts(self,tts: str = "", interrupt: bool = True):
+    def sync_do_tts(self, tts: str = "", interrupt: bool = True):
         """执行语音合成任务,合成完成后返回
 
         Args:
@@ -5910,14 +5820,14 @@ class Voice(object):
         Returns:
             Dict:
             e.g::
-     
+     
                     {
-                        code: integer (int32)返回码，0表示正常
-                        status: string
+                        code: integer (int32)返回码，0表示正常
+                        status: string
                         当任务为语语音合成的时候，状态如下：idle 任务不存在,run 播放该段语音,build 正在合成该段语音,wait 处于等待执行状态
-                        timestamp: integer (int32)时间戳, Unix标准时间
+                        timestamp: integer (int32)时间戳, Unix标准时间
                         data:
-                            {
+                            {
                                 语音返回数据
                             }
                         msg:string提示信息
@@ -5925,9 +5835,9 @@ class Voice(object):
 
         """
         t = int(time.time())
-        res = self.start_voice_tts(tts = tts, interrupt = interrupt, timestamp = t)
+        res = self.start_voice_tts(tts=tts, interrupt=interrupt, timestamp=t)
         if res['code'] != 0:
-            logging.error("do tts failed error code = %d msg = %s",res.get("code",-1),res.get("msg","unknow error"))
+            logging.error("do tts failed error code = %d msg = %s", res.get("code", -1), res.get("msg", "unknow error"))
             return res
         coroutine = self.__wait_result_common(timestamp=t, getFuc=self.get_voice_tts_state, args=(t,))
         loop = asyncio.get_event_loop()
@@ -5936,33 +5846,34 @@ class Voice(object):
         # Success Example
         return tasks.result()
 
-    async def __wait_result(self,timestamp, getFuc):
+    async def __wait_result(self, timestamp, getFuc):
         while True:
             res = getFuc()
-            if(timestamp == res["timestamp"]):
+            if (timestamp == res["timestamp"]):
                 status = res["status"]
                 if status == "idle":
                     return res
                 else:
                     await asyncio.sleep(1)
 
-    async def __wait_result_common(self,timestamp, getFuc, args=()):
+    async def __wait_result_common(self, timestamp, getFuc, args=()):
         while True:
             res = getFuc(*args)
             # print(res)
-            if(timestamp == res["timestamp"]):
+            if (timestamp == res["timestamp"]):
                 status = res["status"]
                 if status == "idle":
                     return res
                 else:
                     await asyncio.sleep(1)
 
-    def __resIsSuccess(self,res):
-        if not isinstance(res,Dict):
+    def __resIsSuccess(self, res):
+        if not isinstance(res, Dict):
             return False
         if not "code" in res:
             return False
-        return (res["code"]==0)
+        return (res["code"] == 0)
+
 
 ######## Yanshee control uKit2.0 API ##################################
 
@@ -5981,8 +5892,8 @@ class ukit_controller:
     udp_recv_socket.setsockopt(SOL_SOCKET, SO_BROADCAST, 1)
 
     def __init__(self):
-        self.send_addr = (self.send_ip,self.port)
-        self.recv_addr = (self.recv_ip,self.port)
+        self.send_addr = (self.send_ip, self.port)
+        self.recv_addr = (self.recv_ip, self.port)
 
     def __auto_find_broadcast_ip(self):
         ipstr = '([0-9]{1,3}\.){3}[0-9]{1,3}'
@@ -5996,7 +5907,7 @@ class ukit_controller:
             broadlist.append(broad.group())
         return broadlist
 
-    def creat_channel_to_ukit(self,port = 0):
+    def creat_channel_to_ukit(self, port = 0):
         """设置yanshee UDP广播通道的ukit端口号
 
         Args:
@@ -6004,18 +5915,18 @@ class ukit_controller:
 
         """
         port = port + 25880
-        if(port > 25979)or(port < 25880):
+        if (port > 25979) or (port < 25880):
             print("PORT is out of rang for 0~100")
             return 0
         self.port = port
         ip_list = self.__auto_find_broadcast_ip()
         if len(ip_list) > 0:
             self.send_ip = ip_list[0]
-        self.send_addr = (self.send_ip,self.port)
-        self.recv_addr = (self.recv_ip,self.port)
+        self.send_addr = (self.send_ip, self.port)
+        self.recv_addr = (self.recv_ip, self.port)
         self.udp_recv_socket.bind(self.recv_addr)
 
-    def set_broadcast_ip(self,ip):
+    def set_broadcast_ip(self, ip):
         """设置yanshee UDP广播地址
 
         Args:
@@ -6024,7 +5935,7 @@ class ukit_controller:
         """
         self.send_ip = ip
 
-    def set_recv_ip(self,ip):
+    def set_recv_ip(self, ip):
         """设置yanshee UDP广播接收地址
 
         Args:
@@ -6033,7 +5944,7 @@ class ukit_controller:
         """
         self.recv_ip = ip
 
-    def send_msg_to_ukit(self,msg):
+    def send_msg_to_ukit(self, msg):
         """发送UDP广播消息给ukit2.0
 
         Args:
@@ -6044,7 +5955,7 @@ class ukit_controller:
         ip_list = self.__auto_find_broadcast_ip()
         if len(ip_list) > 0:
             self.send_ip = ip_list[0]
-        self.send_addr = (self.send_ip,self.port)
+        self.send_addr = (self.send_ip, self.port)
         data_msg = lib_send.lib_send_data_to_uKit(msg)
         print("send_data_to_ukit: " + data_msg)
         #将每个十六进制都转成单独的bytes发给Ukit
@@ -6068,54 +5979,52 @@ class ukit_controller:
         self.udp_send_socket.close()
         self.udp_recv_socket.close()
 
-
 #if __name__ == '__main__':
-    #color = "OrAnge"
-    #detect_color = color.lower()
-    #flag = False
-    #try:
-    #    res = do_control_vision_once(option="color", type="color_detect")
-    #    print(res)
-    #    for item in res['data']['color']:
-    #        if item['name'] == detect_color:
-    #            flag = True
-    #            break
-    #except:
-    #    flag = False
-    #return flag
-    #print(flag)
-    #touched = 0
-    #try:
-    #    res = get_sensors_touch(33)
-    #    print(res)
-    #    for item in res['data']['touch']:
-            # We need our id to be identical
-    #        if item['id'] == 33:
-    #            touched = item['value']
-    #            break
-    #except:
-    #    touched = 0
-    #print(touched)
-    #result = False
-    #hear = ""
-    #test = "你好"
-    #try:
-        # In Blockly we only grab first one, although our API support all slots
-        #do_motion_gait_once(speed_v=3, speed_h=0, period=2, wave=False, steps=10)
-        #print(res)
-        #if res is not None:
-        #    for ws in res['data']['text']['ws']:
-        #        print(ws)
-        #        for cw in ws['cw']:
-        #            print(cw)
-        #            hear = hear + cw['w']
-        #    print(hear)
-        #if hear == test:
-        #    result = True
-    #except:
-        #result = False
-        #print('bad program')
-    #print(result)
-    #print(res)
-    #return result
-
+#color = "OrAnge"
+#detect_color = color.lower()
+#flag = False
+#try:
+#    res = do_control_vision_once(option="color", type="color_detect")
+#    print(res)
+#    for item in res['data']['color']:
+#        if item['name'] == detect_color:
+#            flag = True
+#            break
+#except:
+#    flag = False
+#return flag
+#print(flag)
+#touched = 0
+#try:
+#    res = get_sensors_touch(33)
+#    print(res)
+#    for item in res['data']['touch']:
+# We need our id to be identical
+#        if item['id'] == 33:
+#            touched = item['value']
+#            break
+#except:
+#    touched = 0
+#print(touched)
+#result = False
+#hear = ""
+#test = "你好"
+#try:
+# In Blockly we only grab first one, although our API support all slots
+#do_motion_gait_once(speed_v=3, speed_h=0, period=2, wave=False, steps=10)
+#print(res)
+#if res is not None:
+#    for ws in res['data']['text']['ws']:
+#        print(ws)
+#        for cw in ws['cw']:
+#            print(cw)
+#            hear = hear + cw['w']
+#    print(hear)
+#if hear == test:
+#    result = True
+#except:
+#result = False
+#print('bad program')
+#print(result)
+#print(res)
+#return result

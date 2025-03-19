@@ -200,49 +200,15 @@ class YanSensorService {
      * @return 传感器数据，包含传感器类型和对应的值
      */
     fun getSensorData(type: String): Map<String, Any> {
-        try {
-            memScoped {
-                val pyType = PyUnicodeObject(type.cstr.ptr.rawValue)
-                val result = get_sensor_data(pyType.reinterpret<PyObject>().ptr)
-                
-                if (result != null) {
-                    val sensorData = mutableMapOf<String, Any>()
-                    
-                    // 获取字典的键列表
-                    val keys = PyDict_Keys(result)
-                    if (keys != null) {
-                        val size = PyList_Size(keys)
-                        
-                        for (i in 0 until size) {
-                            val key = PyList_GetItem(keys, i)
-                            val value = PyDict_GetItem(result, key)
-                            
-                            if (key != null && value != null) {
-                                val keyStr = PyUnicode_AsUTF8(key)?.toKString() ?: continue
-                                
-                                // 根据值的类型进行相应的转换
-                                when {
-                                    PyFloat_Check(value) != 0 -> {
-                                        sensorData[keyStr] = PyFloat_AsDouble(value)
-                                    }
-                                    PyLong_Check(value) != 0 -> {
-                                        sensorData[keyStr] = PyLong_AsLong(value)
-                                    }
-                                    PyUnicode_Check(value) != 0 -> {
-                                        val valueStr = PyUnicode_AsUTF8(value)?.toKString() ?: continue
-                                        sensorData[keyStr] = valueStr
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    
-                    return sensorData
-                }
-            }
-            return emptyMap()
-        } catch (e: Exception) {
-            return emptyMap()
+        // 根据传感器类型调用相应的API函数
+        return when (type.lowercase()) {
+            "environment", "temperature", "humidity" -> getSensorsEnvironmentValue()
+            "gyro", "accelerometer" -> getSensorsGyro()
+            "infrared" -> getSensorsInfraredValue()
+            "pressure" -> getSensorsPressureValue()
+            "touch" -> getSensorsTouchValue()
+            "ultrasonic", "distance" -> getSensorsUltrasonicValue()
+            else -> emptyMap()
         }
     }
     
@@ -252,25 +218,7 @@ class YanSensorService {
      * @return 传感器类型列表
      */
     fun getAvailableSensorTypes(): List<String> {
-        try {
-            val result = get_available_sensor_types()
-            if (result != null) {
-                val sensorTypes = mutableListOf<String>()
-                val size = PyList_Size(result)
-                
-                for (i in 0 until size) {
-                    val item = PyList_GetItem(result, i)
-                    if (item != null) {
-                        val pyStr = PyUnicode_AsUTF8(item)
-                        pyStr?.toKString()?.let { sensorTypes.add(it) }
-                    }
-                }
-                
-                return sensorTypes
-            }
-            return emptyList()
-        } catch (e: Exception) {
-            return emptyList()
-        }
+        // 使用getSensorsListValue函数获取传感器列表
+        return getSensorsListValue()
     }
 }

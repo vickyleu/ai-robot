@@ -3,6 +3,7 @@ package com.airobot.device.yanapi
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.datetime.Clock.System
 
 /**
  * YAN设备状态管理器
@@ -71,7 +72,7 @@ class YanStatusManager {
      */
     fun notifyEvent(event: String) {
         val currentEvents = _events.value.toMutableList()
-        currentEvents.add("${System.currentTimeMillis()}: $event")
+        currentEvents.add("${System.now().toEpochMilliseconds()}: $event")
         
         // 保留最近的100条事件记录
         if (currentEvents.size > 100) {

@@ -12,16 +12,16 @@ import kotlinx.cinterop.*
 @OptIn(ExperimentalForeignApi::class)
 class YanSkillManager {
     /**
-     * 加载技能
+     * 上传动作文件
      *
-     * @param skillId 技能ID
+     * @param filePath 动作文件路径
      * @return 操作是否成功
      */
-    fun loadSkill(skillId: String): Boolean {
+    fun uploadMotion(filePath: String): Boolean {
         try {
             memScoped {
-                val pySkillId = PyUnicodeObject(skillId.cstr.ptr.rawValue)
-                val result = load_skill(pySkillId.reinterpret<PyObject>().ptr)
+                val pyFilePath = PyUnicodeObject(filePath.cstr.ptr.rawValue)
+                val result = upload_motion(pyFilePath.reinterpret<PyObject>().ptr,0)
                 return result != null && PyObject_IsTrue(result) == 1
             }
         } catch (e: Exception) {
@@ -30,90 +30,134 @@ class YanSkillManager {
     }
 
     /**
-     * 启动技能
+     * 删除动作文件
      *
-     * @param skillId 技能ID
-     * @param params 技能参数
+     * @param name 动作文件名称
      * @return 操作是否成功
      */
-    fun startSkill(skillId: String, params: Map<String, Any>): Boolean {
+    fun deleteMotion(name: String): Boolean {
         try {
             memScoped {
-                val pySkillId = PyUnicodeObject(skillId.cstr.ptr.rawValue)
-                val pyParams = mapToPyDict(params)
-                val result = start_skill(pySkillId.reinterpret<PyObject>().ptr, pyParams)
+                val pyName = PyUnicodeObject(name.cstr.ptr.rawValue)
+                val result = delete_motion(pyName.reinterpret<PyObject>().ptr,0)
                 return result != null && PyObject_IsTrue(result) == 1
             }
         } catch (e: Exception) {
             return false
         }
     }
-
+    
     /**
-     * 停止技能
+     * 获取动作列表
      *
-     * @param skillId 技能ID
-     * @return 操作是否成功
+     * @return 动作列表
      */
-    fun stopSkill(skillId: String): Boolean {
+    fun getMotionList(): Map<String, Any> {
         try {
-            memScoped {
-                val pySkillId = PyUnicodeObject(skillId.cstr.ptr.rawValue)
-                val result = stop_skill(pySkillId.reinterpret<PyObject>().ptr)
-                return result != null && PyObject_IsTrue(result) == 1
-            }
-        } catch (e: Exception) {
-            return false
-        }
-    }
-
-    /**
-     * 获取已安装技能列表
-     *
-     * @return 技能列表
-     */
-    fun getInstalledSkills(): List<String> {
-        try {
-            val result = get_installed_skills()
+            val result = get_motion_list(0)
             if (result != null) {
-                val skillList = mutableListOf<String>()
-                val size = PyList_Size(result)
-                
-                for (i in 0 until size) {
-                    val item = PyList_GetItem(result, i)
-                    if (item != null) {
-                        val pyStr = PyUnicode_AsUTF8(item)
-                        pyStr?.toKString()?.let { skillList.add(it) }
-                    }
-                }
-                
-                return skillList
+                return PyObjectToMap(result)
             }
-            return emptyList()
+            return emptyMap()
         } catch (e: Exception) {
-            return emptyList()
+            return emptyMap()
+        }
+    }
+
+    /**
+     * 获取当前动作播放状态
+     *
+     * @return 动作播放状态
+     */
+    fun getCurrentMotionPlayState(): Map<String, Any> {
+        try {
+            val result = get_current_motion_play_state(0)
+            if (result != null) {
+                return PyObjectToMap(result)
+            }
+            return emptyMap()
+        } catch (e: Exception) {
+            return emptyMap()
+        }
+    }
+    
+    /**
+     * 获取当前层动作播放状态
+     *
+     * @return 层动作播放状态
+     */
+    fun getCurrentLayerMotionPlayState(): Map<String, Any> {
+        try {
+            val result = get_current_layer_motion_play_state(0)
+            if (result != null) {
+                return PyObjectToMap(result)
+            }
+            return emptyMap()
+        } catch (e: Exception) {
+            return emptyMap()
+        }
+    }
+    
+    /**
+     * 退出动作步态
+     *
+     * @return 操作是否成功
+     */
+    fun exitMotionGait(): Boolean {
+        try {
+            val result = exit_motion_gait(0)
+            return result != null && PyObject_IsTrue(result) == 1
+        } catch (e: Exception) {
+            return false
+        }
+    }
+
+    /**
+     * 获取动作步态状态
+     *
+     * @return 动作步态状态
+     */
+    fun getMotionGaitState(): Map<String, Any> {
+        try {
+            val result = get_motion_gait_state(0)
+            if (result != null) {
+                return PyObjectToMap(result)
+            }
+            return emptyMap()
+        } catch (e: Exception) {
+            return emptyMap()
+        }
+    }
+    
+    /**
+     * 获取动作列表值
+     *
+     * @return 动作列表值
+     */
+    fun getMotionListValue(): Map<String, Any> {
+        try {
+            val result = get_motion_list_value(0)
+            if (result != null) {
+                return PyObjectToMap(result)
+            }
+            return emptyMap()
+        } catch (e: Exception) {
+            return emptyMap()
         }
     }
 
     /**
      * 获取技能详情
      *
+     * 注意：get_skill_info函数在YanAPI.h中不存在，已移除相关方法
+     * 此方法保留为空实现，以便将来可能的扩展
+     *
      * @param skillId 技能ID
-     * @return 技能详情
+     * @return 技能详情，当前返回空Map
      */
     fun getSkillInfo(skillId: String): Map<String, Any> {
-        try {
-            memScoped {
-                val pySkillId = PyUnicodeObject(skillId.cstr.ptr.rawValue)
-                val result = get_skill_info(pySkillId.reinterpret<PyObject>().ptr)
-                if (result != null) {
-                    return PyObjectToMap(result)
-                }
-                return emptyMap()
-            }
-        } catch (e: Exception) {
-            return emptyMap()
-        }
+        // 由于YanAPI.h中不存在get_skill_info函数，返回空Map
+        return emptyMap()
     }
 
     /**
@@ -132,7 +176,7 @@ class YanSkillManager {
                         is Long -> PyLong_FromLong(value)
                         is Float -> PyFloat_FromDouble(value.toDouble())
                         is Double -> PyFloat_FromDouble(value)
-                        is Boolean -> if (value) Py_True() else Py_False()
+                        is Boolean -> if (value) my_Py_True() else my_Py_False()
                         else -> null
                     }
                     

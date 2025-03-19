@@ -1,8 +1,43 @@
 package com.airobot.device.yanapi
 
-import com.airobot.pythoninterop.*
+import com.airobot.pythoninterop.PyList_GetItem
+import com.airobot.pythoninterop.PyList_Size
+import com.airobot.pythoninterop.PyLong_AsLong
+import com.airobot.pythoninterop.PyLong_FromLong
+import com.airobot.pythoninterop.PyObject_IsTrue
+import com.airobot.pythoninterop.PyUnicodeObject
+import com.airobot.pythoninterop.PyUnicode_AsUTF8
+import com.airobot.pythoninterop.Py_BuildValue
+import com.airobot.pythoninterop.create_voice_asr_offline_syntax
+import com.airobot.pythoninterop.delete_voice_asr_offline_syntax
+import com.airobot.pythoninterop.get_robot_language
+import com.airobot.pythoninterop.get_robot_volume_value
+import com.airobot.pythoninterop.get_voice_asr_offline_syntax
+import com.airobot.pythoninterop.get_voice_asr_offline_syntax_grammars
+import com.airobot.pythoninterop.get_voice_asr_state
+import com.airobot.pythoninterop.get_voice_iat
+import com.airobot.pythoninterop.get_voice_tts_state_impl
+import com.airobot.pythoninterop.my_Py_False
+import com.airobot.pythoninterop.my_Py_True
+import com.airobot.pythoninterop.set_robot_language
+import com.airobot.pythoninterop.set_robot_volume_value
+import com.airobot.pythoninterop.start_voice_tts_impl
+import com.airobot.pythoninterop.stop_voice_asr
+import com.airobot.pythoninterop.stop_voice_iat
+import com.airobot.pythoninterop.stop_voice_tts
+import com.airobot.pythoninterop.sync_do_tts_impl
+import com.airobot.pythoninterop.sync_do_voice_asr
+import com.airobot.pythoninterop.sync_do_voice_asr_value
+import com.airobot.pythoninterop.sync_do_voice_iat
+import com.airobot.pythoninterop.sync_do_voice_iat_value
+import com.airobot.pythoninterop.update_voice_asr_offline_syntax
 import kotlinx.cinterop.ExperimentalForeignApi
-import kotlinx.cinterop.*
+import kotlinx.cinterop.cstr
+import kotlinx.cinterop.memScoped
+import kotlinx.cinterop.ptr
+import kotlinx.cinterop.reinterpret
+import kotlinx.cinterop.toKString
+import kotlinx.datetime.Clock
 
 /**
  * YAN设备语音服务
@@ -21,7 +56,9 @@ class YanSpeechService {
         try {
             memScoped {
                 val pyText = PyUnicodeObject(text.cstr.ptr.rawValue)
-                val result = text_to_speech(pyText.reinterpret<PyObject>().ptr)
+                val pyInterrupt = if (true) my_Py_True() else my_Py_False()
+                val pyTimestamp = Py_BuildValue("i",Clock.System.now().toEpochMilliseconds())
+                val result = start_voice_tts_impl(pyText.reinterpret<PyObject>().ptr, pyInterrupt,pyTimestamp, 0)
                 return result != null && PyObject_IsTrue(result) == 1
             }
         } catch (e: Exception) {
@@ -36,7 +73,7 @@ class YanSpeechService {
      */
     fun getLanguage(): String? {
         try {
-            val result = get_robot_language()
+            val result = get_robot_language(0)
             if (result != null) {
                 // 将PyObject转换为String
                 val pyStr = PyUnicode_AsUTF8(result)
@@ -58,7 +95,7 @@ class YanSpeechService {
         try {
             memScoped {
                 val pyLang = PyUnicodeObject(languageCode.cstr.ptr.rawValue)
-                val result = set_robot_language(pyLang.reinterpret<PyObject>().ptr)
+                val result = set_robot_language(pyLang.reinterpret<PyObject>().ptr,0)
                 return result != null && PyObject_IsTrue(result) == 1
             }
         } catch (e: Exception) {
@@ -73,7 +110,7 @@ class YanSpeechService {
      */
     fun getVolume(): Int {
         try {
-            val result = get_robot_volume_value()
+            val result = get_robot_volume_value(0)
             if (result != null) {
                 // 将PyObject转换为Int
                 return PyLong_AsLong(result).toInt()
@@ -94,7 +131,7 @@ class YanSpeechService {
         try {
             memScoped {
                 val pyVolume = PyLong_FromLong(volume.toLong())
-                val result = set_robot_volume_value(pyVolume)
+                val result = set_robot_volume_value(pyVolume,0)
                 return result != null && PyObject_IsTrue(result) == 1
             }
         } catch (e: Exception) {
@@ -139,36 +176,6 @@ class YanSpeechService {
         }
     }
 
-    /**
-     * 开始语音识别
-     *
-     * @return 操作是否成功
-     */
-    fun startVoiceAsr(): Boolean {
-        try {
-            val result = start_voice_asr()
-            return result != null && PyObject_IsTrue(result) == 1
-        } catch (e: Exception) {
-            return false
-        }
-    }
-
-    /**
-     * 获取语音识别结果
-     *
-     * @return 语音识别结果，包含识别状态和内容
-     */
-    fun getVoiceAsr(): Map<String, Any>? {
-        try {
-            val result = get_voice_asr()
-            if (result != null) {
-                return PyObjectToMap(result)
-            }
-            return null
-        } catch (e: Exception) {
-            return null
-        }
-    }
 
     /**
      * 同步执行语音识别
@@ -197,7 +204,8 @@ class YanSpeechService {
         try {
             memScoped {
                 val pyText = PyUnicodeObject(text.cstr.ptr.rawValue)
-                val result = start_voice_tts(pyText.reinterpret<PyObject>().ptr)
+                val pyInterrupt = if (true) my_Py_True() else my_Py_False()
+                val result = sync_do_tts_impl(pyText.reinterpret<PyObject>().ptr,pyInterrupt,0)
                 return result != null && PyObject_IsTrue(result) == 1
             }
         } catch (e: Exception) {
@@ -212,7 +220,8 @@ class YanSpeechService {
      */
     fun getVoiceTtsState(): Map<String, Any>? {
         try {
-            val result = get_voice_tts_state()
+            val pyTimestamp = Py_BuildValue("i",Clock.System.now().toEpochMilliseconds())
+            val result = get_voice_tts_state_impl(pyTimestamp,0)
             if (result != null) {
                 return PyObjectToMap(result)
             }
@@ -246,7 +255,9 @@ class YanSpeechService {
         try {
             memScoped {
                 val pyText = PyUnicodeObject(text.cstr.ptr.rawValue)
-                val result = sync_do_voice_tts(pyText.reinterpret<PyObject>().ptr)
+                val pyInterrupt = if (true) my_Py_True() else my_Py_False()
+                val pyTimestamp = Py_BuildValue("i",Clock.System.now().toEpochMilliseconds())
+                val result = start_voice_tts_impl(pyText.reinterpret<PyObject>().ptr, pyInterrupt,pyTimestamp, 0)
                 return result != null && PyObject_IsTrue(result) == 1
             }
         } catch (e: Exception) {
@@ -437,17 +448,5 @@ class YanSpeechService {
         }
     }
 
-    /**
-     * 停止语音合成
-     *
-     * @return 操作是否成功
-     */
-    fun stopVoiceTts(): Boolean {
-        try {
-            val result = stop_voice_tts(0)
-            return result != null && PyObject_IsTrue(result) == 1
-        } catch (e: Exception) {
-            return false
-        }
-    }
+
 }

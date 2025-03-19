@@ -1,6 +1,6 @@
 language = C++
 
-headers = YanAPI.h \
+headers = YanAPI.h python_export.h \
  longobject.h  \
 expat.h ncurses.h curses.h unctrl.h expat_external.h \
     \
@@ -80,13 +80,15 @@ weakrefobject.h
 linkerOpts = -Lbuild/libyanapi.so -lyanapi\
     -Lbuild/libpython3.so -lpython3
 
-headerFilter =  YanAPI.h   Python.h unicodeobject.h longobject.h tupleobject.h weakrefobject.h rangeobject.h  setobject.h  sliceobject.h \
+headerFilter =  YanAPI.h  python_export.h   Python.h unicodeobject.h longobject.h tupleobject.h weakrefobject.h rangeobject.h  setobject.h  sliceobject.h \
                            moduleobject.h namespaceobject.h object.h  odictobject.h \
                            bitset.h  boolobject.h  bytearrayobject.h  bytesobject.h \
                            cellobject.h   classobject.h  code.h  codecs.h compile.h complexobject.h context.h \
                            datetime.h  descrobject.h  dictobject.h enumobject.h errcode.h eval.h fileobject.h fileutils.h \
                            floatobject.h frameobject.h funcobject.h genobject.h  grammar.h import.h \
                            intrcheck.h iterobject.h listobject.h
+
+# 补充函数
 ---
 __PYX_EXTERN_C PyObject *get_ip_address(PyObject *);
 __PYX_EXTERN_C PyObject *yan_api_init(PyObject *);
@@ -221,6 +223,43 @@ PyAPI_FUNC(PyObject *) PyObject_SelfIter(PyObject *);
 PyAPI_FUNC(PyObject *) PyObject_GenericGetAttr(PyObject *, PyObject *);
 PyAPI_FUNC(int) PyObject_GenericSetAttr(PyObject *,
                                               PyObject *, PyObject *);
+
+
+PyAPI_FUNC(PyObject *) PyTuple_New(Py_ssize_t size);
+PyAPI_FUNC(Py_ssize_t) PyTuple_Size(PyObject *);
+PyAPI_FUNC(PyObject *) PyTuple_GetItem(PyObject *, Py_ssize_t);
+PyAPI_FUNC(int) PyTuple_SetItem(PyObject *, Py_ssize_t, PyObject *);
+PyAPI_FUNC(PyObject *) PyTuple_GetSlice(PyObject *, Py_ssize_t, Py_ssize_t);
+
+PyAPI_FUNC(double) PyFloat_GetMax(void);
+PyAPI_FUNC(double) PyFloat_GetMin(void);
+PyAPI_FUNC(PyObject *) PyFloat_GetInfo(void);
+
+/* Return Python float from string PyObject. */
+PyAPI_FUNC(PyObject *) PyFloat_FromString(PyObject*);
+
+/* Return Python float from C double. */
+PyAPI_FUNC(PyObject *) PyFloat_FromDouble(double);
+
+/* Extract C double from Python float.  The macro version trades safety for
+   speed. */
+PyAPI_FUNC(double) PyFloat_AsDouble(PyObject *);
+
+
+PyAPI_FUNC(PyObject *) PyList_New(Py_ssize_t size);
+PyAPI_FUNC(Py_ssize_t) PyList_Size(PyObject *);
+PyAPI_FUNC(PyObject *) PyList_GetItem(PyObject *, Py_ssize_t);
+PyAPI_FUNC(int) PyList_SetItem(PyObject *, Py_ssize_t, PyObject *);
+PyAPI_FUNC(int) PyList_Insert(PyObject *, Py_ssize_t, PyObject *);
+PyAPI_FUNC(int) PyList_Append(PyObject *, PyObject *);
+PyAPI_FUNC(PyObject *) PyList_GetSlice(PyObject *, Py_ssize_t, Py_ssize_t);
+PyAPI_FUNC(int) PyList_SetSlice(PyObject *, Py_ssize_t, Py_ssize_t, PyObject *);
+PyAPI_FUNC(int) PyList_Sort(PyObject *);
+PyAPI_FUNC(int) PyList_Reverse(PyObject *);
+PyAPI_FUNC(PyObject *) PyList_AsTuple(PyObject *);
+PyAPI_FUNC(int) PyList_ClearFreeList(void);
+
+
 PyAPI_FUNC(Py_hash_t) PyObject_Hash(PyObject *);
 PyAPI_FUNC(Py_hash_t) PyObject_HashNotImplemented(PyObject *);
 PyAPI_FUNC(int) PyObject_IsTrue(PyObject *);

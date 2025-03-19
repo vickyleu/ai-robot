@@ -21,9 +21,14 @@ class YanServoService {
     fun setServoAngle(servoId: Int, angle: Int): Boolean {
         try {
             memScoped {
+                // 创建一个包含舵机ID和角度的字典
+                val pyDict = PyDict_New()
                 val pyServoId = PyLong_FromLong(servoId.toLong())
                 val pyAngle = PyLong_FromLong(angle.toLong())
-                val result = set_servo_angle(pyServoId, pyAngle)
+                PyDict_SetItem(pyDict, pyServoId, pyAngle)
+                
+                // 使用set_servos_angles_layers函数设置舵机角度
+                val result = set_servos_angles_layers(pyDict, 0)
                 return result != null && PyObject_IsTrue(result) == 1
             }
         } catch (e: Exception) {
@@ -41,7 +46,7 @@ class YanServoService {
         try {
             memScoped {
                 val pyServoId = PyLong_FromLong(servoId.toLong())
-                val result = get_servo_angle(pyServoId)
+                val result = get_servo_angle_value(pyServoId,0)
                 if (result != null) {
                     return PyLong_AsLong(result).toInt()
                 }
@@ -53,43 +58,58 @@ class YanServoService {
     }
 
     /**
-     * 设置舵机速度
+     * 获取舵机模式
      *
-     * @param servoId 舵机ID
-     * @param speed 速度值，范围0-100
-     * @return 操作是否成功
+     * @param servoIds 舵机ID列表
+     * @return 舵机模式信息
      */
-    fun setServoSpeed(servoId: Int, speed: Int): Boolean {
+    fun getServosMode(servoIds: List<Int>): Map<String, Any> {
         try {
             memScoped {
-                val pyServoId = PyLong_FromLong(servoId.toLong())
-                val pySpeed = PyLong_FromLong(speed.toLong())
-                val result = set_servo_speed(pyServoId, pySpeed)
+                // 创建一个包含舵机ID的列表
+                val pyList = PyList_New(servoIds.size.toLong())
+                for (i in servoIds.indices) {
+                    val pyServoId = PyLong_FromLong(servoIds[i].toLong())
+                    PyList_SetItem(pyList, i.toLong(), pyServoId)
+                }
+                
+                // 使用get_servos_mode函数获取舵机模式
+                val result = get_servos_mode(pyList, 0)
+                if (result != null) {
+                    return PyObjectToMap(result)
+                }
+                return emptyMap()
+            }
+        } catch (e: Exception) {
+            return emptyMap()
+        }
+    }
+    
+    /**
+     * 设置舵机模式
+     *
+     * @param servoIds 舵机ID列表
+     * @param mode 模式值
+     * @return 操作是否成功
+     */
+    fun setServosMode(servoIds: List<Int>, mode: Int): Boolean {
+        try {
+            memScoped {
+                // 创建一个包含舵机ID的列表
+                val pyList = PyList_New(servoIds.size.toLong())
+                for (i in servoIds.indices) {
+                    val pyServoId = PyLong_FromLong(servoIds[i].toLong())
+                    PyList_SetItem(pyList, i.toLong(), pyServoId)
+                }
+                
+                val pyMode = PyLong_FromLong(mode.toLong())
+                
+                // 使用set_servos_mode函数设置舵机模式
+                val result = set_servos_mode(pyList, pyMode, 0)
                 return result != null && PyObject_IsTrue(result) == 1
             }
         } catch (e: Exception) {
             return false
-        }
-    }
-
-    /**
-     * 获取舵机速度
-     *
-     * @param servoId 舵机ID
-     * @return 当前速度值，失败返回-1
-     */
-    fun getServoSpeed(servoId: Int): Int {
-        try {
-            memScoped {
-                val pyServoId = PyLong_FromLong(servoId.toLong())
-                val result = get_servo_speed(pyServoId)
-                if (result != null) {
-                    return PyLong_AsLong(result).toInt()
-                }
-                return -1
-            }
-        } catch (e: Exception) {
-            return -1
         }
     }
 }

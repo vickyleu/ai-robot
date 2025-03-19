@@ -5,7 +5,7 @@
 
 #include "Python.h"
 
-/* "YanAPI.pyx":4444
+/* "YanAPI.pyx":4357
  * 
  * 
  * cpdef public enum GamepadKey:             # <<<<<<<<<<<<<<
@@ -99,6 +99,7 @@ __PYX_EXTERN_C PyObject *get_current_layer_motion_play_state(int __pyx_skip_disp
 __PYX_EXTERN_C PyObject *upload_motion(PyObject *, int __pyx_skip_dispatch);
 __PYX_EXTERN_C PyObject *get_motion_list_value(int __pyx_skip_dispatch);
 __PYX_EXTERN_C PyObject *get_motion_list(int __pyx_skip_dispatch);
+__PYX_EXTERN_C PyObject *control_motion_gait_impl(PyObject *, PyObject *, PyObject *, PyObject *, PyObject *, int __pyx_skip_dispatch);
 __PYX_EXTERN_C PyObject *get_motion_gait_state(int __pyx_skip_dispatch);
 __PYX_EXTERN_C PyObject *exit_motion_gait(int __pyx_skip_dispatch);
 __PYX_EXTERN_C PyObject *get_aprilTag_recognition_status(int __pyx_skip_dispatch);
@@ -124,6 +125,7 @@ __PYX_EXTERN_C PyObject *get_sensors_touch_value(int __pyx_skip_dispatch);
 __PYX_EXTERN_C PyObject *get_sensors_ultrasonic_value(int __pyx_skip_dispatch);
 __PYX_EXTERN_C PyObject *stop_voice_asr(int __pyx_skip_dispatch);
 __PYX_EXTERN_C PyObject *get_voice_asr_state(int __pyx_skip_dispatch);
+__PYX_EXTERN_C PyObject *start_voice_asr_impl(PyObject *, PyObject *, int __pyx_skip_dispatch);
 __PYX_EXTERN_C PyObject *sync_do_voice_asr_value(int __pyx_skip_dispatch);
 __PYX_EXTERN_C PyObject *sync_do_voice_asr(int __pyx_skip_dispatch);
 __PYX_EXTERN_C PyObject *delete_voice_asr_offline_syntax(PyObject *, int __pyx_skip_dispatch);
@@ -136,6 +138,9 @@ __PYX_EXTERN_C PyObject *get_voice_iat(int __pyx_skip_dispatch);
 __PYX_EXTERN_C PyObject *sync_do_voice_iat_value(int __pyx_skip_dispatch);
 __PYX_EXTERN_C PyObject *sync_do_voice_iat(int __pyx_skip_dispatch);
 __PYX_EXTERN_C PyObject *stop_voice_tts(int __pyx_skip_dispatch);
+__PYX_EXTERN_C PyObject *get_voice_tts_state_impl(PyObject *, int __pyx_skip_dispatch);
+__PYX_EXTERN_C PyObject *start_voice_tts_impl(PyObject *, PyObject *, PyObject *, int __pyx_skip_dispatch);
+__PYX_EXTERN_C PyObject *sync_do_tts_impl(PyObject *, PyObject *, int __pyx_skip_dispatch);
 __PYX_EXTERN_C PyObject *get_visual_task_result(PyObject *, PyObject *, int __pyx_skip_dispatch);
 __PYX_EXTERN_C PyObject *sync_do_face_recognition_value(PyObject *, int __pyx_skip_dispatch);
 __PYX_EXTERN_C PyObject *sync_do_face_recognition(PyObject *, int __pyx_skip_dispatch);

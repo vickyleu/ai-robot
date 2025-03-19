@@ -12,33 +12,16 @@ import kotlinx.cinterop.*
 @OptIn(ExperimentalForeignApi::class)
 class YanDiagnosisService {
     /**
-     * 执行系统自检
+     * 获取机器人版本信息
      *
-     * @return 自检结果，包含各个子系统的状态
+     * @param type 版本类型
+     * @return 版本信息
      */
-    fun runSystemCheck(): Map<String, Any> {
-        try {
-            val result = run_system_check()
-            if (result != null) {
-                return PyObjectToMap(result)
-            }
-            return emptyMap()
-        } catch (e: Exception) {
-            return emptyMap()
-        }
-    }
-
-    /**
-     * 检查特定子系统
-     *
-     * @param subsystem 子系统名称，如"motor", "sensor", "battery"等
-     * @return 检查结果
-     */
-    fun checkSubsystem(subsystem: String): Map<String, Any> {
+    fun getRobotVersionInfo(type: String): Map<String, Any> {
         try {
             memScoped {
-                val pySubsystem = PyUnicodeObject(subsystem.cstr.ptr.rawValue)
-                val result = check_subsystem(pySubsystem.reinterpret<PyObject>().ptr)
+                val pyType = PyUnicodeObject(type.cstr.ptr.rawValue)
+                val result = get_robot_version_info(pyType.reinterpret<PyObject>().ptr,0)
                 if (result != null) {
                     return PyObjectToMap(result)
                 }
@@ -50,71 +33,91 @@ class YanDiagnosisService {
     }
 
     /**
-     * 获取系统日志
+     * 获取机器人模式
      *
-     * @param logType 日志类型，如"error", "warning", "info"等
-     * @param count 日志条数
-     * @return 日志内容
+     * @return 机器人模式
      */
-    fun getSystemLogs(logType: String, count: Int): List<String> {
+    fun getRobotMode(): Int {
+        try {
+            val result = get_robot_mode(0)
+            if (result != null) {
+                return PyLong_AsLong(result).toInt()
+            }
+            return -1
+        } catch (e: Exception) {
+            return -1
+        }
+    }
+
+    /**
+     * 获取机器人音量
+     *
+     * @return 音量值，范围0-100
+     */
+    fun getRobotVolume(): Int {
+        try {
+            val result = get_robot_volume(0)
+            if (result != null) {
+                return PyLong_AsLong(result).toInt()
+            }
+            return -1
+        } catch (e: Exception) {
+            return -1
+        }
+    }
+    
+    /**
+     * 设置机器人音量
+     *
+     * @param volume 音量值，范围0-100
+     * @return 操作是否成功
+     */
+    fun setRobotVolume(volume: Int): Boolean {
         try {
             memScoped {
-                val pyLogType = PyUnicodeObject(logType.cstr.ptr.rawValue)
-                val pyCount = PyLong_FromLong(count.toLong())
-                val result = get_system_logs(pyLogType.reinterpret<PyObject>().ptr, pyCount)
-                
-                if (result != null) {
-                    val logs = mutableListOf<String>()
-                    val size = PyList_Size(result)
-                    
-                    for (i in 0 until size) {
-                        val item = PyList_GetItem(result, i)
-                        if (item != null) {
-                            val pyStr = PyUnicode_AsUTF8(item)
-                            pyStr?.toKString()?.let { logs.add(it) }
-                        }
-                    }
-                    
-                    return logs
-                }
-                return emptyList()
+                val pyVolume = PyLong_FromLong(volume.toLong())
+                val result = set_robot_volume(pyVolume,0)
+                return result != null && PyObject_IsTrue(result) == 1
             }
         } catch (e: Exception) {
-            return emptyList()
+            return false
         }
     }
 
     /**
-     * 获取系统状态
+     * 获取机器人语言
      *
-     * @return 系统状态信息，包含CPU使用率、内存使用率等
+     * @return 语言代码
      */
-    fun getSystemStatus(): Map<String, Any> {
+    fun getRobotLanguage(): Int {
         try {
-            val result = get_system_status()
+            val result = get_robot_language(0)
             if (result != null) {
-                return PyObjectToMap(result)
+                return PyLong_AsLong(result).toInt()
             }
-            return emptyMap()
+            return -1
         } catch (e: Exception) {
-            return emptyMap()
+            return -1
+        }
+    }
+    
+    /**
+     * 设置机器人语言
+     *
+     * @param language 语言代码
+     * @return 操作是否成功
+     */
+    fun setRobotLanguage(language: Int): Boolean {
+        try {
+            memScoped {
+                val pyLanguage = PyLong_FromLong(language.toLong())
+                val result = set_robot_language(pyLanguage, 0)
+                return result != null && PyObject_IsTrue(result) == 1
+            }
+        } catch (e: Exception) {
+            return false
         }
     }
 
-    /**
-     * 获取硬件信息
-     *
-     * @return 硬件信息，包含设备型号、序列号、固件版本等
-     */
-    fun getHardwareInfo(): Map<String, Any> {
-        try {
-            val result = get_hardware_info()
-            if (result != null) {
-                return PyObjectToMap(result)
-            }
-            return emptyMap()
-        } catch (e: Exception) {
-            return emptyMap()
-        }
-    }
+    // 注意：get_hardware_info函数在YanAPI.h中不存在，已移除相关方法
 }

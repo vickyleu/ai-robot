@@ -188,54 +188,6 @@ class YanDevice(
     }
 }
 
-/**
- * YAN设备连接类
- */
-private class YanConnection {
-    private var socket: YanSocket? = null
-    private var statusCallback: ((Map<String, Any>) -> Unit)? = null
-    private var errorCallback: ((String) -> Unit)? = null
-    
-    fun connect(deviceId: String) {
-        socket = YanSocket().apply {
-            connect("yan://$deviceId")
-        }
-    }
-    
-    fun disconnect() {
-        socket?.close()
-        socket = null
-    }
-    
-    fun send(data: ByteArray) {
-        socket?.send(data)
-    }
-    
-    fun onStatusUpdate(callback: (Map<String, Any>) -> Unit) {
-        statusCallback = callback
-    }
-    
-    fun onError(callback: (String) -> Unit) {
-        errorCallback = callback
-    }
-}
-
-/**
- * YAN设备Socket类
- */
-private class YanSocket {
-    fun connect(url: String) {
-        // 实现Socket连接逻辑
-    }
-    
-    fun close() {
-        // 实现Socket关闭逻辑
-    }
-    
-    fun send(data: ByteArray) {
-        // 实现数据发送逻辑
-    }
-}
 
 /**
  * 连接异常

@@ -21,7 +21,7 @@ class YanVisionService {
         try {
             memScoped {
                 val pyMode = PyUnicodeObject(mode.cstr.ptr.rawValue)
-                val result = sync_do_face_recognition(pyMode.reinterpret<PyObject>().ptr)
+                val result = sync_do_face_recognition(pyMode.reinterpret<PyObject>().ptr,0)
                 if (result != null) {
                     return PyObjectToMap(result)
                 }
@@ -42,7 +42,7 @@ class YanVisionService {
         try {
             memScoped {
                 val pyMode = PyUnicodeObject(mode.cstr.ptr.rawValue)
-                val result = sync_do_face_recognition_value(pyMode.reinterpret<PyObject>().ptr)
+                val result = sync_do_face_recognition_value(pyMode.reinterpret<PyObject>().ptr,0)
                 if (result != null) {
                     val pyStr = PyUnicode_AsUTF8(result)
                     return pyStr?.toKString()
@@ -63,8 +63,8 @@ class YanVisionService {
     fun syncDoGestureRecognition(mode: String): Map<String, Any>? {
         try {
             memScoped {
-                val pyMode = PyUnicodeObject(mode.cstr.ptr.rawValue)
-                val result = sync_do_gesture_recognition(pyMode.reinterpret<PyObject>().ptr)
+//                val pyMode = PyUnicodeObject(mode.cstr.ptr.rawValue)
+                val result = sync_do_gesture_recognition(0)
                 if (result != null) {
                     return PyObjectToMap(result)
                 }
@@ -89,7 +89,8 @@ class YanVisionService {
                 val pyTaskId = PyUnicodeObject(taskId.cstr.ptr.rawValue)
                 val result = get_visual_task_result(
                     pyTaskType.reinterpret<PyObject>().ptr,
-                    pyTaskId.reinterpret<PyObject>().ptr
+                    pyTaskId.reinterpret<PyObject>().ptr,
+                    0
                 )
                 if (result != null) {
                     return PyObjectToMap(result)

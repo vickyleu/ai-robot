@@ -1,3 +1,5 @@
+@file:OptIn(ExperimentalForeignApi::class)
+
 package com.airobot.device.yanapi
 
 import com.airobot.pythoninterop.*
@@ -83,49 +85,40 @@ class YanDeviceStatusService {
      * @return 设备状态信息，包含各种状态参数
      */
     fun getDeviceStatus(): Map<String, Any> {
+        // 组合多个API调用的结果来提供设备状态信息
+        val statusData = mutableMapOf<String, Any>()
+        
+        // 添加电池信息
         try {
-            val result = get_device_status()
-            if (result != null) {
-                val statusData = mutableMapOf<String, Any>()
-                
-                // 获取字典的键列表
-                val keys = PyDict_Keys(result)
-                if (keys != null) {
-                    val size = PyList_Size(keys)
-                    
-                    for (i in 0 until size) {
-                        val key = PyList_GetItem(keys, i)
-                        val value = PyDict_GetItem(result, key)
-                        
-                        if (key != null && value != null) {
-                            val keyStr = PyUnicode_AsUTF8(key)?.toKString() ?: continue
-                            
-                            // 根据值的类型进行相应的转换
-                            when {
-                                PyFloat_Check(value) != 0 -> {
-                                    statusData[keyStr] = PyFloat_AsDouble(value)
-                                }
-                                PyLong_Check(value) != 0 -> {
-                                    statusData[keyStr] = PyLong_AsLong(value)
-                                }
-                                PyUnicode_Check(value) != 0 -> {
-                                    val valueStr = PyUnicode_AsUTF8(value)?.toKString() ?: continue
-                                    statusData[keyStr] = valueStr
-                                }
-                                PyBool_Check(value) != 0 -> {
-                                    statusData[keyStr] = PyObject_IsTrue(value) == 1
-                                }
-                            }
-                        }
-                    }
-                }
-                
-                return statusData
+            val batteryInfo = getBatteryInfo()
+            if (batteryInfo.isNotEmpty()) {
+                statusData["battery"] = batteryInfo
             }
-            return emptyMap()
         } catch (e: Exception) {
-            return emptyMap()
+            // 忽略错误
         }
+        
+        // 添加IP地址信息
+        try {
+            val ipAddress = getIpAddress()
+            if (ipAddress != null) {
+                statusData["ip_address"] = ipAddress
+            }
+        } catch (e: Exception) {
+            // 忽略错误
+        }
+        
+        // 添加LED状态信息
+        try {
+            val ledInfo = getRobotLed()
+            if (ledInfo.isNotEmpty()) {
+                statusData["led_status"] = ledInfo
+            }
+        } catch (e: Exception) {
+            // 忽略错误
+        }
+        
+        return statusData
     }
     
     /**
@@ -134,15 +127,8 @@ class YanDeviceStatusService {
      * @return 电池电量百分比，范围0-100，失败返回-1
      */
     fun getBatteryLevel(): Int {
-        try {
-            val result = get_battery_level()
-            if (result != null) {
-                return PyLong_AsLong(result).toInt()
-            }
-            return -1
-        } catch (e: Exception) {
-            return -1
-        }
+        // 使用get_robot_battery_value函数获取电池电量
+        return getBatteryValue()
     }
     
     /**
@@ -151,46 +137,24 @@ class YanDeviceStatusService {
      * @return 网络状态信息
      */
     fun getNetworkStatus(): Map<String, Any> {
+        // 创建一个包含网络状态信息的Map
+        val networkStatus = mutableMapOf<String, Any>()
+        
+        // 添加IP地址信息
         try {
-            val result = get_network_status()
-            if (result != null) {
-                val networkStatus = mutableMapOf<String, Any>()
-                
-                // 获取字典的键列表
-                val keys = PyDict_Keys(result)
-                if (keys != null) {
-                    val size = PyList_Size(keys)
-                    
-                    for (i in 0 until size) {
-                        val key = PyList_GetItem(keys, i)
-                        val value = PyDict_GetItem(result, key)
-                        
-                        if (key != null && value != null) {
-                            val keyStr = PyUnicode_AsUTF8(key)?.toKString() ?: continue
-                            
-                            // 根据值的类型进行相应的转换
-                            when {
-                                PyBool_Check(value) != 0 -> {
-                                    networkStatus[keyStr] = PyObject_IsTrue(value) == 1
-                                }
-                                PyUnicode_Check(value) != 0 -> {
-                                    val valueStr = PyUnicode_AsUTF8(value)?.toKString() ?: continue
-                                    networkStatus[keyStr] = valueStr
-                                }
-                                PyLong_Check(value) != 0 -> {
-                                    networkStatus[keyStr] = PyLong_AsLong(value)
-                                }
-                            }
-                        }
-                    }
-                }
-                
-                return networkStatus
+            val ipAddress = getIpAddress()
+            if (ipAddress != null) {
+                networkStatus["ip_address"] = ipAddress
+                networkStatus["connected"] = true
+            } else {
+                networkStatus["connected"] = false
             }
-            return emptyMap()
         } catch (e: Exception) {
-            return emptyMap()
+            networkStatus["connected"] = false
+            networkStatus["error"] = e.message ?: "Unknown error"
         }
+        
+        return networkStatus
     }
 
     /**

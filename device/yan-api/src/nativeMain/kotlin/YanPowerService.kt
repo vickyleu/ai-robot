@@ -18,7 +18,7 @@ class YanPowerService {
      */
     fun getBatteryLevel(): Int {
         try {
-            val result = get_battery_level()
+            val result = get_robot_battery_value(0)
             if (result != null) {
                 return PyLong_AsLong(result).toInt()
             }
@@ -34,64 +34,24 @@ class YanPowerService {
      * @return 是否正在充电
      */
     fun isCharging(): Boolean {
+        // 注意：is_charging函数在YanAPI.h中不存在
+        // 可以通过get_robot_battery_info获取充电状态
         try {
-            val result = is_charging()
-            return result != null && PyObject_IsTrue(result) == 1
+            val batteryInfo = get_robot_battery_info(0)
+            if (batteryInfo != null) {
+                val data = PyObjectToMap(batteryInfo)["data"] as? Map<String, Any>
+                return data?.get("charging") as? Int == 1
+            }
+            return false
         } catch (e: Exception) {
             return false
         }
     }
 
-    /**
-     * 获取电池温度
-     *
-     * @return 电池温度（摄氏度），失败返回-1
-     */
-    fun getBatteryTemperature(): Float {
-        try {
-            val result = get_battery_temperature()
-            if (result != null) {
-                return PyFloat_AsDouble(result).toFloat()
-            }
-            return -1f
-        } catch (e: Exception) {
-            return -1f
-        }
-    }
-
-    /**
-     * 获取电池健康状态
-     *
-     * @return 电池健康状态百分比，范围0-100，失败返回-1
-     */
-    fun getBatteryHealth(): Int {
-        try {
-            val result = get_battery_health()
-            if (result != null) {
-                return PyLong_AsLong(result).toInt()
-            }
-            return -1
-        } catch (e: Exception) {
-            return -1
-        }
-    }
-
-    /**
-     * 获取预计剩余使用时间
-     *
-     * @return 预计剩余使用时间（分钟），失败返回-1
-     */
-    fun getRemainingTime(): Int {
-        try {
-            val result = get_remaining_time()
-            if (result != null) {
-                return PyLong_AsLong(result).toInt()
-            }
-            return -1
-        } catch (e: Exception) {
-            return -1
-        }
-    }
+    // 注意：以下函数在YanAPI.h中不存在，已移除相关方法
+    // - get_battery_temperature
+    // - get_battery_health
+    // - get_remaining_time
 
     /**
      * 获取电源状态详情
@@ -100,7 +60,7 @@ class YanPowerService {
      */
     fun getPowerStatus(): Map<String, Any> {
         try {
-            val result = get_power_status()
+            val result = get_robot_battery_info(0)
             if (result != null) {
                 return PyObjectToMap(result)
             }
