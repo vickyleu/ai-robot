@@ -52,8 +52,26 @@ kotlin {
 dependencies {
     // This is needed for includes, ref: https://github.com/google/protobuf-gradle-plugin/issues/41#issuecomment-143884188
     compileOnly(libs.google.protobuf.java)
-
 }
+val serviceGen = project(projects.shared.generator.serviceGen.path)
+tasks {
+    named("compileJava"){
+        // The protobuf gradle plugin requires this project to apply the `java-library` plugin. But since we're only
+        // generating Kotlin code, we need to disable the `compileJava` task. Otherwise gradle will complain that there
+        // is no Java code available to compile.
+        enabled = false
+    }
+    afterEvaluate {
+        named("compileKotlinMetadata") {
+            afterEvaluate {
+                serviceGen.afterEvaluate {
+                    dependsOn(serviceGen.tasks.named("jar"))
+                }
+            }
+        }
+    }
+}
+
 
 protobuf {
     protoc {
@@ -92,23 +110,7 @@ protobuf {
         }
     }
 }
-val serviceGen = project(projects.shared.generator.serviceGen.path)
-tasks {
-    named("compileJava"){
-        // The protobuf gradle plugin requires this project to apply the `java-library` plugin. But since we're only
-        // generating Kotlin code, we need to disable the `compileJava` task. Otherwise gradle will complain that there
-        // is no Java code available to compile.
-        enabled = false
-    }
-    afterEvaluate {
-        withType<KotlinCompile>{
-            serviceGen.afterEvaluate {
-                dependsOn(serviceGen.tasks.named("jar"))
-            }
-        }
-    }
 
-}
 
 // 需要添加一个任务, 当kotlin编译的时候, 需要执行service-gen中的jar生成jar包
 //android {

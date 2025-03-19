@@ -62,7 +62,7 @@ kotlin {
 
         jvmMain.dependencies {
             implementation("ch.qos.logback:logback-classic:1.5.16")
-            implementation("io.grpc:grpc-netty:1.69.0")
+            implementation("io.grpc:grpc-netty:1.70.0")
         }
         androidMain.dependencies {
             implementation(libs.androidx.lifecycle.viewmodel.ktx)

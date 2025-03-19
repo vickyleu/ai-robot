@@ -203,6 +203,21 @@ dependencyResolutionManagement {
             }
             isAllowInsecureProtocol = false
         }
+        ivy {
+            name = "WebAssembly"
+            setUrl("https://github.com/WebAssembly/binaryen/releases/download/")
+            //https://github.com/WebAssembly/binaryen/releases/download/version_119/binaryen-version_119-arm64-macos.tar.gz
+            patternLayout {
+                artifact("version_[revision]/[artifact]-(version_[revision]-[classifier]).[ext]")
+            }
+            metadataSources {
+                artifact()
+            }
+            content {
+                includeModule("com.github.webassembly", "binaryen")
+            }
+            isAllowInsecureProtocol = false
+        }
 
     }
 }
