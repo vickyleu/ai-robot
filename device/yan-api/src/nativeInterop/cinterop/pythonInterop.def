@@ -77,8 +77,7 @@ warnings.h \
 weakrefobject.h
 
 #compilerOpts = -DPy_BUILD_CORE
-linkerOpts = -Lbuild/libyanapi.so -lyanapi\
-    -Lbuild/libpython3.so -lpython3
+linkerOpts = -lyanapi -Lpython3
 
 headerFilter =  YanAPI.h  python_export.h   Python.h unicodeobject.h longobject.h tupleobject.h weakrefobject.h rangeobject.h  setobject.h  sliceobject.h \
                            moduleobject.h namespaceobject.h object.h  odictobject.h \

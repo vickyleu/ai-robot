@@ -20,8 +20,8 @@ class YanSkillManager {
     fun uploadMotion(filePath: String): Boolean {
         try {
             memScoped {
-                val pyFilePath = PyUnicodeObject(filePath.cstr.ptr.rawValue)
-                val result = upload_motion(pyFilePath.reinterpret<PyObject>().ptr,0)
+                val pyFilePath = PyUnicode_FromString(filePath)
+                val result = upload_motion(pyFilePath,0)
                 return result != null && PyObject_IsTrue(result) == 1
             }
         } catch (e: Exception) {
@@ -38,8 +38,8 @@ class YanSkillManager {
     fun deleteMotion(name: String): Boolean {
         try {
             memScoped {
-                val pyName = PyUnicodeObject(name.cstr.ptr.rawValue)
-                val result = delete_motion(pyName.reinterpret<PyObject>().ptr,0)
+                val pyName = PyUnicode_FromString(name)
+                val result = delete_motion(pyName,0)
                 return result != null && PyObject_IsTrue(result) == 1
             }
         } catch (e: Exception) {
@@ -169,9 +169,9 @@ class YanSkillManager {
         try {
             map.forEach { (key, value) ->
                 memScoped {
-                    val pyKey = PyUnicodeObject(key.cstr.ptr.rawValue).reinterpret<PyObject>().ptr
+                    val pyKey = PyUnicode_FromString(key)
                     val pyValue = when (value) {
-                        is String -> PyUnicodeObject(value.cstr.ptr.rawValue).reinterpret<PyObject>().ptr
+                        is String -> PyUnicode_FromString(value)
                         is Int -> PyLong_FromLong(value.toLong())
                         is Long -> PyLong_FromLong(value)
                         is Float -> PyFloat_FromDouble(value.toDouble())

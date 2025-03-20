@@ -13,8 +13,16 @@ kotlin {
         binaries {
             executable {
                 entryPoint = "main"
+                baseName = "yanshee"
                 // 如有需要，可添加链接器选项：
-                linkerOpts("-L${file("src/nativeInterop/cpp/build").absolutePath}", "-lyanapi")
+                val libYanPath = file("src/nativeInterop/cpp/build").absolutePath
+                val libPythonPath = file("src/nativeInterop/cpp").absolutePath
+                linkerOpts(
+                    "-L${libYanPath}",
+                    "-L${libPythonPath}",
+                    "-lyanapi",
+                    "-lpython3"
+                )
             }
         }
         // 配置cinterop以绑定Python方法
@@ -52,6 +60,8 @@ kotlin {
             this.kotlin.srcDir("src/pythonMain/python")
         }
     }
+
+
 // 定义一个任务检查 CMake 是否存在
     tasks.register("checkCMake") {
         group = "小工具"
@@ -97,7 +107,40 @@ kotlin {
     tasks.withType<KotlinNativeCompile>().all {
         dependsOn(tasks["buildNativeLib"])
     }
+
+    afterEvaluate {
+        tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinNativeLink>().configureEach {
+            if (outputKind != org.jetbrains.kotlin.konan.target.CompilerOutputKind.PROGRAM) return@configureEach
+            val binary = this.binary
+            val binaryDir = binary.outputDirectory
+            doLast {
+                val originalFile = File(binaryDir, "${binary.baseName}.kexe")
+                val unusedFile = File(binaryDir, "${project.name}.kexe")
+                if (originalFile.exists()) {
+                    val renamedFile = File(binaryDir, binary.baseName)
+                    originalFile.renameTo(renamedFile)
+                }
+                if (unusedFile.exists()) {
+                    unusedFile.delete()
+                }
+            }
+        }
+    }
 }
+//linkReleaseExecutableLinuxArm64
+
+//tasks.withType<Build>().configureEach {
+//    val dir = this.destinationDirectory.asFile.get()
+//    println("dir=====>${dir.absolutePath}")
+//    val binDir = project.layout.buildDirectory.file("bin/linuxArm64/releaseExecutable").get().asFile
+//    doLast {
+//        val originalFile = File(binDir, "yanshee.kexe")
+//        val renamedFile = File(binDir, "yanshee")
+//        if (originalFile.exists()) {
+//            originalFile.renameTo(renamedFile)
+//        }
+//    }
+//}
 
 
 // 添加Cython任务

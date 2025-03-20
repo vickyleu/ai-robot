@@ -64,7 +64,7 @@ class YanVisionService {
                 val pyTimestamp = PyLong_FromLong(Clock.System.now().toEpochMilliseconds())
                 val result = start_face_recognition_impl(pyMode, pyTimestamp, 0)
                 if (result != null) {
-                    return result != null && PyObject_IsTrue(result) == 1
+                    return  PyObject_IsTrue(result) == 1
                 }
                 return false
             }

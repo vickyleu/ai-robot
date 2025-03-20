@@ -1,4 +1,5 @@
 @file:OptIn(ExperimentalForeignApi::class)
+@file:Suppress("UNCHECKED_CAST")
 
 package com.airobot.device.yanapi
 
@@ -30,9 +31,9 @@ class YanConnection {
             isConnected = true
             memScoped {
                 val ip = "192.168.1.1"
-                val pyIp: PyUnicodeObject = PyUnicodeObject(ip.cstr.ptr.rawValue)
+                val pyIp = PyUnicode_FromString(ip)
                 // 调用 yan_api_init，传入 pyIp（类型会自动转换为 CValuesRef<_object>）
-                initResult =  yan_api_init(pyIp.reinterpret<PyObject>().ptr) // 根据接口签名传入正确参数
+                initResult =  yan_api_init(pyIp) // 根据接口签名传入正确参数
                 // 此时 ret 是返回的 PyObject*，可根据需要进行后续处理
                 println("yan_api_init result: $initResult")
                 // 启动状态监控

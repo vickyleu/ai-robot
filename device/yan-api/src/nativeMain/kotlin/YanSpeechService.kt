@@ -7,6 +7,7 @@ import com.airobot.pythoninterop.PyLong_FromLong
 import com.airobot.pythoninterop.PyObject_IsTrue
 import com.airobot.pythoninterop.PyUnicodeObject
 import com.airobot.pythoninterop.PyUnicode_AsUTF8
+import com.airobot.pythoninterop.PyUnicode_FromString
 import com.airobot.pythoninterop.Py_BuildValue
 import com.airobot.pythoninterop.create_voice_asr_offline_syntax
 import com.airobot.pythoninterop.delete_voice_asr_offline_syntax
@@ -52,15 +53,13 @@ class YanSpeechService {
      * @param text 要转换的文本
      * @return 操作是否成功
      */
-    fun textToSpeech(text: String): Boolean {
+    fun textToSpeech(text: String,interrupt: Boolean=true): Boolean {
         try {
             memScoped {
-                val pyText = PyUnicodeObject(text.cstr.ptr.rawValue)
-                val pyInterrupt = if (true) my_Py_True() else my_Py_False()
-
+                val pyText = PyUnicode_FromString(text)
+                val pyInterrupt = if (interrupt) my_Py_True() else my_Py_False()
                 val pyTimestamp = PyLong_FromLong(Clock.System.now().toEpochMilliseconds())
-
-                val result = start_voice_tts_impl(pyText.reinterpret<PyObject>().ptr, pyInterrupt,pyTimestamp, 0)
+                val result = start_voice_tts_impl(pyText, pyInterrupt,pyTimestamp, 0)
                 return result != null && PyObject_IsTrue(result) == 1
             }
         } catch (e: Exception) {
@@ -96,8 +95,8 @@ class YanSpeechService {
     fun setLanguage(languageCode: String): Boolean {
         try {
             memScoped {
-                val pyLang = PyUnicodeObject(languageCode.cstr.ptr.rawValue)
-                val result = set_robot_language(pyLang.reinterpret<PyObject>().ptr,0)
+                val pyLang = PyUnicode_FromString(languageCode)
+                val result = set_robot_language(pyLang,0)
                 return result != null && PyObject_IsTrue(result) == 1
             }
         } catch (e: Exception) {
@@ -202,12 +201,12 @@ class YanSpeechService {
      * @param text 要合成的文本
      * @return 操作是否成功
      */
-    fun startVoiceTts(text: String): Boolean {
+    fun startVoiceTts(text: String,interrupt: Boolean=true): Boolean {
         try {
             memScoped {
-                val pyText = PyUnicodeObject(text.cstr.ptr.rawValue)
-                val pyInterrupt = if (true) my_Py_True() else my_Py_False()
-                val result = sync_do_tts_impl(pyText.reinterpret<PyObject>().ptr,pyInterrupt,0)
+                val pyText = PyUnicode_FromString(text)
+                val pyInterrupt = if (interrupt) my_Py_True() else my_Py_False()
+                val result = sync_do_tts_impl(pyText,pyInterrupt,0)
                 return result != null && PyObject_IsTrue(result) == 1
             }
         } catch (e: Exception) {
@@ -253,13 +252,13 @@ class YanSpeechService {
      * @param text 要合成的文本
      * @return 操作是否成功
      */
-    fun syncDoVoiceTts(text: String): Boolean {
+    fun syncDoVoiceTts(text: String,interrupt: Boolean=true): Boolean {
         try {
             memScoped {
-                val pyText = PyUnicodeObject(text.cstr.ptr.rawValue)
-                val pyInterrupt = if (true) my_Py_True() else my_Py_False()
+                val pyText = PyUnicode_FromString(text)
+                val pyInterrupt = if (interrupt) my_Py_True() else my_Py_False()
                 val pyTimestamp = PyLong_FromLong(Clock.System.now().toEpochMilliseconds())
-                val result = start_voice_tts_impl(pyText.reinterpret<PyObject>().ptr, pyInterrupt,pyTimestamp, 0)
+                val result = start_voice_tts_impl(pyText, pyInterrupt,pyTimestamp, 0)
                 return result != null && PyObject_IsTrue(result) == 1
             }
         } catch (e: Exception) {
@@ -325,8 +324,8 @@ class YanSpeechService {
     fun deleteVoiceAsrOfflineSyntax(grammarId: String): Boolean {
         try {
             memScoped {
-                val pyGrammarId = PyUnicodeObject(grammarId.cstr.ptr.rawValue)
-                val result = delete_voice_asr_offline_syntax(pyGrammarId.reinterpret<PyObject>().ptr, 0)
+                val pyGrammarId = PyUnicode_FromString(grammarId)
+                val result = delete_voice_asr_offline_syntax(pyGrammarId, 0)
                 return result != null && PyObject_IsTrue(result) == 1
             }
         } catch (e: Exception) {
@@ -343,8 +342,8 @@ class YanSpeechService {
     fun getVoiceAsrOfflineSyntax(grammarId: String): Map<String, Any>? {
         try {
             memScoped {
-                val pyGrammarId = PyUnicodeObject(grammarId.cstr.ptr.rawValue)
-                val result = get_voice_asr_offline_syntax(pyGrammarId.reinterpret<PyObject>().ptr, 0)
+                val pyGrammarId = PyUnicode_FromString(grammarId)
+                val result = get_voice_asr_offline_syntax(pyGrammarId, 0)
                 if (result != null) {
                     return PyObjectToMap(result)
                 }
@@ -364,8 +363,8 @@ class YanSpeechService {
     fun createVoiceAsrOfflineSyntax(grammar: String): Boolean {
         try {
             memScoped {
-                val pyGrammar = PyUnicodeObject(grammar.cstr.ptr.rawValue)
-                val result = create_voice_asr_offline_syntax(pyGrammar.reinterpret<PyObject>().ptr, 0)
+                val pyGrammar = PyUnicode_FromString(grammar)
+                val result = create_voice_asr_offline_syntax(pyGrammar, 0)
                 return result != null && PyObject_IsTrue(result) == 1
             }
         } catch (e: Exception) {
@@ -382,8 +381,8 @@ class YanSpeechService {
     fun updateVoiceAsrOfflineSyntax(grammar: String): Boolean {
         try {
             memScoped {
-                val pyGrammar = PyUnicodeObject(grammar.cstr.ptr.rawValue)
-                val result = update_voice_asr_offline_syntax(pyGrammar.reinterpret<PyObject>().ptr, 0)
+                val pyGrammar = PyUnicode_FromString(grammar)
+                val result = update_voice_asr_offline_syntax(pyGrammar, 0)
                 return result != null && PyObject_IsTrue(result) == 1
             }
         } catch (e: Exception) {

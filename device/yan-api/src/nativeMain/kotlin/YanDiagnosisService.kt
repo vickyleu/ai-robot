@@ -1,3 +1,5 @@
+@file:OptIn(ExperimentalForeignApi::class)
+@file:Suppress("UNCHECKED_CAST")
 package com.airobot.device.yanapi
 
 import com.airobot.pythoninterop.PyLong_FromLong

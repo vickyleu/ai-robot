@@ -253,13 +253,13 @@ class YanDeviceStatusService {
     fun setRobotLed(mode: String, color: String, speed: String): Boolean {
         try {
             memScoped {
-                val pyMode = PyUnicodeObject(mode.cstr.ptr.rawValue)
-                val pyColor = PyUnicodeObject(color.cstr.ptr.rawValue)
-                val pySpeed = PyUnicodeObject(speed.cstr.ptr.rawValue)
+                val pyMode = PyUnicode_FromString(mode)
+                val pyColor = PyUnicode_FromString(color)
+                val pySpeed = PyUnicode_FromString(speed)
                 val result = set_robot_led(
-                    pyMode.reinterpret<PyObject>().ptr,
-                    pyColor.reinterpret<PyObject>().ptr,
-                    pySpeed.reinterpret<PyObject>().ptr,
+                    pyMode,
+                    pyColor,
+                    pySpeed,
                     0
                 )
                 return result != null && PyObject_IsTrue(result) == 1
@@ -280,13 +280,13 @@ class YanDeviceStatusService {
     fun syncSetLed(mode: String, color: String, speed: String): Boolean {
         try {
             memScoped {
-                val pyMode = PyUnicodeObject(mode.cstr.ptr.rawValue)
-                val pyColor = PyUnicodeObject(color.cstr.ptr.rawValue)
-                val pySpeed = PyUnicodeObject(speed.cstr.ptr.rawValue)
+                val pyMode = PyUnicode_FromString(mode)
+                val pyColor = PyUnicode_FromString(color)
+                val pySpeed = PyUnicode_FromString(speed)
                 val result = sync_set_led(
-                    pyMode.reinterpret<PyObject>().ptr,
-                    pyColor.reinterpret<PyObject>().ptr,
-                    pySpeed.reinterpret<PyObject>().ptr,
+                    pyMode,
+                    pyColor,
+                    pySpeed,
                     0
                 )
                 return result != null && PyObject_IsTrue(result) == 1
@@ -305,8 +305,8 @@ class YanDeviceStatusService {
     fun getRobotVersionInfoValue(type: String): String? {
         try {
             memScoped {
-                val pyType = PyUnicodeObject(type.cstr.ptr.rawValue)
-                val result = get_robot_version_info_value(pyType.reinterpret<PyObject>().ptr, 0)
+                val pyType = PyUnicode_FromString(type)
+                val result = get_robot_version_info_value(pyType, 0)
                 if (result != null) {
                     val pyStr = PyUnicode_AsUTF8(result)
                     return pyStr?.toKString()
@@ -327,8 +327,8 @@ class YanDeviceStatusService {
     fun getRobotVersionInfo(type: String): Map<String, Any> {
         try {
             memScoped {
-                val pyType = PyUnicodeObject(type.cstr.ptr.rawValue)
-                val result = get_robot_version_info(pyType.reinterpret<PyObject>().ptr, 0)
+                val pyType = PyUnicode_FromString(type)
+                val result = get_robot_version_info(pyType, 0)
                 if (result != null) {
                     return PyObjectToMap(result)
                 }

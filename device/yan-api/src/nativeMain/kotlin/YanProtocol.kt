@@ -1,6 +1,9 @@
+@file:OptIn(ExperimentalForeignApi::class)
+@file:Suppress("UNCHECKED_CAST")
 package com.airobot.device.yanapi
 
 import com.airobot.core.device.DeviceCommand
+import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.serialization.json.*
 
 /**
