@@ -45,6 +45,8 @@ kotlin {
             api(libs.kotlinx.serialization.json)
             api(libs.ktor.client.core)
             api(libs.kotlinx.datetime)
+            // 增加jetbrains 注解, 用于设置IntRange等约束
+            api(libs.androidx.annotation)
         }
 
         androidMain.dependencies {

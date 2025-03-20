@@ -20,7 +20,7 @@ class YanPowerService {
         try {
             val result = get_robot_battery_value(0)
             if (result != null) {
-                return PyLong_AsLong(result).toInt()
+                return PyLong_AsLong(result).toInt().coerceAtLeast(-1)
             }
             return -1
         } catch (e: Exception) {

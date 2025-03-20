@@ -57,7 +57,9 @@ class YanSpeechService {
             memScoped {
                 val pyText = PyUnicodeObject(text.cstr.ptr.rawValue)
                 val pyInterrupt = if (true) my_Py_True() else my_Py_False()
-                val pyTimestamp = Py_BuildValue("i",Clock.System.now().toEpochMilliseconds())
+
+                val pyTimestamp = PyLong_FromLong(Clock.System.now().toEpochMilliseconds())
+
                 val result = start_voice_tts_impl(pyText.reinterpret<PyObject>().ptr, pyInterrupt,pyTimestamp, 0)
                 return result != null && PyObject_IsTrue(result) == 1
             }
@@ -220,7 +222,7 @@ class YanSpeechService {
      */
     fun getVoiceTtsState(): Map<String, Any>? {
         try {
-            val pyTimestamp = Py_BuildValue("i",Clock.System.now().toEpochMilliseconds())
+            val pyTimestamp = PyLong_FromLong(Clock.System.now().toEpochMilliseconds())
             val result = get_voice_tts_state_impl(pyTimestamp,0)
             if (result != null) {
                 return PyObjectToMap(result)
@@ -256,7 +258,7 @@ class YanSpeechService {
             memScoped {
                 val pyText = PyUnicodeObject(text.cstr.ptr.rawValue)
                 val pyInterrupt = if (true) my_Py_True() else my_Py_False()
-                val pyTimestamp = Py_BuildValue("i",Clock.System.now().toEpochMilliseconds())
+                val pyTimestamp = PyLong_FromLong(Clock.System.now().toEpochMilliseconds())
                 val result = start_voice_tts_impl(pyText.reinterpret<PyObject>().ptr, pyInterrupt,pyTimestamp, 0)
                 return result != null && PyObject_IsTrue(result) == 1
             }

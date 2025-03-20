@@ -13,29 +13,6 @@ private  inline fun <reified T : CStructVar> CPointer<T>.toRef(): CValuesRef<T>?
     }
 }
 
-fun String.toRef(): CValuesRef<PyObject>? {
-    memScoped {
-        return toPyObject()?.toRef()
-    }
-}
-
-private fun String.toPyObject(): CPointer<PyObject>? {
-    memScoped {
-        val cString = this@toPyObject.cstr.ptr
-        // 调用 Python C API 创建 PyObject
-        return Py_BuildValue("s", cString)
-    }
-}
-fun Int.toRef(): CValuesRef<PyObject>? {
-    memScoped {
-        return toPyObject()?.toRef()
-    }
-}
-private fun Int.toPyObject(): CPointer<PyObject>? {
-    memScoped {
-        return  Py_BuildValue("i",this@toPyObject)
-    }
-}
 
 
 
@@ -49,25 +26,21 @@ private fun Int.toPyObject(): CPointer<PyObject>? {
  * @return 转换后的Kotlin Map对象，如果转换失败则返回空Map
  */
 @OptIn(ExperimentalForeignApi::class)
+@Suppress("UNCHECKED_CAST","FunctionName")
 fun PyObjectToMap(pyObject: CPointer<PyObject>?): Map<String, Any> {
     if (pyObject == null) return emptyMap()
-
     val result = mutableMapOf<String, Any>()
-
     try {
         // 检查是否为字典类型
         if (my_PyDict_Check(pyObject) != 0) {
             val keys = PyDict_Keys(pyObject)
             if (keys != null) {
                 val size = PyList_Size(keys)
-
                 for (i in 0 until size) {
                     val key = PyList_GetItem(keys, i)
                     val value = PyDict_GetItem(pyObject, key)
-
                     if (key != null && value != null) {
                         val keyStr = PyUnicode_AsUTF8(key)?.toKString() ?: continue
-
                         // 根据值的类型进行相应的转换
                         result[keyStr] = convertPyObjectToKotlin(value)
                     }

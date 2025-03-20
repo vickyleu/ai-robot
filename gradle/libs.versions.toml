@@ -1,4 +1,5 @@
 [versions]
+annotation = "1.9.1"
 converterGson = "2.9.0"
 googleAuthLibraryOauth2Http = "0.20.0"
 googleCloudSpeech = "1.22.3"
@@ -40,6 +41,7 @@ kotlin-mui = "2025.3.9-5.16.14"
 kotlin-router = "2025.1.6-6.28.0"
 
 [libraries]
+androidx-annotation = { module = "androidx.annotation:annotation", version.ref = "annotation" }
 converter-gson = { module = "com.squareup.retrofit2:converter-gson", version.ref = "converterGson" }
 google-auth-library-oauth2-http = { module = "com.google.auth:google-auth-library-oauth2-http", version.ref = "googleAuthLibraryOauth2Http" }
 google-cloud-speech = { module = "com.google.cloud:google-cloud-speech", version.ref = "googleCloudSpeech" }

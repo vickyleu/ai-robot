@@ -1,6 +1,12 @@
 package com.airobot.device.yanapi
 
-import com.airobot.core.device.*
+import androidx.annotation.IntRange
+import com.airobot.core.device.Device
+import com.airobot.core.device.DeviceCommand
+import com.airobot.core.device.DeviceStatus
+import com.airobot.core.device.DeviceType
+import com.airobot.device.yanapi.Servo.ServoMode
+import com.airobot.device.yanapi.Servo.ServoName
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 
@@ -17,52 +23,50 @@ class YanDevice(
     private val locomotionService = YanLocomotionService()
     private val speechService = YanSpeechService()
     private val servoService = YanServoService()
-    private val navigationService = YanNavigationService()
-    private val emotionService = YanEmotionService()
     private val sensorService = YanSensorService()
     private val powerService = YanPowerService()
     private val lightService = YanLightService()
     private val skillManager = YanSkillManager()
     private val diagnosisService = YanDiagnosisService()
     override val type: DeviceType = DeviceType.YAN
-    
+
     private val _status = MutableStateFlow(DeviceStatus.DISCONNECTED)
     override val status: StateFlow<DeviceStatus> = _status
-    
+
     private val protocol = YanProtocol
     private val statusManager = YanStatusManager()
-    
+
     private var connection: YanConnection? = null
-    
+
     override suspend fun connect() {
         try {
             _status.value = DeviceStatus.CONNECTING
             // 创建连接
             connection = YanConnection().apply {
                 connect(deviceId)
-                
+
                 // 设置状态更新回调
                 onStatusUpdate { status ->
                     statusManager.updateStatus(status)
                 }
-                
+
                 // 设置错误处理回调
                 onError { error ->
                     _status.value = DeviceStatus.ERROR
                     statusManager.notifyEvent("error: $error")
                 }
             }
-            
+
             // 启动状态监控
             statusManager.monitorStatus()
-            
+
             _status.value = DeviceStatus.CONNECTED
         } catch (e: Exception) {
             _status.value = DeviceStatus.ERROR
             throw ConnectionException("连接失败: ${e.message}", e)
         }
     }
-    
+
     override suspend fun disconnect() {
         try {
             connection?.disconnect()
@@ -76,33 +80,33 @@ class YanDevice(
             connection = null
         }
     }
-    
+
     override suspend fun sendCommand(command: DeviceCommand) {
         try {
             if (_status.value != DeviceStatus.CONNECTED) {
                 throw IllegalStateException("设备未连接")
             }
-            
+
             // 序列化命令
             val message = protocol.serialize(command)
-            
+
             // 加密数据
             val encryptedMessage = protocol.encrypt(message)
-            
+
             // 发送命令
             connection?.send(encryptedMessage)
         } catch (e: Exception) {
             throw CommandException("发送命令失败: ${e.message}", e)
         }
     }
-    
+
     /**
      * 获取设备状态
      */
     fun getStatus(): Map<String, Any> {
         return statusManager.getCurrentStatus()
     }
-    
+
     /**
      * 设置状态更新回调
      */
@@ -110,9 +114,20 @@ class YanDevice(
         statusManager.setStatusCallback(callback)
     }
 
-    // 运动控制
-    suspend fun move(speed: Int, direction: String) {
-        locomotionService.move(speed, direction)
+    // 前后左右控制
+    suspend fun move(
+        @IntRange(from = 0, to = 100)
+        speed: Int,
+        steps: Int,
+        direction: String,
+        wave: Boolean = true
+    ) {
+        when (direction) {
+            "forward" -> locomotionService.move(speedVertical = speed, steps = steps, wave = wave)
+            "backward" -> locomotionService.move(speedVertical = -speed, steps = steps, wave = wave)
+            "left" -> locomotionService.move(speedHorizontal = speed, steps = steps, wave = wave)
+            "right" -> locomotionService.move(speedHorizontal = -speed, steps = steps, wave = wave)
+        }
     }
 
     suspend fun stop() {
@@ -120,40 +135,47 @@ class YanDevice(
     }
 
     // 语音服务
-    suspend fun speak(text: String, language: String = "zh-CN") {
-        speechService.speak(text, language)
+    suspend fun speak(text: String) {
+        speechService.startVoiceTts(text)
     }
 
     suspend fun stopSpeak() {
-        speechService.stopSpeak()
+        speechService.stopVoiceTts()
     }
 
-    // 舵机控制
-    suspend fun moveJoint(jointId: String, angle: Float) {
-        servoService.moveJoint(jointId, angle)
+    // 移动单个舵机
+    suspend fun moveJoint(servo: Servo) {
+        servoService.setServoAngle(*arrayOf(servo))
     }
 
-    suspend fun resetJoint(jointId: String) {
-        servoService.resetJoint(jointId)
+    // 移动单个舵机
+    suspend fun moveJoint(jointId: ServoName, angle: Int) {
+        moveJoints(jointId to angle)
     }
 
-    // 导航服务
-    suspend fun navigateTo(x: Float, y: Float) {
-        navigationService.navigateTo(x, y)
+    // 移动多个舵机
+    suspend fun moveJoints(vararg servos: Pair<ServoName, Int>) {
+        servoService.setServoAngle(*servos.map { (jointId: ServoName, angle: Int) ->
+            Servo(
+                jointId,
+                angel = angle
+            )
+        }.toTypedArray())
     }
 
-    suspend fun getPosition(): Pair<Float, Float> {
-        return navigationService.getPosition()
+    // 设置舵机模式
+    suspend fun setJointMode(jointId: ServoName, mode: ServoMode) {
+        servoService.setServosMode(listOf(jointId), mode)
     }
 
-    // 情感服务
-    suspend fun setEmotion(type: String) {
-        emotionService.setEmotion(type)
+    // 设置多个舵机模式
+    suspend fun setJointModes(jointId: List<ServoName>, mode: ServoMode) {
+        servoService.setServosMode(jointId, mode)
     }
 
-    suspend fun playAnimation(name: String) {
-        emotionService.playAnimation(name)
-    }
+//    suspend fun resetJoint(jointId: String) {
+//         servoService.resetJoint(jointId)
+//    }
 
     // 传感器服务
     suspend fun getSensorData(type: String): Map<String, Any> {
@@ -170,22 +192,22 @@ class YanDevice(
     }
 
     // 灯光控制
-    suspend fun setLight(position: String, color: Int) {
-        lightService.setLight(position, color)
+    suspend fun setLight(type: LightType, color: LightColor) {
+        lightService.setLight(type, color)
     }
 
-    suspend fun turnOffLight(position: String) {
-        lightService.turnOff(position)
+    suspend fun turnOffLight() {
+        lightService.turnOff()
     }
 
-    // 技能管理
-    suspend fun loadSkill(skillId: String) {
-        skillManager.loadSkill(skillId)
-    }
-
-    suspend fun startSkill(skillId: String, params: Map<String, Any>) {
-        skillManager.startSkill(skillId, params)
-    }
+//    // 技能管理
+//    suspend fun loadSkill(skillId: String) {
+//        skillManager.loadSkill(skillId)
+//    }
+//
+//    suspend fun startSkill(skillId: String, params: Map<String, Any>) {
+//        skillManager.startSkill(skillId, params)
+//    }
 }
 
 
