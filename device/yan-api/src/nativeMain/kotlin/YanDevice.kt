@@ -191,6 +191,10 @@ class YanDevice(
         return powerService.isCharging()
     }
 
+    suspend fun version(type:VersionType): String? {
+        return diagnosisService.getRobotVersionInfo(type)
+    }
+
     // 灯光控制
     suspend fun setLight(type: LightType, color: LightColor) {
         lightService.setLight(type, color)
