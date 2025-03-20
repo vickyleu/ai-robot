@@ -1,8 +1,24 @@
 package com.airobot.device.yanapi
 
-import com.airobot.pythoninterop.*
+import androidx.annotation.IntRange
+import com.airobot.pythoninterop.PyList_GetItem
+import com.airobot.pythoninterop.PyList_Size
+import com.airobot.pythoninterop.PyLong_FromLong
+import com.airobot.pythoninterop.PyObject_IsTrue
+import com.airobot.pythoninterop.PyUnicode_AsUTF8
+import com.airobot.pythoninterop.get_sensors_environment
+import com.airobot.pythoninterop.get_sensors_environment_value
+import com.airobot.pythoninterop.get_sensors_gyro
+import com.airobot.pythoninterop.get_sensors_infrared_value
+import com.airobot.pythoninterop.get_sensors_list
+import com.airobot.pythoninterop.get_sensors_list_value
+import com.airobot.pythoninterop.get_sensors_pressure_value
+import com.airobot.pythoninterop.get_sensors_touch_value
+import com.airobot.pythoninterop.get_sensors_ultrasonic_value
+import com.airobot.pythoninterop.sensor_calibration
 import kotlinx.cinterop.ExperimentalForeignApi
-import kotlinx.cinterop.*
+import kotlinx.cinterop.memScoped
+import kotlinx.cinterop.toKString
 
 /**
  * YAN设备传感器服务
@@ -17,12 +33,12 @@ class YanSensorService {
      * @param type 传感器类型
      * @return 操作是否成功
      */
-    fun sensorCalibration(type: String): Boolean {
+    fun sensorCalibration(@IntRange(from = 1, to = 127) type: Int): Boolean {
         try {
             memScoped {
-                val pyType = PyUnicodeObject(type.cstr.ptr.rawValue)
-                val result = sensor_calibration(pyType.reinterpret<PyObject>().ptr, 0)
-                return result != null && PyObject_IsTrue(result) == 1
+                val pyType = PyLong_FromLong(type.toLong())
+                val result = sensor_calibration(pyType, 0)
+                return ((PyObjectToMap(result)["code"])?.toString()?.toIntOrNull() ?: -1)==0
             }
         } catch (e: Exception) {
             return false
@@ -40,7 +56,7 @@ class YanSensorService {
             if (result != null) {
                 val sensorList = mutableListOf<String>()
                 val size = PyList_Size(result)
-                
+
                 for (i in 0 until size) {
                     val item = PyList_GetItem(result, i)
                     if (item != null) {
@@ -48,7 +64,7 @@ class YanSensorService {
                         pyStr?.toKString()?.let { sensorList.add(it) }
                     }
                 }
-                
+
                 return sensorList
             }
             return emptyList()
@@ -211,7 +227,7 @@ class YanSensorService {
             else -> emptyMap()
         }
     }
-    
+
     /**
      * 获取所有可用的传感器类型
      *

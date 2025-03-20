@@ -1,14 +1,19 @@
 package com.airobot.device.yanapi
 
 import com.airobot.pythoninterop.PyLong_AsLong
+import com.airobot.pythoninterop.PyLong_FromLong
+import com.airobot.pythoninterop.PyObject_IsTrue
 import com.airobot.pythoninterop.PyUnicode_AsUTF8
 import com.airobot.pythoninterop.PyUnicode_FromString
 import com.airobot.pythoninterop.get_visual_task_result
+import com.airobot.pythoninterop.start_face_recognition_impl
+import com.airobot.pythoninterop.stop_face_recognition_impl
 import com.airobot.pythoninterop.sync_do_face_recognition_value
 import com.airobot.pythoninterop.sync_do_gesture_recognition
 import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.cinterop.memScoped
 import kotlinx.cinterop.toKString
+import kotlinx.datetime.Clock
 
 /**
  * YAN设备视觉服务
@@ -18,9 +23,9 @@ import kotlinx.cinterop.toKString
 @OptIn(ExperimentalForeignApi::class)
 class YanVisionService {
     /**
-     * 执行人脸识别并直接返回识别结果
+     * 执行人脸识别
      *
-     * @return 识别到的人脸信息，失败返回null
+     * @return 执行结果
      */
     fun syncDoFaceRecognitionValue(type: VisionFaceRecognitionType): String? {
         try {
@@ -44,6 +49,41 @@ class YanVisionService {
             }
         } catch (e: Exception) {
             return null
+        }
+    }
+
+    /**
+     * 执行人脸识别并直接返回识别结果
+     *
+     * @return 识别到的人脸信息，失败返回null
+     */
+    fun doFaceRecognitionValue(type: VisionFaceRecognitionType): Boolean {
+        try {
+            memScoped {
+                val pyMode = PyUnicode_FromString(type.type)
+                val pyTimestamp = PyLong_FromLong(Clock.System.now().toEpochMilliseconds())
+                val result = start_face_recognition_impl(pyMode, pyTimestamp, 0)
+                if (result != null) {
+                    return result != null && PyObject_IsTrue(result) == 1
+                }
+                return false
+            }
+        } catch (e: Exception) {
+            return false
+        }
+    }
+
+
+    fun stopFaceRecognition(type: VisionFaceRecognitionType): Boolean {
+        try {
+            memScoped {
+                val pyType = PyUnicode_FromString(type.type)
+                val pyTimestamp = PyLong_FromLong(Clock.System.now().toEpochMilliseconds())
+                val result = stop_face_recognition_impl(pyType, pyTimestamp, 0)
+                return ((PyObjectToMap(result)["code"])?.toString()?.toIntOrNull() ?: -1) == 0
+            }
+        } catch (e: Exception) {
+            return false
         }
     }
 

@@ -5,7 +5,7 @@
 
 #include "Python.h"
 
-/* "YanAPI.pyx":4357
+/* "YanAPI.pyx":4365
  * 
  * 
  * cpdef public enum GamepadKey:             # <<<<<<<<<<<<<<
@@ -142,6 +142,8 @@ __PYX_EXTERN_C PyObject *get_voice_tts_state_impl(PyObject *, int __pyx_skip_dis
 __PYX_EXTERN_C PyObject *start_voice_tts_impl(PyObject *, PyObject *, PyObject *, int __pyx_skip_dispatch);
 __PYX_EXTERN_C PyObject *sync_do_tts_impl(PyObject *, PyObject *, int __pyx_skip_dispatch);
 __PYX_EXTERN_C PyObject *get_visual_task_result(PyObject *, PyObject *, int __pyx_skip_dispatch);
+__PYX_EXTERN_C PyObject *start_face_recognition_impl(PyObject *, PyObject *, int __pyx_skip_dispatch);
+__PYX_EXTERN_C PyObject *stop_face_recognition_impl(PyObject *, PyObject *, int __pyx_skip_dispatch);
 __PYX_EXTERN_C PyObject *sync_do_face_recognition_value(PyObject *, int __pyx_skip_dispatch);
 __PYX_EXTERN_C PyObject *sync_do_face_recognition(PyObject *, int __pyx_skip_dispatch);
 __PYX_EXTERN_C PyObject *sync_do_gesture_recognition(int __pyx_skip_dispatch);

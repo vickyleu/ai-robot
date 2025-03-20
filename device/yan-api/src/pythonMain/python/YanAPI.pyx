@@ -3155,6 +3155,10 @@ def __control_visual_task(option: str, type: str, operation: str = "start", time
     res = json.loads(str(response.content.decode("utf-8")))
     return res
 
+cpdef public  start_face_recognition_impl(type: str, timestamp: int):
+    return start_face_recognition(type, timestamp)
+
+
 cpdef   start_face_recognition(type: str, timestamp: int = 0):
     """开始人脸识别
 
@@ -3173,6 +3177,10 @@ cpdef   start_face_recognition(type: str, timestamp: int = 0):
                 }
     """
     return __control_visual_task(option='face', type=type, operation='start', timestamp=timestamp)
+
+cpdef  public stop_face_recognition_impl(type: str, timestamp: int):
+    return stop_face_recognition(type, timestamp)
+
 
 cpdef   stop_face_recognition(type: str, timestamp: int = 0):
     """停止人脸识别

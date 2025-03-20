@@ -26,6 +26,7 @@ class YanDevice(
     private val sensorService = YanSensorService()
     private val powerService = YanPowerService()
     private val lightService = YanLightService()
+    private val visionService = YanVisionService()
     private val skillManager = YanSkillManager()
     private val diagnosisService = YanDiagnosisService()
     override val type: DeviceType = DeviceType.YAN
@@ -163,6 +164,31 @@ class YanDevice(
         }.toTypedArray())
     }
 
+    /**
+     * 异步人脸识别
+     */
+    suspend fun startFaceDetection(type: VisionFaceRecognitionType): Boolean {
+        return visionService.doFaceRecognitionValue(type)
+    }
+
+    /**
+     * 同步人脸识别
+     */
+    suspend fun faceDetection(type: VisionFaceRecognitionType): String? {
+        return visionService.syncDoFaceRecognitionValue(type)
+    }
+
+    /**
+     * 获取识别结果
+     */
+    suspend fun handDetection(option: VisionOption): Map<String, Any>? {
+        return visionService.getVisualTaskResult(option)
+    }
+
+    suspend fun stopFaceDetection(type: VisionFaceRecognitionType) {
+        visionService.stopFaceRecognition(type)
+    }
+
     // 设置舵机模式
     suspend fun setJointMode(jointId: ServoName, mode: ServoMode) {
         servoService.setServosMode(listOf(jointId), mode)
@@ -191,7 +217,7 @@ class YanDevice(
         return powerService.isCharging()
     }
 
-    suspend fun version(type:VersionType): String? {
+    suspend fun version(type: VersionType): String? {
         return diagnosisService.getRobotVersionInfo(type)
     }
 
