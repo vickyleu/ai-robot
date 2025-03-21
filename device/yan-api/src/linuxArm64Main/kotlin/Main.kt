@@ -1,4 +1,7 @@
-// kmm linux arm64 增加一个main函数,e: Could not find 'main' in '<root>' package.
+import com.airobot.device.yanapi.YanLauncher
+
 fun main() {
+    val launcher = YanLauncher()
+    launcher.startApplication()
     println("Hello, Linux arm64!")
 }

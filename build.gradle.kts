@@ -17,6 +17,7 @@ plugins {
     alias(libs.plugins.kotlin.rpc) apply false
     alias(libs.plugins.jetbrains.kotlin.jvm) apply false
     alias(libs.plugins.protobuf) apply false
+    id("com.netflix.nebula.ospackage") version "11.11.1" apply false
 }
 subprojects {
     this.layout.buildDirectory.set(
