@@ -1,5 +1,6 @@
 package com.airobot.device.yanapi
 
+import com.airobot.device.yanapi.python.PyObject
 import com.airobot.pythoninterop.*
 import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.cinterop.*

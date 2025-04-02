@@ -17,4 +17,4 @@ target_include_directories(yanapi PRIVATE
         ${CMAKE_SOURCE_DIR}/include
 )
 
-#target_link_libraries(yanapi PRIVATE ${PYTHON_LIBRARY})
+target_link_libraries(yanapi PRIVATE ${PYTHON_LIBRARY} ${Z_LIBRARY} ${EXPAT_LIBRARY})

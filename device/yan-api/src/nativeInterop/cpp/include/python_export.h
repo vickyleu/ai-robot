@@ -8,6 +8,7 @@ int my_PyUnicode_Check(PyObject* op);
 int my_PyLong_Check(PyObject* op);
 int my_PyFloat_Check(PyObject* op);
 int my_PyList_Check(PyObject* op);
+int my_PyBytes_Check(PyObject* op);
 PyObject *  my_Py_True();
 PyObject *  my_Py_False();
 #endif

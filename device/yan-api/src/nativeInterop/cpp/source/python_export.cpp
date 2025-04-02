@@ -19,6 +19,9 @@ int my_PyFloat_Check(PyObject *op) {
 int my_PyList_Check(PyObject *op) {
     return PyType_FastSubclass(Py_TYPE(op), Py_TPFLAGS_LIST_SUBCLASS);
 }
+int my_PyBytes_Check(PyObject *op) {
+    return PyType_FastSubclass(Py_TYPE(op), Py_TPFLAGS_BYTES_SUBCLASS);
+}
 
 PyObject *my_Py_True() {
     return ((PyObject * ) & _Py_TrueStruct);

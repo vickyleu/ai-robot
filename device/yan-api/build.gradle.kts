@@ -357,39 +357,47 @@ val cythonize by tasks.creating {
     description = "Generate C++ code and header files from YanAPI.py using Cython"
     @Suppress("DEPRECATION")
     doLast {
+        // 需要判断当前python是否是3.5版本,不是就要抛出异常
+        val outputStream =  ByteArrayOutputStream()
+        // 使用 pyenv 设置的 Python 路径
+        exec {
+            commandLine("sh", "-c","$(pyenv which python3) --version")
+            standardOutput = outputStream
+            isIgnoreExitValue = true
+        }
+        val versionOutput = outputStream.toString().trim()
+        if (!versionOutput.startsWith("Python 3.5")) {
+            throw  GradleException("需要 Python 3.5，但找到的是 $versionOutput")
+        }
+        outputStream.reset()
         // 检查Cython是否已安装
         val result = exec {
-            commandLine("/Users/vickyleu/.pyenv/versions/3.5.10/bin/python", "-m", "pip", "show", "cython")
+            commandLine("sh", "-c","$(pyenv which python3) -m pip show cython")
             isIgnoreExitValue = true
         }
 
         // 如果Cython未安装，则安装它
         if (result.exitValue != 0) {
             exec {
-                commandLine("/Users/vickyleu/.pyenv/versions/3.5.10/bin/python", "-m", "pip", "install", "cython")
+                commandLine("sh", "-c","$(pyenv which python3) -m pip install cython")
             }
             // 安装后刷新环境
             exec {
-                commandLine("/Users/vickyleu/.pyenv/versions/3.5.10/bin/python", "-m", "pip", "show", "cython")
+                commandLine("sh", "-c","$(pyenv which python3) -m pip show cython")
             }
         }
         // 执行Cython命令，生成C++代码和头文件
         exec {
-            commandLine(
-                "/Users/vickyleu/.pyenv/versions/3.5.10/bin/python",
-                "-m",
-                "cython",
-                "--gdb",
-                "--annotate",
-                "--cplus",
-                "--force",
-                "-X language_level=3",
-                "-X binding=True ",
-                "--3str",
-                "--verbose",  // 打印详细过程
-                "-o",
-                "src/nativeInterop/cpp/source/YanAPI.cpp",
-                "src/pythonMain/python/YanAPI.pyx"
+            commandLine("sh", "-c","$(pyenv which python3) -m cython " +
+                    " --gdb " +
+                    " --annotate " +
+                    " --cplus " +
+                    " --force " +
+                    " --3str " +
+                    " --verbose " +  // 打印详细过程
+                    " -o " +
+                    " src/nativeInterop/cpp/source/YanAPI.cpp " +
+                    " src/pythonMain/python/YanAPI.pyx "
             )
         }
     }

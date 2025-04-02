@@ -133,6 +133,22 @@ PyAPI_FUNC(PyObject *) PyImport_ImportModuleLevel(
     );
 PyAPI_FUNC(PyObject *) PyImport_ImportModuleLevelObject(PyObject *name,PyObject *globals,PyObject *locals,PyObject *fromlist,int level);
 
+PyAPI_FUNC(int) PyRun_SimpleStringFlags(const char *, PyCompilerFlags *);
+
+
+PyAPI_FUNC(PyObject *) PyBytes_FromStringAndSize(const char *, Py_ssize_t);
+PyAPI_FUNC(PyObject *) PyBytes_FromString(const char *);
+PyAPI_FUNC(PyObject *) PyBytes_FromObject(PyObject *);
+PyAPI_FUNC(PyObject *) PyBytes_FromFormatV(const char*, va_list)
+				Py_GCC_ATTRIBUTE((format(printf, 1, 0)));
+PyAPI_FUNC(PyObject *) PyBytes_FromFormat(const char*, ...)
+				Py_GCC_ATTRIBUTE((format(printf, 1, 2)));
+PyAPI_FUNC(Py_ssize_t) PyBytes_Size(PyObject *);
+PyAPI_FUNC(char *) PyBytes_AsString(PyObject *);
+PyAPI_FUNC(PyObject *) PyBytes_Repr(PyObject *, int);
+PyAPI_FUNC(void) PyBytes_Concat(PyObject **, PyObject *);
+PyAPI_FUNC(void) PyBytes_ConcatAndDel(PyObject **, PyObject *);
+
 
 PyAPI_FUNC(void) PyErr_SetString(PyObject *exception,const char *string);
 PyAPI_FUNC(PyObject *) PyErr_Occurred(void);
@@ -509,3 +525,5 @@ PyAPI_FUNC(void) Py_Finalize(void);
 PyAPI_FUNC(int) Py_IsInitialized(void);
 PyAPI_FUNC(PyThreadState *) Py_NewInterpreter(void);
 PyAPI_FUNC(void) Py_EndInterpreter(PyThreadState *);
+PyAPI_FUNC(PyObject *) PyObject_Type(PyObject *o);
+PyAPI_FUNC(Py_ssize_t) PyObject_Size(PyObject *o);

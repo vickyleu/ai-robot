@@ -1,13 +1,14 @@
-@file:OptIn(ExperimentalForeignApi::class)
+@file:OptIn(ExperimentalForeignApi::class, ExperimentalStdlibApi::class)
 @file:Suppress("UNCHECKED_CAST")
 
 package com.airobot.device.yanapi
 
+import com.airobot.device.yanapi.python.toKString
+import com.airobot.device.yanapi.python.typeName
 import com.airobot.pythoninterop.*
 import kotlinx.cinterop.*
 
 
-typealias PyObject = _object
 /**
  * YAN设备连接类
  *
@@ -64,50 +65,75 @@ class YanConnection {
                 val ip = "192.168.1.1"
                 println("开始连接过程...")
 
-                // 获取 GIL
                 val gstate = PyGILState_Ensure()
 
                 try {
-                    // 创建 Python 字符串对象
-                    val pyIp = PyUnicode_FromString(ip)
+                    val pyIp = PyUnicode_FromString(ip) // 或者使用 PyUnicode_FromStringAndSize
                     if (pyIp == null) {
                         PyErr_Print()
                         throw ConnectionException("无法创建 Python 字符串对象")
                     }
+                    pyIp.usePinned {
+                        // 直接使用 pinnedPointer 来获取指针
+                        val pyIpPtr = it.get()
+                        val tpName = pyIpPtr.typeName
+                        println("Python 字符串对象tpName：$tpName  ${pyIpPtr.toKString()}")
+                        yan_api_init(pyIpPtr) // 直接传递PyObject*指针
+                        println("Python 字符串对象地址：$pyIpPtr")
+                    }
+                    /*println("已创建 Python 字符串对象：${pyIpUtf8.pointed.ob_type!!.pointed.readValue().toString() }")
+                    Py_IncRef(pyIpUtf8)
+                    // 正确传递指针到API函数
+                    val typeStr = PyObject_Str(PyObject_Type(pyIpUtf8.reinterpret()))
+                    val cTypeStr = PyUnicode_AsUTF8(typeStr)
+                    println("参数类型：$cTypeStr")
 
-                    println("已创建 Python 字符串对象：${pyIp.rawValue.toLong()}")
+                    val pyRepr = PyObject_Repr(pyIpUtf8.reinterpret())
+                    if (pyRepr != null) {
+                        val reprStr = PyUnicode_AsUTF8(pyRepr.reinterpret())
+                        println("对象表示：$reprStr")
+                        Py_DecRef(pyRepr)
+                    }
 
-                    // 检查 Python 错误
+                    val isUnicode = my_PyUnicode_Check(pyIpUtf8.reinterpret())
+                    val isBytes = my_PyBytes_Check(pyIpUtf8.reinterpret())
+                    if(isUnicode==1){
+                        println("是 Unicode 字符串")
+                    }
+                    if(isBytes==1){
+                        println("是 字节字符串")
+                    }
+                    val pySize = PyObject_Size(pyIpUtf8)
+                    println("对象长度：$pySize")
+
                     if (PyErr_Occurred() != null) {
                         println("在调用 yan_api_init 之前发生错误：")
                         PyErr_Print()
                         PyErr_Clear()
                     }
-
                     try {
-                        // 调用 yan_api_init
+                        println("Python 解释器状态：${if (Py_IsInitialized() != 0) "已初始化" else "未初始化"}")
+                        val result = PyRun_SimpleStringFlags("print('Python 测试成功')", null)
+                        if(result==0){
+                            println("Python 代码 PyRun_SimpleStringFlags 执行成功")
+                        }else{
+                            println("Python 代码 PyRun_SimpleStringFlags 执行失败")
+                        }
                         println("调用 yan_api_init...")
-                        yan_api_init(pyIp)
+                        yan_api_init(pyIpUtf8.reinterpret()) // 直接传递PyObject*指针
                         println("yan_api_init 成功完成")
                     } catch (e: Exception) {
                         println("调用 yan_api_init 时捕获到异常：${e.message}")
                         e.printStackTrace()
                     }
 
-                    // 再次检查 Python 错误
                     if (PyErr_Occurred() != null) {
                         println("在调用 yan_api_init 后发生错误：")
                         PyErr_Print()
                         PyErr_Clear()
-                    }
+                    }*/
 
-                    // 清理 Python 对象
-                    Py_DecRef(pyIp)
-
-                    // 启动设备状态监控
-                    // monitorDeviceStatus()  // 暂时注释掉，先解决 yan_api_init 的问题
                 } finally {
-                    // 始终释放 GIL
                     PyGILState_Release(gstate)
                 }
             }

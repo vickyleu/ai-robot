@@ -1,8 +1,9 @@
-# distutils: language = c++
+# distutils: language=c
 # cython: language_level=3
-# cython: emit_code_comments=False
-# cython: c_string_type=bytes
+# cython: c_string_type=unicode
+# // cy  thon: c_string // _encoding=utf8
 # cython: c_string_encoding=ascii
+# cython: emit_code_comments=False
 # cython: binding=False
 # cython: linetrace=True
 
