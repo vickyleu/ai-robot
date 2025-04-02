@@ -324,13 +324,31 @@ tasks.register<com.netflix.gradle.plugins.deb.Deb>("distDeb") {
                     standardOutput = System.out
                     errorOutput = System.err
                 }
-                println("result:::${result2}")
+                val result3 = exec {
+                    commandLine(
+                        "/usr/local/bin/sshpass", "-p",
+                        "raspberry",
+                        "ssh",
+                        "-p", "$piPort", //"22",
+                        "-o", "UserKnownHostsFile=/dev/null",
+                        "-o", "StrictHostKeyChecking=no",
+                        "pi@$piHost",
+//                            "pi@192.168.1.11",
+                        "gdb", "/usr/local/bin/$packageName", "-ex", "run"
+                    )
+                    // 确保标准输出和错误输出被重定向到控制台
+                    standardOutput = System.out
+                    errorOutput = System.err
+                }
+                println("result:::${result3}")
             }
         } else {
             println("Deb file not found: ${deb.absolutePath}")
         }
     }
 }
+
+
 
 
 // 添加Cython任务
