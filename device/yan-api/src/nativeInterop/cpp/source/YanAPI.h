@@ -5,13 +5,6 @@
 
 #include "Python.h"
 
-/* "YanAPI.pyx":4379
- * 
- * 
- * cpdef public enum GamepadKey:             # <<<<<<<<<<<<<<
- *     L1 = 1
- *     L2 = 2
- */
 enum GamepadKey {
   L1 = 1,
   L2 = 2,

@@ -359,24 +359,24 @@ val cythonize by tasks.creating {
     doLast {
         // 检查Cython是否已安装
         val result = exec {
-            commandLine("python3", "-m", "pip", "show", "cython")
+            commandLine("/Users/vickyleu/.pyenv/versions/3.5.10/bin/python", "-m", "pip", "show", "cython")
             isIgnoreExitValue = true
         }
 
         // 如果Cython未安装，则安装它
         if (result.exitValue != 0) {
             exec {
-                commandLine("python3", "-m", "pip", "install", "cython")
+                commandLine("/Users/vickyleu/.pyenv/versions/3.5.10/bin/python", "-m", "pip", "install", "cython")
             }
             // 安装后刷新环境
             exec {
-                commandLine("python3", "-m", "pip", "show", "cython")
+                commandLine("/Users/vickyleu/.pyenv/versions/3.5.10/bin/python", "-m", "pip", "show", "cython")
             }
         }
         // 执行Cython命令，生成C++代码和头文件
         exec {
             commandLine(
-                "python3",
+                "/Users/vickyleu/.pyenv/versions/3.5.10/bin/python",
                 "-m",
                 "cython",
                 "--gdb",

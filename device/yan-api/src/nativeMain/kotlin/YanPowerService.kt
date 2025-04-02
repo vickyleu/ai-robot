@@ -37,14 +37,37 @@ class YanPowerService {
         // 可以通过get_robot_battery_info获取充电状态
         try {
             Py_Initialize()
-            val batteryInfo = get_robot_battery_info(0)
-            println("batteryInfo==>${batteryInfo.toLong()}")
-            if (batteryInfo != null) {
-                val data = PyObjectToMap(batteryInfo)["data"] as? Map<String, Any>
-                return data?.get("charging") as? Int == 1
+            // 添加GIL状态管理，确保线程安全
+            val gstate = PyGILState_Ensure()
+            try {
+                // 安全地调用get_robot_battery_info函数，添加异常捕获
+                val batteryInfo = try {
+                    get_robot_battery_info(0)
+                } catch (e: Exception) {
+                    println("Critical error calling get_robot_battery_info: ${e.message}")
+                    null
+                }
+                
+                // 安全检查：确保batteryInfo不为null
+                if (batteryInfo == null) {
+                    return false
+                }
+                
+                // 安全地获取数据，避免直接调用toLong()可能导致的崩溃
+                try {
+                    val dataMap = PyObjectToMap(batteryInfo)
+                    val data = dataMap["data"] as? Map<String, Any>
+                    return data?.get("charging") as? Int == 1
+                } catch (e: Exception) {
+                    println("Error processing battery info: ${e.message}")
+                    return false
+                }
+            } finally {
+                // 释放GIL，确保不会导致死锁
+                PyGILState_Release(gstate)
             }
-            return false
         } catch (e: Exception) {
+            println("Error getting charging status: ${e.message}")
             return false
         }
     }

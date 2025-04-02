@@ -14,8 +14,8 @@ class YanLauncher: Launcher {
             device.onStatusUpdate {
                 println("it:::${it}")
             }
-            device.isCharging()
-//            device.connect()
+//            device.isCharging()
+            device.connect()
             println("我是这个东西啊")
 
             withContext(Dispatchers.Unconfined) {

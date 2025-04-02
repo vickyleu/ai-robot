@@ -75,6 +75,7 @@ if(APPLE)
     # 获取上级目录的名称（即版本号），并去除 .reinstall 后缀
     string(REGEX REPLACE "\\.reinstall$" "" TOOLCHAIN_VERSION "${TOOLCHAIN_PARENT_DIR}")
 
+
     set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -L${TOOLCHAIN_PATH}/lib/gcc/${GNU_VAR1}/${TOOLCHAIN_VERSION} -L${SYSROOT}/lib -L${SYSROOT}/usr/lib")
     set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -nostartfiles -nostdlib")
 

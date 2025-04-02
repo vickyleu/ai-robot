@@ -86,10 +86,83 @@ headerFilter =  source/YanAPI.h  python_export.h   Python.h unicodeobject.h long
 
 # 补充函数
 ---
+
+PyMODINIT_FUNC PyInit_imp(void);
+PyAPI_FUNC(long) PyImport_GetMagicNumber(void);
+PyAPI_FUNC(const char *) PyImport_GetMagicTag(void);
+PyAPI_FUNC(PyObject *) PyImport_ExecCodeModule(
+    const char *name,           /* UTF-8 encoded string */
+    PyObject *co
+    );
+PyAPI_FUNC(PyObject *) PyImport_ExecCodeModuleEx(
+    const char *name,           /* UTF-8 encoded string */
+    PyObject *co,
+    const char *pathname        /* decoded from the filesystem encoding */
+    );
+PyAPI_FUNC(PyObject *) PyImport_ExecCodeModuleWithPathnames(
+    const char *name,           /* UTF-8 encoded string */
+    PyObject *co,
+    const char *pathname,       /* decoded from the filesystem encoding */
+    const char *cpathname       /* decoded from the filesystem encoding */
+    );
+PyAPI_FUNC(PyObject *) PyImport_ExecCodeModuleObject(
+    PyObject *name,
+    PyObject *co,
+    PyObject *pathname,
+    PyObject *cpathname
+    );
+PyAPI_FUNC(PyObject *) PyImport_GetModuleDict(void);
+PyAPI_FUNC(PyObject *) PyImport_AddModuleObject(
+    PyObject *name
+    );
+PyAPI_FUNC(PyObject *) PyImport_AddModule(
+    const char *name            /* UTF-8 encoded string */
+    );
+PyAPI_FUNC(PyObject *) PyImport_ImportModule(
+    const char *name            /* UTF-8 encoded string */
+    );
+PyAPI_FUNC(PyObject *) PyImport_ImportModuleNoBlock(
+    const char *name            /* UTF-8 encoded string */
+    );
+PyAPI_FUNC(PyObject *) PyImport_ImportModuleLevel(
+    const char *name,           /* UTF-8 encoded string */
+    PyObject *globals,
+    PyObject *locals,
+    PyObject *fromlist,
+    int level
+    );
+PyAPI_FUNC(PyObject *) PyImport_ImportModuleLevelObject(PyObject *name,PyObject *globals,PyObject *locals,PyObject *fromlist,int level);
+
+
+PyAPI_FUNC(void) PyErr_SetString(PyObject *exception,const char *string);
+PyAPI_FUNC(PyObject *) PyErr_Occurred(void);
+PyAPI_FUNC(void) PyErr_Clear(void);
+PyAPI_FUNC(void) PyErr_Fetch(PyObject **, PyObject **, PyObject **);
+PyAPI_FUNC(void) PyErr_Restore(PyObject *, PyObject *, PyObject *);
+PyAPI_FUNC(void) PyErr_GetExcInfo(PyObject **, PyObject **, PyObject **);
+PyAPI_FUNC(void) PyErr_SetExcInfo(PyObject *, PyObject *, PyObject *);
+PyAPI_FUNC(void) PyErr_Print(void);
+PyAPI_FUNC(void) PyErr_PrintEx(int);
+PyAPI_FUNC(void) PyErr_Display(PyObject *, PyObject *, PyObject *);
+
+
+
+PyAPI_FUNC(PyObject *) PyImport_GetImporter(PyObject *path);
+PyAPI_FUNC(PyObject *) PyImport_Import(PyObject *name);
+PyAPI_FUNC(PyObject *) PyImport_ReloadModule(PyObject *m);
+PyAPI_FUNC(void) PyImport_Cleanup(void);
+PyAPI_FUNC(int) PyImport_ImportFrozenModuleObject( PyObject *name);
+PyAPI_FUNC(int) PyImport_ImportFrozenModule( const char *name  );
+
+
 PyAPI_FUNC(void) Py_IncRef(PyObject *);
 PyAPI_FUNC(void) Py_DecRef(PyObject *);
 PyAPI_FUNC(PyGILState_STATE) PyGILState_Ensure(void);
 PyAPI_FUNC(void) PyGILState_Release(PyGILState_STATE);
+
+PyAPI_FUNC(PyThreadState *) PyEval_SaveThread(void);
+PyAPI_FUNC(void) PyEval_RestoreThread(PyThreadState *);
+
 PyAPI_FUNC(int)  PyEval_ThreadsInitialized(void);
 PyAPI_FUNC(void) PyEval_InitThreads(void);
 PyAPI_FUNC(void) _PyEval_FiniThreads(void);

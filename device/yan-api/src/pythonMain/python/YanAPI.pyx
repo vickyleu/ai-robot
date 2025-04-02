@@ -1,5 +1,11 @@
-# cython: c_string_type=str, c_string_encoding=utf8
-# distutils: define_macros=PY_VERSION_HEX=0  # 临时绕过宏冲突
+# distutils: language = c++
+# cython: language_level=3
+# cython: emit_code_comments=False
+# cython: c_string_type=bytes
+# cython: c_string_encoding=ascii
+# cython: binding=False
+# cython: linetrace=True
+
 # coding=UTF-8
 ''' 本代码是对Yanshee中RESTful API的封装。
 消息格式请参考 "http://[robotIP]:9090/v1/ui"。
@@ -17,7 +23,7 @@ from typing import Dict
 import logging
 import nest_asyncio
 from lib_ukit import lib_send
-from socket import *
+
 import fcntl
 import struct
 import subprocess
@@ -28,6 +34,8 @@ from multiprocessing import Process
 from enum import Enum, unique
 from cpython.ref cimport PyObject
 
+# // from socket import *
+from socket import  socket, AF_INET, SOCK_DGRAM, SOL_SOCKET, SO_BROADCAST, inet_ntoa
 
 basic_url = "http://127.0.0.1:9090/v1/"
 ip = "127.0.0.1"
@@ -39,21 +47,13 @@ cdef public  get_ip_address(ifname):
     return inet_ntoa(fcntl.ioctl(s.fileno(), 0x8915, struct.pack('256s', ifname[:15]))[20:24])
 
 
-cdef public void yan_api_init(robot_ip: str) with gil:
+cdef public void yan_api_init(robot_ip: str) :
     """初始化sdk
 
     Args:
         robot_ip(str): 机器人ip地址
 
     """
-    try:
-        logging.warning("货好后 这是一条警告信息")  # 现在应该能输出
-        # 确保 robot_ip 是有效的字符串
-        if not isinstance(robot_ip, str):
-            raise ValueError("robot_ip 必须是字符串")
-    except Exception as e:
-            logging.error(f"yan_api_init 发生异常: {e}")
-            raise
     logging.warning("货好后 这是一条警告信息")
     global basic_url
     global ip

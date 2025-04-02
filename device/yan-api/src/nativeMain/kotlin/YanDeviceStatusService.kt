@@ -52,12 +52,39 @@ class YanDeviceStatusService {
      */
     fun getBatteryInfo(): Map<String, Any> {
         try {
-            val result = get_robot_battery_info(0)
-            if (result != null) {
-                return PyObjectToMap(result)
+            // 初始化Python解释器，确保Python环境正确初始化
+            Py_Initialize()
+            
+            // 添加GIL状态管理，确保线程安全
+            val gstate = PyGILState_Ensure()
+            try {
+                // 安全地调用get_robot_battery_info函数，添加异常捕获
+                val result = try {
+                    get_robot_battery_info(0)
+                } catch (e: Exception) {
+                    println("Critical error calling get_robot_battery_info: ${e.message}")
+                    null
+                }
+                
+                // 添加额外的空值检查
+                if (result == null) {
+                    println("Warning: get_robot_battery_info returned null")
+                    return emptyMap()
+                }
+                
+                // 安全地将Python对象转换为Kotlin Map
+                try {
+                    return PyObjectToMap(result)
+                } catch (e: Exception) {
+                    println("Error converting battery info to map: ${e.message}")
+                    return emptyMap()
+                }
+            } finally {
+                // 释放GIL，确保不会导致死锁
+                PyGILState_Release(gstate)
             }
-            return emptyMap()
         } catch (e: Exception) {
+            println("Error getting battery info: ${e.message}")
             return emptyMap()
         }
     }
