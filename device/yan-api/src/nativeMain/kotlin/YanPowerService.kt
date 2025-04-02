@@ -2,6 +2,9 @@
 @file:Suppress("UNCHECKED_CAST")
 package com.airobot.device.yanapi
 
+import com.airobot.device.yanapi.pojo.BatteryInfo
+import com.airobot.device.yanapi.pojo.YansheeResp
+import com.airobot.device.yanapi.python.PyDict_Check
 import com.airobot.pythoninterop.*
 import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.cinterop.*
@@ -35,10 +38,8 @@ class YanPowerService {
     fun isCharging(): Boolean {
         // 注意：is_charging函数在YanAPI.h中不存在
         // 可以通过get_robot_battery_info获取充电状态
-        try {
-            Py_Initialize()
-            // 添加GIL状态管理，确保线程安全
-            val gstate = PyGILState_Ensure()
+        memScoped {
+            val gilState =PyGILState_Ensure()
             try {
                 // 安全地调用get_robot_battery_info函数，添加异常捕获
                 val batteryInfo = try {
@@ -47,30 +48,25 @@ class YanPowerService {
                     println("Critical error calling get_robot_battery_info: ${e.message}")
                     null
                 }
-                
                 // 安全检查：确保batteryInfo不为null
                 if (batteryInfo == null) {
                     return false
                 }
-                
                 // 安全地获取数据，避免直接调用toLong()可能导致的崩溃
-                try {
-                    val dataMap = PyObjectToMap(batteryInfo)
-                    val data = dataMap["data"] as? Map<String, Any>
-                    return data?.get("charging") as? Int == 1
-                } catch (e: Exception) {
-                    println("Error processing battery info: ${e.message}")
-                    return false
-                }
-            } finally {
-                // 释放GIL，确保不会导致死锁
-                PyGILState_Release(gstate)
+                val dataMap = PyObjectToKoltinMap(batteryInfo)
+                val info = dataMap.toJson<YansheeResp<BatteryInfo>>()?.data ?: return false
+                println("[DEBUG] 电量信息: ${info.capacity}")
+                println("[DEBUG] 是否充电中: ${info.charging}")
+                println("[DEBUG] 电量百分比: ${info.percent}")
+                return info.charging
+            } catch (e: Exception) {
+                println("Error getting charging status: ${e.message}")
+                return false
+            }finally {
+                PyGILState_Release(gilState)
             }
-        } catch (e: Exception) {
-            println("Error getting charging status: ${e.message}")
-            return false
         }
-    }
+     }
 
     // 注意：以下函数在YanAPI.h中不存在，已移除相关方法
     // - get_battery_temperature
@@ -86,7 +82,7 @@ class YanPowerService {
         try {
             val result = get_robot_battery_info(0)
             if (result != null) {
-                return PyObjectToMap(result)
+                return PyObjectToKoltinMap(result)
             }
             return emptyMap()
         } catch (e: Exception) {

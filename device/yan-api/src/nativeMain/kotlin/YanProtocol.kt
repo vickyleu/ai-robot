@@ -124,7 +124,7 @@ object YanProtocol {
                 }
                 is JsonObject -> deserializeToMap(value)
                 is JsonArray -> deserializeToList(value)
-                else -> value.toString()
+//                else -> value.toString()
             }
         }
         
@@ -148,7 +148,7 @@ object YanProtocol {
                 }
                 is JsonObject -> deserializeToMap(element)
                 is JsonArray -> deserializeToList(element)
-                else -> element.toString()
+//                else -> element.toString()
             }
         }
     }

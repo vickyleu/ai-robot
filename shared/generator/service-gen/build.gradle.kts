@@ -1,13 +1,13 @@
-import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
-
 plugins {
     kotlin("jvm")
 }
 
-val pbandkVersion = "0.14.3"
 
 kotlin {
-    jvmToolchain(17)
+    jvmToolchain {
+        this.languageVersion.set(JavaLanguageVersion.of(17))
+        this.vendor.set(JvmVendorSpec.ADOPTIUM)
+    }
     tasks.named("jar").configure {
         dependsOn("compileKotlin")
     }
@@ -15,6 +15,6 @@ kotlin {
 
 
 dependencies {
-    compileOnly("pro.streem.pbandk:pbandk-runtime:$pbandkVersion")
-    compileOnly("pro.streem.pbandk:protoc-gen-pbandk-lib:$pbandkVersion")
+    compileOnly(libs.pbandk.runtime)
+    compileOnly(libs.pbandk.protoc.gen)
 }

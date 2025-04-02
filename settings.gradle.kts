@@ -1,6 +1,7 @@
 @file:Suppress("UnstableApiUsage")
 
-import org.gradle.kotlin.dsl.module
+include(":shared:generator:generateJvm")
+
 
 
 rootProject.name = "ai-robot"
@@ -35,8 +36,51 @@ include(":device:cruzr")
 include(":device:yan-api")
 
 
-
 pluginManagement {
+    class TomlQuery(file:File) {
+        /**
+         * 解析 libs.versions.toml 文件并按部分分组
+         */
+        fun parseLibsVersionsToml(file: File): Map<String, Map<String, String>> {
+            val sections = mutableMapOf<String, MutableMap<String, String>>()
+            var currentSection = ""
+
+            // 读取文件并处理每一行
+            file.readLines().forEach { line ->
+                val trimmedLine = line.trim()
+
+                // 跳过空行和注释行
+                if (trimmedLine.isEmpty() || trimmedLine.startsWith("#")) {
+                    return@forEach
+                }
+
+                // 检查是否是新的部分（如 [versions], [libraries] 等）
+                if (trimmedLine.startsWith("[") && trimmedLine.endsWith("]")) {
+                    currentSection = trimmedLine.substring(1, trimmedLine.length - 1)
+                    sections[currentSection] = mutableMapOf()
+                    return@forEach
+                }
+
+                // 如果已经在某个部分中，则解析键值对
+                if (currentSection.isNotEmpty() && "=" in trimmedLine) {
+                    val parts = trimmedLine.split("=", limit = 2)
+                    if (parts.size == 2) {
+                        val key = parts[0].trim()
+                        val value = parts[1].trim().removeSurrounding("\"").removeSurrounding("'")
+                        sections[currentSection]?.put(key, value)
+                    }
+                }
+            }
+
+            return sections
+        }
+        val properties:Map<String, Map<String, String>> = parseLibsVersionsToml(file)
+
+        fun queryVersion(key: String): String{
+            return properties["versions"]?.getOrElse(key) { null }?:throw Exception("Key not found: $key")
+        }
+    }
+
     repositories.apply {
         removeAll(this)
     }
@@ -46,34 +90,27 @@ pluginManagement {
     listOf(repositories, dependencyResolutionManagement.repositories).forEach {
         it.apply {
             maven {
-                url = uri("file:///Users/vickyleu/Developer/Github/kotlin/build/repo")
-                content{
-                    includeGroup("org.jetbrains.kotlin")
-                    includeGroupByRegex("org.jetbrains.kotlin.*")
-                }
-            }
-            maven {
-                url = uri("https://raw.githubusercontent.com/vickyleu/kotlin_linuxarm32hfp_maven/main")
-                content{
+                url =
+                    uri("https://raw.githubusercontent.com/vickyleu/kotlin_linuxarm32hfp_maven/main")
+                content {
                     includeGroupByRegex("com.vickyleu.*")
                 }
             }
-            gradlePluginPortal(){
+            gradlePluginPortal{
                 content {
-//                    excludeGroup("org.jetbrains.kotlin")
-//                    excludeGroupByRegex("org.jetbrains.kotlin.*")
+                    includeGroupByRegex("com.*")
+                    includeGroupByRegex("org.*")
                     excludeGroupByRegex("com.vickyleu.*")
                 }
             }
-            google(){
+
+            google {
                 content {
                     excludeGroupByRegex("com.vickyleu.*")
                 }
             }
-            mavenCentral(){
+            mavenCentral {
                 content {
-//                    excludeGroup("org.jetbrains.kotlin")
-//                    excludeGroupByRegex("org.jetbrains.kotlin.*")
                     excludeGroupByRegex("com.vickyleu.*")
                 }
             }
@@ -89,23 +126,37 @@ pluginManagement {
                     excludeGroupByRegex("com.vickyleu.*")
                 }
             }
-            maven(url = "https://maven.pkg.jetbrains.space/kotlin/p/kotlin/dev"){
+            maven(url = "https://maven.pkg.jetbrains.space/kotlin/p/kotlin/dev") {
                 content {
                     excludeGroupByRegex("com.vickyleu.*")
                 }
             }
-            maven("https://maven.pkg.jetbrains.space/public/p/krpc/grpc"){
+            maven("https://maven.pkg.jetbrains.space/public/p/krpc/grpc") {
                 content {
                     excludeGroupByRegex("com.vickyleu.*")
                 }
             }
             maven {
-                url = uri("https://raw.githubusercontent.com/vickyleu/kotlin_linuxarm32hfp_maven/main")
-                content{
+                url =
+                    uri("https://raw.githubusercontent.com/vickyleu/kotlin_linuxarm32hfp_maven/main")
+                content {
                     includeGroupByRegex("com.vickyleu.*")
                 }
             }
 
+        }
+    }
+    resolutionStrategy {
+        eachPlugin {
+            val namespace = requested.id.namespace?:return@eachPlugin
+            val id = requested.id.name
+            val toml = TomlQuery(file("gradle/libs.versions.toml"))
+            val kotlinVersion = toml.queryVersion("kotlin")
+            if (namespace.startsWith("org.jetbrains.kotlinx.rpc") && id.startsWith("plugin")) {
+                useModule("com.vickyleu.kotlinx.rpc:org.jetbrains.kotlinx.rpc.plugin.gradle.plugin:0.6.1")
+            }else if(namespace=="org.jetbrains"&& id.startsWith("kotlin")==true){
+                useVersion(kotlinVersion)
+            }
         }
     }
 }
@@ -118,7 +169,7 @@ plugins {
 dependencyResolutionManagement {
     repositoriesMode.set(RepositoriesMode.PREFER_SETTINGS)
     repositories {
-        mavenCentral{
+        mavenCentral {
             content {
                 excludeGroup("org.jetbrains.kotlin")
                 excludeGroupByRegex("org.jetbrains.kotlin.*")
@@ -146,7 +197,7 @@ dependencyResolutionManagement {
                 excludeGroupByRegex("com.vickyleu.*")
             }
         }
-        maven{
+        maven {
             setUrl("http://maven.aliyun.com/nexus/content/repositories/releases/")
             isAllowInsecureProtocol = true
             content {
@@ -154,7 +205,7 @@ dependencyResolutionManagement {
                 excludeGroupByRegex("com.vickyleu.*")
             }
         }
-        maven(url = "https://maven.aliyun.com/repository/public"){
+        maven(url = "https://maven.aliyun.com/repository/public") {
             content {
                 excludeGroupByRegex("org.jetbrains.*")
                 excludeGroupByRegex("com.vickyleu.*")
@@ -195,19 +246,19 @@ dependencyResolutionManagement {
                 excludeGroupByRegex("com.vickyleu.*")
             }
         }
-        maven("https://maven.pkg.jetbrains.space/kotlin/p/wasm/experimental"){
+        maven("https://maven.pkg.jetbrains.space/kotlin/p/wasm/experimental") {
             content {
                 excludeGroupByRegex("org.jetbrains.*rpc*")
                 excludeGroupByRegex("com.vickyleu.*")
             }
         }
-        maven(url = "https://maven.pkg.jetbrains.space/kotlin/p/kotlin/dev"){
+        maven(url = "https://maven.pkg.jetbrains.space/kotlin/p/kotlin/dev") {
             content {
                 excludeGroupByRegex("org.jetbrains.*rpc*")
                 excludeGroupByRegex("com.vickyleu.*")
             }
         }
-        maven("https://maven.pkg.jetbrains.space/public/p/krpc/grpc"){
+        maven("https://maven.pkg.jetbrains.space/public/p/krpc/grpc") {
             content {
                 excludeGroupByRegex("com.vickyleu.*")
             }
@@ -261,7 +312,7 @@ dependencyResolutionManagement {
 
         maven {
             url = uri("https://raw.githubusercontent.com/vickyleu/kotlin_linuxarm32hfp_maven/main")
-            content{
+            content {
                 includeGroupByRegex("com.vickyleu.*")
             }
         }

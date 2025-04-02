@@ -39,7 +39,7 @@ class YanSensorService {
             memScoped {
                 val pyType = PyLong_FromLong(type)
                 val result = sensor_calibration(pyType, 0)
-                return ((PyObjectToMap(result)["code"])?.toString()?.toIntOrNull() ?: -1)==0
+                return ((PyObjectToKoltinMap(result)["code"])?.toString()?.toIntOrNull() ?: -1)==0
             }
         } catch (e: Exception) {
             return false
@@ -83,7 +83,7 @@ class YanSensorService {
         try {
             val result = get_sensors_list(0)
             if (result != null) {
-                return PyObjectToMap(result)
+                return PyObjectToKoltinMap(result)
             }
             return emptyMap()
         } catch (e: Exception) {
@@ -100,7 +100,7 @@ class YanSensorService {
         try {
             val result = get_sensors_environment_value(0)
             if (result != null) {
-                return PyObjectToMap(result)
+                return PyObjectToKoltinMap(result)
             }
             return emptyMap()
         } catch (e: Exception) {
@@ -117,7 +117,7 @@ class YanSensorService {
         try {
             val result = get_sensors_environment(0)
             if (result != null) {
-                return PyObjectToMap(result)
+                return PyObjectToKoltinMap(result)
             }
             return emptyMap()
         } catch (e: Exception) {
@@ -134,7 +134,7 @@ class YanSensorService {
         try {
             val result = get_sensors_gyro(0)
             if (result != null) {
-                return PyObjectToMap(result)
+                return PyObjectToKoltinMap(result)
             }
             return emptyMap()
         } catch (e: Exception) {

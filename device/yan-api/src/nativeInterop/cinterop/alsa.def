@@ -1,0 +1,51 @@
+language: C++
+# 需要导入stdio.h
+headers:   alsa/hack/alsa_wrapper.h
+linkerOpts: -L../cpp/libs/ -lasound
+
+# headerFilter: alsa/hack/alsa_wrapper.h alsa/pcm.h alsa/error.h alsa/config.h alsa/asoundlib.h alsa/pcm_external.h
+# 下面是不透明指针的映射
+---
+/** Unsigned frames quantity */
+typedef unsigned long snd_pcm_uframes_t;
+/** Signed frames quantity */
+typedef long snd_pcm_sframes_t;
+
+struct _snd_pcm_hw_params  {};
+/** PCM software configuration container */
+struct _snd_pcm_sw_params  {};
+/** PCM status container */
+struct _snd_pcm_status  {};
+/** PCM access types mask */
+struct _snd_pcm_access_mask  {};
+/** PCM formats mask */
+struct _snd_pcm_format_mask  {};
+/** PCM subformats mask */
+struct _snd_pcm_subformat_mask  {};
+
+const char *snd_strerror(int errnum);
+struct _snd_pcm {};
+struct _snd_mixer {};
+struct _snd_mixer_elem {};
+struct _snd_config {};
+struct _snd_mixer_class {};
+/** PCM handle */
+typedef struct _snd_pcm snd_pcm_t;
+/** Mixer handle */
+typedef struct _snd_mixer snd_mixer_t;
+/** Mixer elements class handle */
+typedef struct _snd_mixer_class snd_mixer_class_t;
+/** Mixer element handle */
+typedef struct _snd_mixer_elem snd_mixer_elem_t;
+
+typedef struct _snd_pcm_hw_params snd_pcm_hw_params_t;
+/** PCM software configuration container */
+typedef struct _snd_pcm_sw_params snd_pcm_sw_params_t;
+/** PCM status container */
+ typedef struct _snd_pcm_status snd_pcm_status_t;
+/** PCM access types mask */
+typedef struct _snd_pcm_access_mask snd_pcm_access_mask_t;
+/** PCM formats mask */
+typedef struct _snd_pcm_format_mask snd_pcm_format_mask_t;
+/** PCM subformats mask */
+typedef struct _snd_pcm_subformat_mask snd_pcm_subformat_mask_t;

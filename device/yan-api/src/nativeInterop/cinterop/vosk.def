@@ -1,0 +1,14 @@
+language: C++
+# 需要导入stdio.h
+headers:  vosk_wrapper.h
+
+linkerOpts:  -Lvosk -l:libvosk.a -lstdc++ -lc -lm -lpthread
+#compilerOpts: -nostdinc++
+# 伪代码
+---
+struct VoskModel{};
+struct VoskSpkModel{};
+struct VoskTextProcessor{};
+struct VoskBatchModel{};
+struct VoskBatchRecognizer{};
+struct VoskRecognizer{};

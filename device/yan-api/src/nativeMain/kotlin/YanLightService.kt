@@ -117,7 +117,7 @@ class YanLightService {
         try {
             val result = get_robot_led(0)
             if (result != null) {
-                return PyObjectToMap(result)
+                return PyObjectToKoltinMap(result)
             }
             return emptyMap()
         } catch (e: Exception) {

@@ -11,7 +11,27 @@ plugins {
 }
 @Suppress("DEPRECATION")
 kotlin {
-    jvmToolchain(17)
+
+    compilerOptions{
+        freeCompilerArgs.addAll(
+            listOf(
+                "-opt-in=kotlin.RequiresOptIn",
+                "-opt-in=kotlin.ExperimentalStdlibApi",
+                "-opt-in=kotlin.ExperimentalMultiplatform",
+                "-opt-in=kotlin.native.internal.InternalForKotlinNative",
+                "-opt-in=kotlinx.serialization.ExperimentalSerializationApi"
+            )
+        )
+    }
+    jvmToolchain {
+        this.languageVersion.set(JavaLanguageVersion.of(17))
+        this.vendor.set(JvmVendorSpec.ADOPTIUM)
+    }
+    jvm{
+        this.compilerOptions {
+            jvmTarget = JvmTarget.JVM_17
+        }
+    }
     applyDefaultHierarchyTemplate()
     androidTarget{
         compilerOptions {
@@ -41,25 +61,48 @@ kotlin {
     macosX64()
 
     jvm()
-    linuxX64()
-    linuxArm64()
-    linuxArm32Hfp()
+    listOf(linuxX64(),
+            linuxArm64(),
+            linuxArm32Hfp()
+    ).forEach {
+        // 配置cinterop以绑定Python方法
+        it.compilations["main"].cinterops {
+            @Suppress("unused")
+            val pthreadInterop by creating {
+                defFile("src/nativeInterop/cinterop/pthread.def")
+                packageName("com.airobot.pthread")
+                includeDirs(
+                    file("src/nativeInterop/cpp/include/pthread"),
+                )
+                compilerOpts(
+                    "-D__USE_GNU",
+                    "-D__THROWNL=__attribute__((__nothrow__))",
+                )
+            }
+        }
+    }
 
     sourceSets {
+
         commonMain.dependencies {
             implementation(projects.shared.protocol)
             api(libs.kotlinx.coroutines.core)
+
             api(libs.kotlinx.serialization.json)
             api(libs.ktor.client.core)
             api(libs.kotlinx.datetime)
             // 增加jetbrains 注解, 用于设置IntRange等约束
             api(libs.androidx.annotation)
         }
+        androidMain{
+            dependsOn(jvmMain.get())
+        }
         androidMain.dependencies {
             api(libs.ktor.client.android)
         }
         jvmMain.dependencies {
             api(libs.ktor.client.jvm)
+            implementation(kotlin("reflect"))
             //noinspection UseTomlInstead
             api("${libs.androidx.annotation.get().module}-jvm:${libs.versions.annotation.get()}")
         }
@@ -98,10 +141,13 @@ kotlin {
 
 
     }
+
+
 }
 
 android {
     namespace = "com.airobot.core"
+    //noinspection GradleDependency
     compileSdk = 34
     defaultConfig {
         minSdk = 24

@@ -1,0 +1,3 @@
+language: C++
+headers:  whisper_wrapper.h
+compilerOpts: -fopenmp

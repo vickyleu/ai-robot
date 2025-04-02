@@ -1,10 +1,8 @@
-# distutils: language=c
+# distutils: language=cpp
 # cython: language_level=3
-# cython: c_string_type=unicode
-# // cy  thon: c_string // _encoding=utf8
-# cython: c_string_encoding=ascii
+# cython: c_string_type=str
+# cython: c_string_encoding=unicode
 # cython: emit_code_comments=False
-# cython: binding=False
 # cython: linetrace=True
 
 # coding=UTF-8
@@ -24,7 +22,7 @@ from typing import Dict
 import logging
 import nest_asyncio
 from lib_ukit import lib_send
-
+import colorlog
 import fcntl
 import struct
 import subprocess
@@ -43,25 +41,50 @@ ip = "127.0.0.1"
 headers = {'Content-Type': 'application/json'}
 nest_asyncio.apply()
 
-cdef public  get_ip_address(ifname):
+cpdef public  get_ip_address(ifname):
     s = socket(AF_INET, SOCK_DGRAM)
     return inet_ntoa(fcntl.ioctl(s.fileno(), 0x8915, struct.pack('256s', ifname[:15]))[20:24])
 
 
-cdef public void yan_api_init(robot_ip: str) :
+cpdef public void yan_api_init(robot_ip: str) :
     """初始化sdk
 
     Args:
         robot_ip(str): 机器人ip地址
 
     """
-    logging.warning("货好后 这是一条警告信息")
     global basic_url
     global ip
     basic_url = "http://" + robot_ip + ":9090/v1/"
     ip = robot_ip
-    logging.basicConfig(level=logging.ERROR, format="%(asctime)s %(funcName)s %(levelname)s %(message)s",
-                        datefmt='%Y-%m-%d  %H:%M:%S %a')
+
+    # 创建日志器
+    logger = logging.getLogger()
+    logger.setLevel(logging.INFO)
+    # 创建控制台处理器
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(logging.INFO)
+    # 定义日志格式
+    log_format = '%(log_color)s[%(asctime)s] [%(funcName)s] [%(levelname)s] - %(message)s'
+    formatter = colorlog.ColoredFormatter(log_format, log_colors={
+        'DEBUG': 'cyan',
+        'INFO': 'green',
+        'WARNING': 'yellow',
+        'ERROR': 'red',
+        'CRITICAL': 'red,bg_white'
+    })
+    console_handler.setFormatter(formatter)
+
+    # 移除默认的处理器
+    if logger.hasHandlers():
+        logger.handlers.clear()
+
+    # 添加控制台处理器
+    logger.addHandler(console_handler)
+
+    # logging.basicConfig(level=logging.ERROR, format="%(asctime)s %(funcName)s %(levelname)s %(message)s",
+    #                    datefmt='%Y-%m-%d  %H:%M:%S %a')
+    logger.info(f"设置的 API 地址为: {basic_url}")
 
 cpdef public dict get_robot_battery_info():
     """获得机器人电量信息
@@ -2943,7 +2966,7 @@ cpdef   public sync_do_voice_iat():
     #result = asyncio.run(coroutine)
     return task.result()
 
-cpdef   public stop_voice_tts():
+cpdef  public dict stop_voice_tts():
     """停止语音播报任务
 
     Returns:
@@ -2962,9 +2985,9 @@ cpdef   public stop_voice_tts():
     res = json.loads(str(response.content.decode("utf-8")))
     return res
 
-cpdef public  get_voice_tts_state_impl(timestamp: int):
+cpdef public dict get_voice_tts_state_impl(timestamp: int):
     return get_voice_tts_state(timestamp)
-cpdef   get_voice_tts_state(timestamp: int = None):
+cpdef dict  get_voice_tts_state(timestamp: int = None):
     """获取指定或者当前工作状态
 
     带时间戳为指定任务工作状态，如果无时间戳则当前任务。
@@ -3029,10 +3052,10 @@ cpdef   start_voice_tts(tts: str = "", interrupt: bool = True, timestamp: int = 
     res = json.loads(str(response.content.decode("utf-8")))
     return res
 
-cpdef public  sync_do_tts_impl(tts: str, interrupt: bool):
+cpdef public dict sync_do_tts_impl(tts: str, interrupt: bool):
     return sync_do_tts(tts,interrupt)
 
-cpdef   sync_do_tts(tts: str = "", interrupt: bool = True):
+cpdef  dict sync_do_tts(tts: str = "", interrupt: bool = True):
     """执行语音合成任务,合成完成后返回
 
     Args:

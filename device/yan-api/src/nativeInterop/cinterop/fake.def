@@ -1,0 +1,7 @@
+language: C++
+# 需要导入stdio.h
+headers:   stdio.h
+linkerOpts: -lasound
+
+---
+int main(int argc, char *argv[]);

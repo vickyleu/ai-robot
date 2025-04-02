@@ -1,0 +1,7 @@
+language=C
+headers=pthread.h
+
+---
+extern int pthread_getname_np (pthread_t __target_thread, char *__buf,size_t __buflen) __THROW __nonnull ((2));
+
+extern int pthread_setname_np (pthread_t __target_thread, const char *__name)__THROW __nonnull ((2));

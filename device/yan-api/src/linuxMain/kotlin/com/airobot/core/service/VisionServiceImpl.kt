@@ -78,7 +78,7 @@ class VisionServiceImpl : VisionService {
             VisionService.RecognitionType.OBJECT -> VisionFaceRecognitionType.RECOGNITION
             VisionService.RecognitionType.QR_CODE -> VisionFaceRecognitionType.RECOGNITION
             VisionService.RecognitionType.CUSTOM -> VisionFaceRecognitionType.RECOGNITION
-            else -> VisionFaceRecognitionType.RECOGNITION // 默认使用人脸识别
+//            else -> VisionFaceRecognitionType.RECOGNITION // 默认使用人脸识别
         }
     }
     

@@ -96,7 +96,7 @@ class YanServoService {
                 // 使用get_servos_mode函数获取舵机模式
                 val result = get_servos_mode(pyList, 0)
                 if (result != null) {
-                    return PyObjectToMap(result)
+                    return PyObjectToKoltinMap(result)
                 }
                 return emptyMap()
             }
@@ -165,6 +165,23 @@ data class Servo(
      * @property upperName 大写名
      * @property lowerName 小写名
      * @property chineseName 中文名
+     * @sample 右肩水平
+     * @sample 右肩上下
+     * @sample 右肘
+     * @sample 左肩水平
+     * @sample 左肩上下
+     * @sample 左肘
+     * @sample 右髋水平
+     * @sample 右髋前后
+     * @sample 右膝,
+     * @sample 右踝前后
+     * @sample 右踝上下
+     * @sample 左髋水平
+     * @sample 左髋前后
+     * @sample 左膝
+     * @sample 左踝前后
+     * @sample 左踝上下
+     * @sample 颈部水平
      */
     enum class ServoName(
         val upperName: String = "",

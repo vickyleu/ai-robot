@@ -1,5 +1,6 @@
 package com.airobot.core.device
 
+import com.airobot.core.device.DeviceStatus.CONNECTED
 import kotlinx.coroutines.flow.StateFlow
 
 /**
@@ -11,6 +12,15 @@ enum class DeviceStatus {
     CONNECTED,      // 已连接
     ERROR          // 错误状态
 }
+
+val DeviceStatus.isConnected: Boolean
+    get() {
+    return when(this){
+        CONNECTED -> true
+        else -> false
+    }
+}
+
 
 /**
  * 设备控制接口

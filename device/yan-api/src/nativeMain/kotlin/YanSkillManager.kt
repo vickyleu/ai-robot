@@ -57,7 +57,7 @@ class YanSkillManager {
         try {
             val result = get_motion_list(0)
             if (result != null) {
-                return PyObjectToMap(result)
+                return PyObjectToKoltinMap(result)
             }
             return emptyMap()
         } catch (e: Exception) {
@@ -74,7 +74,7 @@ class YanSkillManager {
         try {
             val result = get_current_motion_play_state(0)
             if (result != null) {
-                return PyObjectToMap(result)
+                return PyObjectToKoltinMap(result)
             }
             return emptyMap()
         } catch (e: Exception) {
@@ -91,7 +91,7 @@ class YanSkillManager {
         try {
             val result = get_current_layer_motion_play_state(0)
             if (result != null) {
-                return PyObjectToMap(result)
+                return PyObjectToKoltinMap(result)
             }
             return emptyMap()
         } catch (e: Exception) {
@@ -122,7 +122,7 @@ class YanSkillManager {
         try {
             val result = get_motion_gait_state(0)
             if (result != null) {
-                return PyObjectToMap(result)
+                return PyObjectToKoltinMap(result)
             }
             return emptyMap()
         } catch (e: Exception) {
@@ -139,7 +139,7 @@ class YanSkillManager {
         try {
             val result = get_motion_list_value(0)
             if (result != null) {
-                return PyObjectToMap(result)
+                return PyObjectToKoltinMap(result)
             }
             return emptyMap()
         } catch (e: Exception) {

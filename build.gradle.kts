@@ -1,11 +1,7 @@
 import com.airobot.DependencyRule
-import org.gradle.kotlin.dsl.module
 
 //需要判断是否是jitpack的构建，如果是jitpack的构建，需要将build目录设置到项目根目录下
 if (System.getenv("JITPACK") == null) {
-    /*System.getenv().forEach {
-        println("key=${it.key},value=${it.value}")
-    }*/
     val realRootProject = rootProject.rootDir
     rootProject.layout.buildDirectory.set(file("${realRootProject.absolutePath}/build/${rootProject.name}"))
 }
@@ -20,81 +16,99 @@ plugins {
     alias(libs.plugins.kotlin.rpc) apply false
     alias(libs.plugins.jetbrains.kotlin.jvm) apply false
     alias(libs.plugins.protobuf) apply false
-    id("com.netflix.nebula.ospackage") version "11.11.1" apply false
+    alias(libs.plugins.ospackage) apply false
 }
 buildscript {
-    repositories{
+    repositories {
 
-        gradlePluginPortal() {
+        gradlePluginPortal{
+            content {
+                includeGroupByRegex("com.*")
+                includeGroupByRegex("org.*")
+                excludeGroupByRegex("com.vickyleu.*")
+            }
+        }
+
+        google {
+            content {
+                excludeGroupByRegex("com.vickyleu.*")
+            }
+        }
+        mavenCentral {
             content {
                 excludeGroup("org.jetbrains.kotlin")
                 excludeGroupByRegex("org.jetbrains.kotlin.*")
                 excludeGroupByRegex("com.vickyleu.*")
             }
         }
-        google() {
-            content {
-                excludeGroupByRegex("com.vickyleu.*")
-            }
-        }
-        mavenCentral() {
-            content {
-                excludeGroup("org.jetbrains.kotlin")
-                excludeGroupByRegex("org.jetbrains.kotlin.*")
-                excludeGroupByRegex("com.vickyleu.*")
-            }
-        }
     }
-    this.configurations.all {
-        resolutionStrategy.eachDependency {
-            if ((requested.group == "org.jetbrains.kotlin" || requested.group == "org.jetbrains")
-                && requested.module.name.startsWith("kotlin")){
-                useVersion(libs.versions.kotlin.asProvider().get())
-            }
+    configurations
+        .all {
+//            if(name.endsWith("NpmAggregated").not()){
+                resolutionStrategy.eachDependency {
+
+                    if (requested.group.startsWith("org.jetbrains.kotlinx.rpc.plugin") && requested.module.name.startsWith(
+                            "org.jetbrains.kotlinx.rpc.plugin"
+                        )
+                    ) {
+                        useVersion("0.6.1")
+                    } else if ((requested.group == "org.jetbrains.kotlin" || requested.group == "org.jetbrains")
+                        && requested.module.name.startsWith("kotlin")
+                    ) {
+                        useVersion(libs.versions.kotlin.asProvider().get())
+                    } else if (requested.group == "org.jetbrains.kotlinx" && requested.module.name.startsWith(
+                            "kotlinx-metadata"
+                        )
+                    ) {
+                        useVersion("0.9.0")
+                    }
+                }
+//            }
         }
-    }
+
 }
-allprojects{
-    this.configurations.all {
-        // 所有group是org.jetbrains.kotlinx并且module包含coroutines的都替换成com.vickyleu.kotlinx.coroutines:原来的module:版本号
-        resolutionStrategy.eachDependency {
-            DependencyRule.rules.firstOrNull { rule ->
-                requested.group == rule.group && rule.condition(requested.module.name)
-            }?.let { rule ->
-                useTarget(rule.targetVersion(requested.module.name))
-            }
-            if(
-                requested.group=="org.jetbrains.kotlin"
-                && requested.module.name.startsWith("kotlin")
-            ){
-                useVersion(libs.versions.kotlin.asProvider().get())
-            }
+allprojects {
+    configurations
+        .all {
+//            if(name.endsWith("NpmAggregated").not()){
+                // 所有group是org.jetbrains.kotlinx并且module包含coroutines的都替换成com.vickyleu.kotlinx.coroutines:原来的module:版本号
+                resolutionStrategy.eachDependency {
+                    DependencyRule.rules.firstOrNull { rule ->
+                        requested.group == rule.group && rule.condition(requested.module.name)
+                    }?.let { rule ->
+                        useTarget(rule.targetVersion(requested.module.name))
+                    } ?: run {
+                        if (
+                            requested.group == "org.jetbrains.kotlin"
+                            && requested.module.name.startsWith("kotlin")
+                        ) {
+                            useVersion(libs.versions.kotlin.asProvider().get())
+                        }
+                    }
+                }
+//            }
         }
-    }
 }
-configurations.all {
-    resolutionStrategy {
-        eachDependency {
-            if(
-                requested.group=="org.jetbrains.kotlin"
-                && requested.module.name.startsWith("kotlin")
-            ){
-                useVersion(libs.versions.kotlin.asProvider().get())
+configurations
+    .all {
+//        if(name.endsWith("NpmAggregated").not()){
+            resolutionStrategy {
+                eachDependency {
+                    if (
+                        requested.group == "org.jetbrains.kotlin"
+                        && requested.module.name.startsWith("kotlin")
+                    ) {
+                        useVersion(libs.versions.kotlin.asProvider().get())
+                    }
+                }
             }
-        }
+//        }
     }
-}
+
 subprojects {
     this.layout.buildDirectory.set(
         file("${rootProject.layout.buildDirectory.get().asFile.absolutePath}/subprojects/${project.name}")
     )
-    this.gradle.afterProject {
-        this.gradle.sharedServices.registrations.map {
-//            it as DefaultBuildServicesRegistry
-//            println("${this@subprojects.name}  this.gradle.sharedServices.registrations=${it::class.java.simpleName}")
-        }
-    }
-
 }
 
 

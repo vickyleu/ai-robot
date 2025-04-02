@@ -1,0 +1,15 @@
+version: '3.8'
+
+services:
+  arm32-env:
+    image: arm32v7/debian:bullseye
+    container_name: arm32-build-env
+    build: ./arm32-env
+    environment:
+      - DEBIAN_FRONTEND=noninteractive
+    volumes:
+      - ./build:/build
+    working_dir: /build
+    stdin_open: true
+    tty: true
+    command: bash

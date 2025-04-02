@@ -3,10 +3,30 @@
 
 package com.airobot.device.yanapi
 
-import com.airobot.device.yanapi.python.toKString
-import com.airobot.device.yanapi.python.typeName
-import com.airobot.pythoninterop.*
-import kotlinx.cinterop.*
+import com.airobot.core.utils.thread.getThreadName
+import com.airobot.pythoninterop.PyErr_Clear
+import com.airobot.pythoninterop.PyErr_Occurred
+import com.airobot.pythoninterop.PyErr_Print
+import com.airobot.pythoninterop.PyGILState_Check
+import com.airobot.pythoninterop.PyGILState_Ensure
+import com.airobot.pythoninterop.PyGILState_Release
+import com.airobot.pythoninterop.PyLong_FromLong
+import com.airobot.pythoninterop.PyUnicode_FromString
+import com.airobot.pythoninterop.Py_DecRef
+import com.airobot.pythoninterop.Py_IsInitialized
+import com.airobot.pythoninterop.get_robot_battery_info
+import com.airobot.pythoninterop.get_robot_led
+import com.airobot.pythoninterop.get_robot_volume
+import com.airobot.pythoninterop.set_robot_language
+import com.airobot.pythoninterop.set_robot_led
+import com.airobot.pythoninterop.set_robot_volume_value
+import com.airobot.pythoninterop.yan_api_init
+import kotlinx.cinterop.ExperimentalForeignApi
+import kotlinx.cinterop.memScoped
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.withContext
+import kotlin.experimental.ExperimentalNativeApi
 
 
 /**
@@ -20,128 +40,92 @@ class YanConnection {
     private var isConnected = false
 
 
-    companion object{
-        init {
-            println("初始化 Python 解释器...")
-            // 完全初始化 Python
-            Py_Initialize()
-            if (Py_IsInitialized() == 0) {
-                throw ConnectionException("Python 解释器初始化失败")
-            }
-            // 初始化线程支持
-            PyEval_InitThreads()
-            // 手动导入 yan_api_init 可能需要的所有模块
-            val sysModule = PyImport_ImportModule("sys")
-            if (sysModule == null) {
-                println("错误：无法导入 sys 模块")
-                PyErr_Print()
-            }
-            val loggingModule = PyImport_ImportModule("logging")
-            if (loggingModule == null) {
-                println("错误：无法导入 logging 模块")
-                PyErr_Print()
-            }
-            // 导入 YanAPI 模块
-            val yanApiModule = PyImport_ImportModule("YanAPI")
-            if (yanApiModule == null) {
-                println("错误：无法导入 YanAPI 模块")
-                PyErr_Print()
-                throw ConnectionException("无法导入 YanAPI 模块")
-            }
-            // 初始化完成后释放 GIL
-            PyEval_SaveThread()
-            println("Python 初始化成功完成")
-        }
-    }
+
+
+
     /**
      * 连接设备
      *
      */
-    @OptIn(ExperimentalForeignApi::class)
-    fun connect() {
-        try {
-            isConnected = true
-            memScoped {
-                val ip = "192.168.1.1"
-                println("开始连接过程...")
-
-                val gstate = PyGILState_Ensure()
-
-                try {
-                    val pyIp = PyUnicode_FromString(ip) // 或者使用 PyUnicode_FromStringAndSize
-                    if (pyIp == null) {
-                        PyErr_Print()
-                        throw ConnectionException("无法创建 Python 字符串对象")
-                    }
-                    pyIp.usePinned {
-                        // 直接使用 pinnedPointer 来获取指针
-                        val pyIpPtr = it.get()
-                        val tpName = pyIpPtr.typeName
-                        println("Python 字符串对象tpName：$tpName  ${pyIpPtr.toKString()}")
-                        yan_api_init(pyIpPtr) // 直接传递PyObject*指针
-                        println("Python 字符串对象地址：$pyIpPtr")
-                    }
-                    /*println("已创建 Python 字符串对象：${pyIpUtf8.pointed.ob_type!!.pointed.readValue().toString() }")
-                    Py_IncRef(pyIpUtf8)
-                    // 正确传递指针到API函数
-                    val typeStr = PyObject_Str(PyObject_Type(pyIpUtf8.reinterpret()))
-                    val cTypeStr = PyUnicode_AsUTF8(typeStr)
-                    println("参数类型：$cTypeStr")
-
-                    val pyRepr = PyObject_Repr(pyIpUtf8.reinterpret())
-                    if (pyRepr != null) {
-                        val reprStr = PyUnicode_AsUTF8(pyRepr.reinterpret())
-                        println("对象表示：$reprStr")
-                        Py_DecRef(pyRepr)
-                    }
-
-                    val isUnicode = my_PyUnicode_Check(pyIpUtf8.reinterpret())
-                    val isBytes = my_PyBytes_Check(pyIpUtf8.reinterpret())
-                    if(isUnicode==1){
-                        println("是 Unicode 字符串")
-                    }
-                    if(isBytes==1){
-                        println("是 字节字符串")
-                    }
-                    val pySize = PyObject_Size(pyIpUtf8)
-                    println("对象长度：$pySize")
-
-                    if (PyErr_Occurred() != null) {
-                        println("在调用 yan_api_init 之前发生错误：")
-                        PyErr_Print()
-                        PyErr_Clear()
-                    }
-                    try {
-                        println("Python 解释器状态：${if (Py_IsInitialized() != 0) "已初始化" else "未初始化"}")
-                        val result = PyRun_SimpleStringFlags("print('Python 测试成功')", null)
-                        if(result==0){
-                            println("Python 代码 PyRun_SimpleStringFlags 执行成功")
-                        }else{
-                            println("Python 代码 PyRun_SimpleStringFlags 执行失败")
-                        }
-                        println("调用 yan_api_init...")
-                        yan_api_init(pyIpUtf8.reinterpret()) // 直接传递PyObject*指针
-                        println("yan_api_init 成功完成")
-                    } catch (e: Exception) {
-                        println("调用 yan_api_init 时捕获到异常：${e.message}")
-                        e.printStackTrace()
-                    }
-
-                    if (PyErr_Occurred() != null) {
-                        println("在调用 yan_api_init 后发生错误：")
-                        PyErr_Print()
-                        PyErr_Clear()
-                    }*/
-
-                } finally {
-                    PyGILState_Release(gstate)
-                }
-            }
-        } catch (e: Exception) {
-            isConnected = false
-            throw ConnectionException("连接设备失败：${e.message}", e)
-        }
-    }
+    @OptIn(ExperimentalForeignApi::class, ExperimentalNativeApi::class)
+    suspend fun connect(ip: String="127.0.0.1"
+    /*默认连接机器人本机,这是为了测试api访问是否正常*/
+    ) {
+          println("[YanConnection] 开始连接设备...\n")
+          println("[YanConnection] 当前线程: ${getThreadName()}\n")
+          try {
+              withContext(Dispatchers.Unconfined) {
+                  async {
+                      println("[YanConnection] 当前线程: ${getThreadName()}\n")
+                      println("[YanConnection] 等待YanDevice初始化完成...\n")
+                      if(YanDevice.instance.completableDeferred.isCompleted.not()){
+                          YanDevice.instance.completableDeferred.await()
+                      }
+                      println("[YanConnection] YanDevice状态: ${if (Py_IsInitialized() != 0) "已初始化" else "未初始化"}\n")
+                      if(Py_IsInitialized()==0){
+                          println("[YanConnection] YanDevice初始化失败")
+                          return@async
+                      }
+                      println("[YanConnection] YanDevice初始化完成")
+                      memScoped {
+                          println("[YanConnection] 开始连接过程，目标IP: $ip\n")
+                          println("[YanConnection] 获取Python GIL...\n")
+                          val gstate = PyGILState_Ensure()
+                          // 下面的代码没有作用, 已经注释了
+//                          PyEval_AcquireLock()
+//                          val threadState = PyThreadState_New(PyInterpreterState_Head())
+//                          PyEval_ReleaseLock()
+                          println("[YanConnection] 成功获取Python GIL\n")
+                          try {
+                              val pyIp = PyUnicode_FromString(ip)
+                              if (pyIp == null) {
+                                  println("[YanConnection] 错误：无法创建Python字符串对象\n")
+                                  println("[YanConnection] 检查Python错误...\n")
+                                  PyErr_Print()
+                                  throw ConnectionException("无法创建 Python 字符串对象\n")
+                              }
+                              if (PyErr_Occurred() != null) {
+                                  PyErr_Print()
+                                  PyErr_Clear()
+                              }
+                              println("[YanConnection] 调用yan_api_init初始化API...\n")
+                              if (PyGILState_Check() == 0) {
+                                  throw IllegalStateException("[ERROR] 未持有 GIL")
+                              }
+                              yan_api_init(pyIp, 0)
+                              println("[YanConnection] yan_api_init调用成功\n")
+                              Py_DecRef(pyIp)
+                              if (PyErr_Occurred() != null) {
+                                  println("[YanConnection] 在调用yan_api_init后发现Python错误:\n")
+                                  PyErr_Print()
+                                  PyErr_Clear()
+                                  throw IllegalStateException("在调用yan_api_init后发现Python错误")
+                              }
+                              isConnected = true
+                              println("[YanConnection] 设备连接成功，状态已更新为: $isConnected\n")
+                          }catch (e: Exception) {
+                              println("[YanConnection] 连接过程中发生异常: ${e.message}\n")
+                              println("[YanConnection] 异常堆栈: ${e.stackTraceToString()}\n")
+                              throw e
+                          }
+                          finally {
+                              // 释放GIL
+                              println("[YanConnection] 释放Python GIL...\n")
+                              // 清理
+                              PyGILState_Release(gstate)
+                              println("[YanConnection] Python GIL已释放\n")
+                          }
+                      }
+                  }
+              }
+          } catch (e: Exception) {
+              isConnected = false
+              println("[YanConnection] 连接失败，状态已更新为: $isConnected\n")
+              println("[YanConnection] 连接失败异常: ${e.message}\n")
+              println("[YanConnection] 异常堆栈: ${e.stackTraceToString()}\n")
+              throw ConnectionException("连接设备失败：${e.message}", e)
+          }
+      }
 
     /**
      * 断开连接
@@ -241,10 +225,6 @@ class YanConnection {
         val status = mutableMapOf<String, Any>()
 
         try {
-            // 初始化Python解释器
-            Py_Initialize()
-            PyEval_InitThreads()
-            val mainThreadState = PyEval_SaveThread()
             // 添加GIL状态管理，确保线程安全
             val gstate = PyGILState_Ensure()
             try {
@@ -253,7 +233,7 @@ class YanConnection {
                     get_robot_battery_info(0)?.let { batteryInfo ->
                         // 安全地将Python对象转换为Kotlin Map
                         try {
-                            status["battery"] = PyObjectToMap(batteryInfo)
+                            status["battery"] = PyObjectToKoltinMap(batteryInfo)
                             Py_DecRef(batteryInfo) // 显式减少引用计数
                         } catch (e: Exception) {
                             println("Error converting battery info to map: ${e.message}")
@@ -269,7 +249,7 @@ class YanConnection {
                     get_robot_led(0)?.let { ledInfo ->
                         // 安全地将Python对象转换为Kotlin Map
                         try {
-                            status["led"] = PyObjectToMap(ledInfo)
+                            status["led"] = PyObjectToKoltinMap(ledInfo)
                             Py_DecRef(ledInfo)
                         } catch (e: Exception) {
                             println("Error converting LED info to map: ${e.message}")
@@ -285,7 +265,7 @@ class YanConnection {
                     get_robot_volume(0)?.let { volume ->
                         // 安全地将Python对象转换为Kotlin Map
                         try {
-                            status["volume"] = PyObjectToMap(volume)
+                            status["volume"] = PyObjectToKoltinMap(volume)
                             Py_DecRef(volume)
                         } catch (e: Exception) {
                             println("Error converting volume info to map: ${e.message}")
@@ -298,7 +278,6 @@ class YanConnection {
             } finally {
                 // 释放GIL，确保不会导致死锁
                 PyGILState_Release(gstate)
-                PyEval_RestoreThread(mainThreadState)
             }
         } catch (e: Exception) {
             println("Error monitoring device status: ${e.message}")

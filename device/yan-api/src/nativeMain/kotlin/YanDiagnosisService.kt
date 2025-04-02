@@ -75,7 +75,7 @@ class YanDiagnosisService {
         try {
             val result = get_robot_volume(0)
             if (result != null) {
-                return ((PyObjectToMap(result)["data"]) as? Map<String, Any>)?.get("volume")
+                return ((PyObjectToKoltinMap(result)["data"]) as? Map<String, Any>)?.get("volume")
                     ?.toString()?.toIntOrNull() ?: -1
             }
             return -1
@@ -95,7 +95,7 @@ class YanDiagnosisService {
             memScoped {
                 val pyVolume = PyLong_FromLong(volume)
                 val result = set_robot_volume(pyVolume, 0)
-                return ((PyObjectToMap(result)["code"])?.toString()?.toIntOrNull() ?: -1) == 0
+                return ((PyObjectToKoltinMap(result)["code"])?.toString()?.toIntOrNull() ?: -1) == 0
             }
         } catch (e: Exception) {
             return false
@@ -111,7 +111,7 @@ class YanDiagnosisService {
         try {
             val result = get_robot_language(0)
             if (result != null) {
-                return ((PyObjectToMap(result)["data"]) as? Map<String, Any>)?.get("language")
+                return ((PyObjectToKoltinMap(result)["data"]) as? Map<String, Any>)?.get("language")
                     ?.toString() ?: "zh"
             }
             return "zh"
@@ -131,7 +131,7 @@ class YanDiagnosisService {
             memScoped {
                 val pyLanguage = PyLong_FromLong(language)
                 val result = set_robot_language(pyLanguage, 0)
-                return ((PyObjectToMap(result)["code"])?.toString()?.toIntOrNull() ?: -1) == 0
+                return ((PyObjectToKoltinMap(result)["code"])?.toString()?.toIntOrNull() ?: -1) == 0
             }
         } catch (e: Exception) {
             return false

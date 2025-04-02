@@ -4,13 +4,16 @@ import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 plugins {
     alias(libs.plugins.kotlin.multiplatform)
     alias(libs.plugins.android.library)
-    alias(libs.plugins.kotlin.rpc)
+    id(libs.plugins.kotlin.rpc.get().pluginId)
     alias(libs.plugins.protobuf)
     alias(libs.plugins.kotlin.serialization)
 }
 
 kotlin {
-    jvmToolchain(17)
+    jvmToolchain {
+        this.languageVersion.set(JavaLanguageVersion.of(17))
+        this.vendor.set(JvmVendorSpec.ADOPTIUM)
+    }
     applyDefaultHierarchyTemplate()
     androidTarget {
         compilerOptions {
@@ -39,7 +42,11 @@ kotlin {
     macosArm64()
     macosX64()
 
-    jvm()
+    jvm{
+        this.compilerOptions {
+            jvmTarget = JvmTarget.JVM_17
+        }
+    }
     linuxX64()
     linuxArm64()
     @Suppress("DEPRECATION")
@@ -56,7 +63,6 @@ kotlin {
                 implementation(libs.ktor.client.content.negotiation)
                 implementation(libs.ktor.serialization.kotlinx.json)
                 implementation(libs.kotlinx.datetime)
-                implementation(project.dependencies.enforcedPlatform(libs.kotlinx.rpc.bom))
                 // gRPC 多平台支持
                 implementation(libs.kotlinx.rpc.krpc.serialization.json)
                 implementation(libs.kotlinx.rpc.krpc.client)
@@ -66,8 +72,12 @@ kotlin {
         }
 
         jvmMain.dependencies {
-            implementation("ch.qos.logback:logback-classic:1.5.16")
-            implementation("io.grpc:grpc-netty:1.70.0")
+            implementation(libs.logback.classic)
+            implementation(libs.grpc.netty)
+            implementation(kotlin("reflect"))
+        }
+        androidMain{
+            dependsOn(jvmMain.get())
         }
         androidMain.dependencies {
             implementation(libs.androidx.lifecycle.viewmodel.ktx)
@@ -88,6 +98,7 @@ rpc {
 
 android {
     namespace = "com.airobot.protocol"
+    //noinspection GradleDependency
     compileSdk = 34
     defaultConfig {
         minSdk = 24

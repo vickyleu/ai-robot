@@ -80,7 +80,7 @@ class YanVisionService {
                 val pyType = PyUnicode_FromString(type.type)
                 val pyTimestamp = PyLong_FromLong(Clock.System.now().toEpochMilliseconds().toInt())
                 val result = stop_face_recognition_impl(pyType, pyTimestamp, 0)
-                return ((PyObjectToMap(result)["code"])?.toString()?.toIntOrNull() ?: -1) == 0
+                return ((PyObjectToKoltinMap(result)["code"])?.toString()?.toIntOrNull() ?: -1) == 0
             }
         } catch (e: Exception) {
             return false
@@ -97,7 +97,7 @@ class YanVisionService {
             memScoped {
                 val result = sync_do_gesture_recognition(0)
                 if (result != null) {
-                    return PyObjectToMap(result)
+                    return PyObjectToKoltinMap(result)
                 }
                 return null
             }
@@ -120,7 +120,7 @@ class YanVisionService {
                 val pyTaskType = PyUnicode_FromString(taskType.childOption)
                 val result = get_visual_task_result(pyTaskOption, pyTaskType, 0)
                 if (result != null) {
-                    return PyObjectToMap(result)
+                    return PyObjectToKoltinMap(result)
                 }
                 return null
             }

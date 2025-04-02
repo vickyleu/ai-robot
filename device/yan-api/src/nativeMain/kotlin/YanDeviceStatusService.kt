@@ -13,19 +13,6 @@ import kotlinx.cinterop.*
  */
 @OptIn(ExperimentalForeignApi::class)
 class YanDeviceStatusService {
-    /**
-     * 初始化YAN API
-     *
-     * @return 操作是否成功
-     */
-    fun initApi(): Boolean {
-        try {
-             yan_api_init(null)
-            return true
-        } catch (e: Exception) {
-            return false
-        }
-    }
 
     /**
      * 获取设备IP地址
@@ -34,7 +21,7 @@ class YanDeviceStatusService {
      */
     fun getIpAddress(): String? {
         try {
-            val result = get_ip_address(null)
+            val result = get_ip_address(null,0)
             if (result != null) {
                 val pyStr = PyUnicode_AsUTF8(result)
                 return pyStr?.toKString()
@@ -52,9 +39,6 @@ class YanDeviceStatusService {
      */
     fun getBatteryInfo(): Map<String, Any> {
         try {
-            // 初始化Python解释器，确保Python环境正确初始化
-            Py_Initialize()
-            
             // 添加GIL状态管理，确保线程安全
             val gstate = PyGILState_Ensure()
             try {
@@ -74,7 +58,7 @@ class YanDeviceStatusService {
                 
                 // 安全地将Python对象转换为Kotlin Map
                 try {
-                    return PyObjectToMap(result)
+                    return PyObjectToKoltinMap(result)
                 } catch (e: Exception) {
                     println("Error converting battery info to map: ${e.message}")
                     return emptyMap()
@@ -258,7 +242,7 @@ class YanDeviceStatusService {
         try {
             val result = get_robot_led(0)
             if (result != null) {
-                return PyObjectToMap(result)
+                return PyObjectToKoltinMap(result)
             }
             return emptyMap()
         } catch (e: Exception) {
@@ -354,7 +338,7 @@ class YanDeviceStatusService {
                 val pyType = PyUnicode_FromString(type)
                 val result = get_robot_version_info(pyType, 0)
                 if (result != null) {
-                    return PyObjectToMap(result)
+                    return PyObjectToKoltinMap(result)
                 }
                 return emptyMap()
             }

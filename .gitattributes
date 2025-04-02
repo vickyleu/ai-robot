@@ -1,0 +1,2 @@
+device/yan-api/src/nativeInterop/cpp/libs/libvosk.a filter=lfs diff=lfs merge=lfs -text
+device/yan-api/src/linuxMain/resources/model/* filter=lfs diff=lfs merge=lfs -text

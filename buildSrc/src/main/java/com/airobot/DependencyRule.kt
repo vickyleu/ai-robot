@@ -5,6 +5,7 @@ data class DependencyRule(
     val condition: (moduleName: String) -> Boolean,
     val targetVersion: (moduleName: String) -> String
 ){
+    @Suppress("SpellCheckingInspection")
     companion object{
         private val annotationMapping = hashMapOf(
             "android" to "jvm",
@@ -28,11 +29,15 @@ data class DependencyRule(
                 "com.vickyleu.kotlinx:${it}:0.12.0"
             },
             DependencyRule("org.jetbrains.kotlinx", { moduleName ->
-                moduleName.startsWith("kotlinx-rpc") &&
-                        moduleName != "kotlinx-rpc-bom" &&
-                        !moduleName.startsWith("kotlinx-rpc-compiler")
+                moduleName.startsWith("kotlinx-rpc-compiler")
             }) {
-                "com.vickyleu.kotlinx:${it}:0.5.1"
+                // 固定版本, 不需要使用最新版本
+                "com.vickyleu.kotlinx:${it}:2.1.20-0.6.1"
+            },
+            DependencyRule("org.jetbrains.kotlinx", { moduleName ->
+                moduleName.startsWith("kotlinx-rpc") ||moduleName.startsWith("org.jetbrains.kotlinx.rpc")
+            }) {
+                "com.vickyleu.kotlinx:${it}:0.6.1"
             },
             DependencyRule("io.ktor", { it.startsWith("ktor") }) {
                 "com.vickyleu.ktor:${it}:3.1.2-SNAPSHOT"

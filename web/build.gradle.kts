@@ -1,4 +1,8 @@
+import org.jetbrains.kotlin.gradle.targets.js.nodejs.NodeJsEnvSpec
 import org.jetbrains.kotlin.gradle.targets.js.nodejs.NodeJsRootExtension
+import org.jetbrains.kotlin.gradle.targets.js.nodejs.NodeJsSetupTask
+import org.jetbrains.kotlin.gradle.targets.js.yarn.YarnLockMismatchReport
+import org.jetbrains.kotlin.gradle.targets.js.yarn.YarnRootEnvSpec
 import org.jetbrains.kotlin.gradle.targets.js.yarn.YarnRootExtension
 
 plugins {
@@ -76,16 +80,27 @@ kotlin {
         }
     }
 }
+
 // Yarn
 rootProject.plugins.withType<org.jetbrains.kotlin.gradle.targets.js.yarn.YarnPlugin> {
-    rootProject.extensions.configure<YarnRootExtension> {
-//        version = libs.yarn.get().version.toString()
+    rootProject.extensions.configure<YarnRootEnvSpec> {
+        version = libs.yarn.get().version.toString()
+        this.reportNewYarnLock.set(false)
+        this.yarnLockAutoReplace.set(true)
+        this.yarnLockMismatchReport.set(YarnLockMismatchReport.WARNING)
+        this.allowInsecureProtocol.set(true)
+        this.downloadBaseUrl.set("https://registry.npmmirror.com")
     }
 }
 // Node.js
 rootProject.plugins.withType<org.jetbrains.kotlin.gradle.targets.js.nodejs.NodeJsPlugin> {
-    rootProject.extensions.configure<NodeJsRootExtension> {
-//        version = libs.node.get().version.toString()
+    rootProject.extensions.configure<NodeJsEnvSpec> {
+        version = libs.node.get().version.toString()
+        this.allowInsecureProtocol.set(true)
+        this.downloadBaseUrl.set("https://registry.npmmirror.com")
+        /*this.nodeJsSetupTask.configure {
+            it.environmentVariables.put("NODE_OPTIONS", "--max_old_space_size=8192")
+        }*/
     }
 }
 
