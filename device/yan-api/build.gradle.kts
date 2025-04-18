@@ -168,6 +168,7 @@ kotlin {
                     // 从上面四个目录中查找所有的头文件,添加到headers.files
                     includeDirs(
                         file("src/nativeInterop/cpp/include/"),
+                        file("src/nativeInterop/cpp/include/opencc/hack"),
                     )
                     compilerOpts(
                         "-fPIC",

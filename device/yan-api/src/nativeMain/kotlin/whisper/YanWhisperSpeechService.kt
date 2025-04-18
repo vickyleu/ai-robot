@@ -3,14 +3,6 @@
 
 package whisper
 
-//,"DEPRECATION"
-
-// ALSA Interop Imports (similar to Vosk Recognizer)
-
-
-// Whisper Interop Imports
-
-// Other necessary imports
 import com.airobot.alsainterop.EAGAIN
 import com.airobot.alsainterop.EBADFD
 import com.airobot.alsainterop.EBUSY
@@ -70,7 +62,6 @@ import com.airobot.whisperinterop.whisper_context
 import com.airobot.whisperinterop.whisper_context_params
 import com.airobot.whisperinterop.whisper_free
 import com.airobot.whisperinterop.whisper_model_loader
-import kotlinx.cinterop.ByteVar
 import kotlinx.cinterop.CPointer
 import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.cinterop.UIntVar
@@ -81,15 +72,12 @@ import kotlinx.cinterop.convert
 import kotlinx.cinterop.memScoped
 import kotlinx.cinterop.ptr
 import kotlinx.cinterop.readValue
-import kotlinx.cinterop.refTo
 import kotlinx.cinterop.toKString
 import kotlinx.cinterop.value
-import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.TimeoutCancellationException
-import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -97,14 +85,9 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
-import platform.posix.FILE
-import platform.posix.fgets
-import platform.posix.pclose
-import platform.posix.popen
+import vosk.YanVoskSpeechService.Companion.executeCommand
 import kotlin.concurrent.AtomicInt
-import kotlin.native.runtime.GC
 import kotlin.native.runtime.NativeRuntimeApi
 
 /**
@@ -118,77 +101,6 @@ class YanWhisperSpeechService {
         // Whisper模型的默认路径或标识符
         const val DEFAULT_WHISPER_MODEL = "ggml-base-q4_1.bin" // Placeholder, adjust as needed
 
-        /**
-         * 执行shell命令并返回输出结果
-         *
-         * @param command 要执行的命令
-         * @param timeoutMs 命令执行超时时间（毫秒），默认1000ms
-         * @param maxOutputSize 最大输出大小，防止内存溢出，默认4096字节
-         * @return 命令执行的输出结果
-         */
-        suspend fun executeCommand(
-            command: String,
-            timeoutMs: Long = 1000,
-            maxOutputSize: Int = 4096
-        ): String {
-            val completableDeferred = CompletableDeferred<String>()
-            // 启动一个线程执行命令，以便实现超时控制
-            withContext(Dispatchers.Default) {
-                val result = StringBuilder()
-                var process: CPointer<FILE>? = null
-                try {
-                    // 创建并启动协程
-                    val commandJob = async {
-                        try {
-                            process = popen(command, "r")
-                            if (process == null) {
-                                result.append("无法执行命令: $command")
-                                return@async
-                            }
-
-                            val buffer = ByteArray(1024)
-                            var totalRead = 0
-                            var readBuffer: CPointer<ByteVar>?
-
-                            do {
-                                readBuffer = fgets(buffer.refTo(0), buffer.size, process!!)
-                                if (readBuffer != null) {
-                                    val line = buffer.toKString()
-                                    // 限制输出大小
-                                    if (totalRead + line.length <= maxOutputSize) {
-                                        result.append(line)
-                                        totalRead += line.length
-                                    } else {
-                                        result.append("\n... 输出过大，已截断")
-                                        break
-                                    }
-                                }
-                            } while (readBuffer != null && isActive) // 检查协程是否仍然活跃
-                        } catch (e: Exception) {
-                            result.append("执行命令出错: ${e.message}")
-                        }
-                    }
-                    // 设置超时
-                    try {
-                        withTimeout(timeoutMs) {
-                            commandJob.await() // 等待协程完成或超时
-                        }
-                    } catch (e: TimeoutCancellationException) {
-                        commandJob.cancel() // 取消协程
-                        result.append("\n命令执行超时 (${timeoutMs}ms)")
-                    }
-                } catch (e: Exception) {
-                    result.append("执行命令异常: ${e.message}")
-                } finally {
-                    // 确保关闭进程
-                    process?.let { pclose(it) }
-                    // 强制GC回收内存
-                    GC.collect()
-                }
-                completableDeferred.complete(result.toString())
-            }
-            return completableDeferred.await()
-        }
     }
 
     // ALSA & Whisper Resources
@@ -253,6 +165,8 @@ class YanWhisperSpeechService {
             println("[INFO] Whisper service already initialized.")
             return true
         }
+
+        com.airobot.openccinterop.opencc_open()
         _recognitionState.value = RecognitionState.INITIALIZING
         println("Initializing Whisper Speech Service...")
 
