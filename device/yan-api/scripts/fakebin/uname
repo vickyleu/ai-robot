@@ -1,0 +1,19 @@
+#!/bin/sh
+
+# 处理参数
+# shellcheck disable=SC2046
+case "$1" in
+    -s) echo "Linux" ;;
+    -m) echo "armv7l" ;;
+    "") echo "Linux" ;;  # 默认行为（无参数时等同于`-s`）
+    -reset) export PATH=$(echo $PATH | sed -e "s|$(pwd)/fakebin:||") ;;  # 重置PATH
+    *)  # 其他参数返回合理值以避免暴露真实系统
+        case "$1" in
+            -r) echo "4.19.0-10-armv7l" ;;
+            -v) echo "#1 SMP Debian 4.19.132-1" ;;
+            -p|--processor| -i|--hardware-platform) echo "armv7l" ;;
+            -o|--operating-system) echo "Linux" ;;
+            *) echo "Linux" ;;  # 默认返回Linux
+        esac
+        ;;
+esac

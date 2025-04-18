@@ -445,7 +445,7 @@ class YanWhisperSpeechService {
     }
 
     /**
-     * 开始语音识别 (持续模式)
+     * 开始语音识别
      *
      * @return 是否成功启动识别
      */
@@ -454,26 +454,34 @@ class YanWhisperSpeechService {
             println("[ERROR] Whisper service not initialized.")
             return false
         }
-        if (recognitionJob?.isActive == true) {
-            println("[WARN] Recognition already running.")
-            return true
+        if (isRunning.get() == 1) {
+            println("[WARN] Whisper recognition already running.")
+            return false
         }
-
-        println("Starting Whisper recognition (continuous mode)...")
-        // TODO: Implement continuous recognition logic
-        // 1. Start audio capture thread/coroutine
-        // 2. Feed audio data to Whisper context (whisper_full)
-        // 3. Process results and update _recognitionText flow
-
+        isRunning.set(1)
+        _recognitionState.value = RecognitionState.LISTENING
         recognitionJob = serviceScope.launch {
-            // Placeholder: Simulate receiving results
-            delay(2000)
-            _recognitionText.value = "[Placeholder] Whisper recognized text 1"
-            delay(3000)
-            _recognitionText.value = "[Placeholder] Whisper recognized text 2"
+            try {
+                while (isActive && isRunning.get() == 1) {
+                    _recognitionState.value = RecognitionState.LISTENING
+                    val audioData = readAudioFrame() // 采集一帧音频
+                    if (audioData != null) {
+                        _recognitionState.value = RecognitionState.PROCESSING
+                        val result = recognizeAudio(audioData)
+                        if (!result.isNullOrBlank()) {
+                            _recognitionText.value = result
+                        }
+                    } else {
+                        delay(10)
+                    }
+                }
+            } catch (e: Exception) {
+                println("[ERROR] Whisper recognition error: ${e.message}")
+                _recognitionState.value = RecognitionState.ERROR
+            } finally {
+                _recognitionState.value = RecognitionState.IDLE
+            }
         }
-
-        println("Whisper recognition started (placeholder).")
         return true
     }
 
@@ -481,60 +489,93 @@ class YanWhisperSpeechService {
      * 停止语音识别
      */
     fun stopRecognition() {
-        if (recognitionJob?.isActive != true) {
-            println("[INFO] Recognition not running.")
-            return
-        }
-        println("Stopping Whisper recognition...")
-        // TODO: Implement stop logic
-        // 1. Signal audio capture thread/coroutine to stop
-        // 2. Wait for thread/coroutine to finish
-        // 3. Clean up Whisper resources if necessary for stopping
+        isRunning.set(0)
         recognitionJob?.cancel()
         recognitionJob = null
-        _recognitionText.value = null // Clear last result
-        println("Whisper recognition stopped (placeholder).")
+        _recognitionState.value = RecognitionState.IDLE
     }
 
     /**
      * 执行一次语音识别并返回结果
      *
+     * 这个方法会启动识别，等待一段时间获取结果，然后停止识别
+     *
      * @param timeoutMs 超时时间（毫秒）
-     * @return 识别结果，如果识别失败或超时则返回null
+     * @return 识别结果，如果识别失败则返回null
      */
     suspend fun recognizeOnce(timeoutMs: Long = 5000): String? {
-        if (!isInitialized) {
-            println("[ERROR] Whisper service not initialized.")
-            return null
-        }
-        println("Starting Whisper recognition (single shot mode, timeout: ${timeoutMs}ms)...")
-        var result: String? = null
+        if (!isInitialized) return null
         _recognitionText.value = null
-
-        // TODO: Implement single-shot recognition logic
-        // 1. Start audio capture for a limited duration or until silence
-        // 2. Feed captured audio to Whisper (whisper_full)
-        // 3. Get the final result
-
-        // Placeholder implementation using continuous mode temporarily
-        if (!startRecognition()) {
-            return null
-        }
-
-        try {
+        isRunning.set(1)
+        _recognitionState.value = RecognitionState.LISTENING
+        return try {
             withTimeout(timeoutMs) {
-                while (_recognitionText.value == null && isActive) {
-                    delay(100)
+                while (isActive && isRunning.get() == 1) {
+                    val audioData = readAudioFrame()
+                    if (audioData != null) {
+                        _recognitionState.value = RecognitionState.PROCESSING
+                        val result = recognizeAudio(audioData)
+                        if (!result.isNullOrBlank()) {
+                            _recognitionText.value = result
+                            stopRecognition()
+                            return@withTimeout result
+                        }
+                    } else {
+                        delay(10)
+                    }
                 }
-                result = _recognitionText.value
+                null
             }
         } catch (e: TimeoutCancellationException) {
-            println("[WARN] recognizeOnce timed out.")
-        } finally {
+            println("[WARN] Whisper recognizeOnce timeout.")
             stopRecognition()
+            null
+        } finally {
+            isRunning.set(0)
+            _recognitionState.value = RecognitionState.IDLE
         }
-        println("recognizeOnce finished. Result: $result")
-        return result
+    }
+
+    /**
+     * 采集一帧音频数据
+     *
+     * @return FloatArray? 采集到的音频数据
+     */
+    private fun readAudioFrame(): FloatArray? {
+        if (pcmHandle == null) return null
+        val frameCount = periodSize
+        val buffer = FloatArray(frameCount * channels)
+        val read = snd_pcm_readi(pcmHandle, buffer.refTo(0), frameCount.toULong())
+        if (read < 0) {
+            val err = snd_pcm_recover(pcmHandle, read.toInt(), 1)
+            if (err < 0) {
+                println("[ERROR] ALSA read recover failed: ${snd_strerror(err)?.toKString()}")
+                return null
+            }
+            return null
+        }
+        if (read == 0L) return null
+        return buffer.copyOf(read.toInt() * channels)
+    }
+
+    /**
+     * 调用Whisper进行音频识别
+     *
+     * @param audioData FloatArray 音频数据
+     * @return String? 识别文本
+     */
+    private fun recognizeAudio(audioData: FloatArray): String? {
+        if (whisperContext == null) return null
+        // 伪代码：实际应调用whisper_full等API进行识别
+        // 这里只做接口占位，需根据Whisper C API实际实现
+        // whisper_full(whisperContext, params, audioData, audioData.size)
+        // val nSegments = whisper_full_n_segments(whisperContext)
+        // val text = StringBuilder()
+        // for (i in 0 until nSegments) {
+        //     text.append(whisper_full_get_segment_text(whisperContext, i))
+        // }
+        // return text.toString()
+        return null // TODO: 实现Whisper识别逻辑
     }
 
     /**
