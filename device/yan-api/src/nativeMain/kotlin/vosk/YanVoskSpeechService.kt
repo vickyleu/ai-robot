@@ -1,7 +1,7 @@
 @file:OptIn(ExperimentalForeignApi::class, ExperimentalStdlibApi::class, NativeRuntimeApi::class)
 @file:Suppress("FunctionName", "unused", "UNUSED_PARAMETER")
 
-package com.airobot.device.yanapi.vosk
+package vosk
 
 import kotlinx.cinterop.ByteVar
 import kotlinx.cinterop.CPointer
@@ -263,7 +263,7 @@ class YanVoskSpeechService {
             }
             recognitionStarted = true
             // 使用withTimeout避免长时间阻塞
-            withTimeout(timeout+500) { // 增加500ms以确保有足够时间捕获音频,因为循环刚好是timeout的总时间,加上GC的执行时间, 最后一个循环会导致超时
+            withTimeout(timeout + 500) { // 增加500ms以确保有足够时间捕获音频,因为循环刚好是timeout的总时间,加上GC的执行时间, 最后一个循环会导致超时
                 // 短暂等待以收集音频数据，分段收集避免内存压力
                 repeat(5) {
                     kotlinx.coroutines.delay(timeout / 5)

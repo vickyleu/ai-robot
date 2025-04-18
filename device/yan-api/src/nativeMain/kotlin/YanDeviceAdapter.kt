@@ -3,6 +3,7 @@ package com.airobot.device.yanapi
 import com.airobot.core.command.Action
 import com.airobot.core.command.ActionRegistry
 import com.airobot.core.command.DeviceAdapter
+import kotlinx.coroutines.delay
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.boolean
@@ -124,10 +125,10 @@ class YanDeviceAdapter(private val device: YanDevice, override val deviceName: S
                 repeat(times) {
                     // 向下点头
                     device.moveJoint(Servo.ServoName.颈部水平, 135)
-                    kotlinx.coroutines.delay(speed.toLong())
+                    delay(speed.toLong())
                     // 回到中间
                     device.moveJoint(Servo.ServoName.颈部水平, 90)
-                    kotlinx.coroutines.delay(speed.toLong())
+                    delay(speed.toLong())
                 }
             }
         })
@@ -148,10 +149,10 @@ class YanDeviceAdapter(private val device: YanDevice, override val deviceName: S
                 repeat(times) {
                     // 向左摇头
                     device.moveJoint(Servo.ServoName.颈部水平, leftAngle)
-                    kotlinx.coroutines.delay(speed.toLong())
+                    delay(speed.toLong())
                     // 向右摇头
                     device.moveJoint(Servo.ServoName.颈部水平, rightAngle)
-                    kotlinx.coroutines.delay(speed.toLong())
+                    delay(speed.toLong())
                 }
                 
                 // 回到中间位置
@@ -247,7 +248,7 @@ class YanDeviceAdapter(private val device: YanDevice, override val deviceName: S
                 )
                 
                 // 保持鞠躬姿势
-                kotlinx.coroutines.delay(duration.toLong())
+                delay(duration.toLong())
                 
                 // 恢复直立姿势
                 device.moveJoints(
@@ -275,9 +276,9 @@ class YanDeviceAdapter(private val device: YanDevice, override val deviceName: S
                     // 挥动手臂
                     repeat(times) {
                         device.moveJoint(Servo.ServoName.右肩水平, 120)
-                        kotlinx.coroutines.delay(speed.toLong())
+                        delay(speed.toLong())
                         device.moveJoint(Servo.ServoName.右肩水平, 150)
-                        kotlinx.coroutines.delay(speed.toLong())
+                        delay(speed.toLong())
                     }
                     
                     // 恢复初始位置
@@ -297,9 +298,9 @@ class YanDeviceAdapter(private val device: YanDevice, override val deviceName: S
                     // 挥动手臂
                     repeat(times) {
                         device.moveJoint(Servo.ServoName.左肩水平, 60)
-                        kotlinx.coroutines.delay(speed.toLong())
+                        delay(speed.toLong())
                         device.moveJoint(Servo.ServoName.左肩水平, 30)
-                        kotlinx.coroutines.delay(speed.toLong())
+                        delay(speed.toLong())
                     }
                     
                     // 恢复初始位置

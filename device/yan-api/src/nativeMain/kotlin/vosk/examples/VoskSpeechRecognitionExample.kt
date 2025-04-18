@@ -1,9 +1,8 @@
 @file:OptIn(ExperimentalForeignApi::class)
 
-package com.airobot.device.yanapi.vosk.examples
+package vosk.examples
 
 import com.airobot.core.utils.thread.globalScope
-import com.airobot.device.yanapi.vosk.YanVoskSpeechService
 import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -13,6 +12,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import platform.posix.exit
 import platform.posix.printf
+import vosk.YanVoskSpeechService
 
 /**
  * Vosk语音识别示例程序

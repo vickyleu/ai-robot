@@ -1,7 +1,7 @@
 @file:OptIn(ExperimentalForeignApi::class, ExperimentalStdlibApi::class, ExperimentalTime::class)
 @file:Suppress("FunctionName", "unused", "UNUSED_PARAMETER")
 
-package com.airobot.device.yanapi.vosk
+package vosk
 
 import com.airobot.alsainterop.EAGAIN
 import com.airobot.alsainterop.EBADFD
@@ -73,7 +73,6 @@ import com.airobot.alsainterop.snd_pcm_state
 import com.airobot.alsainterop.snd_pcm_status
 import com.airobot.alsainterop.snd_pcm_status_get_avail
 import com.airobot.alsainterop.snd_pcm_status_malloc
-import com.airobot.alsainterop.snd_pcm_status_t
 import com.airobot.alsainterop.snd_pcm_sw_params
 import com.airobot.alsainterop.snd_pcm_sw_params_current
 import com.airobot.alsainterop.snd_pcm_sw_params_free
@@ -82,13 +81,10 @@ import com.airobot.alsainterop.snd_pcm_sw_params_set_avail_min
 import com.airobot.alsainterop.snd_pcm_sw_params_set_start_threshold
 import com.airobot.alsainterop.snd_pcm_sw_params_t
 import com.airobot.alsainterop.snd_strerror
-import com.airobot.device.yanapi.vosk.YanVoskSpeechService.Companion.executeCommand
 import com.airobot.voskinterop.VoskModel
 import com.airobot.voskinterop.VoskRecognizer
 import com.airobot.voskinterop.vosk_model_free
 import com.airobot.voskinterop.vosk_model_new
-import com.airobot.voskinterop.vosk_recognizer_accept_waveform
-import com.airobot.voskinterop.vosk_recognizer_accept_waveform_f
 import com.airobot.voskinterop.vosk_recognizer_accept_waveform_s
 import com.airobot.voskinterop.vosk_recognizer_free
 import com.airobot.voskinterop.vosk_recognizer_new
@@ -98,8 +94,6 @@ import com.airobot.voskinterop.vosk_recognizer_result
 import com.airobot.voskinterop.vosk_recognizer_set_max_alternatives
 import com.airobot.voskinterop.vosk_recognizer_set_words
 import kotlinx.cinterop.CPointer
-import kotlinx.cinterop.CPointerVar
-import kotlinx.cinterop.CPointerVarOf
 import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.cinterop.IntVar
 import kotlinx.cinterop.ShortVar
@@ -112,7 +106,6 @@ import kotlinx.cinterop.convert
 import kotlinx.cinterop.get
 import kotlinx.cinterop.memScoped
 import kotlinx.cinterop.nativeHeap
-import kotlinx.cinterop.pointed
 import kotlinx.cinterop.ptr
 import kotlinx.cinterop.set
 import kotlinx.cinterop.toKString
@@ -307,11 +300,17 @@ class YanVoskSpeechRecognizer {
                 } else {
                     return true
                 }
-            }else if (status == SND_PCM_STATE_XRUN) {
+            } else if (status == SND_PCM_STATE_XRUN) {
                 // xcrun 状态，尝试恢复
                 println("[WARNING] ALSA设备状态异常 (${getPcmStateName(status)})，尝试恢复")
                 val recoverResult = snd_pcm_recover(pcmHandle, -EPIPE, 1)
-                println("[ALSA-RECOVERY] 执行错误恢复操作，返回码: $recoverResult (${snd_strerror(recoverResult)?.toKString()})")
+                println(
+                    "[ALSA-RECOVERY] 执行错误恢复操作，返回码: $recoverResult (${
+                        snd_strerror(
+                            recoverResult
+                        )?.toKString()
+                    })"
+                )
                 if (recoverResult < 0) {
                     println("[ERROR] ALSA设备恢复失败: ${snd_strerror(recoverResult)?.toKString()}")
                     snd_pcm_close(pcmHandle)
@@ -515,7 +514,11 @@ class YanVoskSpeechRecognizer {
                 // 合并参数设置流程
                 arrayOf(
                     // 设置 avail_min 为一个周期的大小，确保至少有一个周期的数据可用时才唤醒
-                    snd_pcm_sw_params_set_avail_min(pcmHandle, swParams, this@YanVoskSpeechRecognizer.periodSize.convert()),
+                    snd_pcm_sw_params_set_avail_min(
+                        pcmHandle,
+                        swParams,
+                        this@YanVoskSpeechRecognizer.periodSize.convert()
+                    ),
                     // 设置 start_threshold 为 1，尽快开始传输
                     // 或者设置为 periodSize / 2 来平衡延迟和稳定性
                     snd_pcm_sw_params_set_start_threshold(pcmHandle, swParams, 1U) // 尝试设置为1以降低延迟
@@ -652,9 +655,9 @@ class YanVoskSpeechRecognizer {
         if (!initAlsa() || !initVoskRecognizer()) {
             return false
         }
-        if(pcmHandle!=null){
+        if (pcmHandle != null) {
             val start = snd_pcm_start(pcmHandle)
-            if(start<0){
+            if (start < 0) {
                 println("[ERROR] 启动PCM失败: ${snd_strerror(start)?.toKString()}")
                 val currentState = snd_pcm_state(pcmHandle)
                 println("[STATE] 当前PCM状态: ${getPcmStateName(currentState)}")
@@ -663,7 +666,7 @@ class YanVoskSpeechRecognizer {
                 _recognitionState.value = RecognitionState.ERROR
                 stopRecognition(true) // 停止识别以避免进一步错误
                 return false
-            }else{
+            } else {
                 println("[INFO] PCM启动成功")
                 val currentState = snd_pcm_state(pcmHandle)
                 println("[STATE] 当前PCM状态: ${getPcmStateName(currentState)}")
@@ -703,7 +706,8 @@ class YanVoskSpeechRecognizer {
     private suspend fun captureAndRecognize() {
         memScoped {
             val buffer = allocArray<ShortVar>(length = (periodSize.toInt()) * (channels.toInt()))
-            val processedBuffer = allocArray<ShortVar>(length = (periodSize.toInt()) * (channels.toInt()))
+            val processedBuffer =
+                allocArray<ShortVar>(length = (periodSize.toInt()) * (channels.toInt()))
 
             // 音频处理参数
             val safeAmplificationFactor = 1.5f // 安全的音频信号放大倍数
@@ -745,14 +749,14 @@ class YanVoskSpeechRecognizer {
                         println("[DEBUG] 识别已停止，跳过读取")
                         break
                     }
-                    if(pcmHandle==null)continue
+                    if (pcmHandle == null) continue
 
                     // 获取可用的音频帧数
                     val availFrames = snd_pcm_avail_update(pcmHandle)
                     if (availFrames > 0) {
                         val statusPtr = nativeHeap.allocPointerTo<_snd_pcm_status>()
                         val mallocErr = snd_pcm_status_malloc(statusPtr.ptr)
-                        if(mallocErr < 0 || statusPtr.value == null){
+                        if (mallocErr < 0 || statusPtr.value == null) {
                             println("[ERROR] snd_pcm_status_malloc失败: ${snd_strerror(mallocErr)?.toKString()}")
                             delay(100)
                             continue
@@ -765,12 +769,12 @@ class YanVoskSpeechRecognizer {
                             continue
                         }
                         val accurateAvail = snd_pcm_status_get_avail(statusPtr.value)
-                        if(accurateAvail.toInt()<=0){
+                        if (accurateAvail.toInt() <= 0) {
 //                            println("[WARNING] 虽然有可用帧,可用音频帧数为负值，可能发生错误")
                             delay(100)
                             continue
                         }
-                    }else{
+                    } else {
 //                        println("[WARNING] 可用音频帧数为负值，可能发生错误")
                         delay(100)
                         continue
@@ -780,7 +784,8 @@ class YanVoskSpeechRecognizer {
                         // 如果可用帧数小于期望读取的帧数，等待一小段时间
                         // 这有助于避免在缓冲区未完全填满时读取，减少XRUN的可能性
                         // 等待时间可以根据采样率和周期大小调整，例如一个周期的持续时间
-                        val waitTime = (periodSize * 1000 / sampleRate).toLong().coerceIn(10, 50) // 计算周期时间(ms)，限制在10-50ms
+                        val waitTime = (periodSize * 1000 / sampleRate).toLong()
+                            .coerceIn(10, 50) // 计算周期时间(ms)，限制在10-50ms
                         delay(waitTime)
                         continue
                     }
@@ -793,9 +798,16 @@ class YanVoskSpeechRecognizer {
                     if (frames < 0) {
                         val err = frames.toInt()
                         val (errName, errDesc) = getAlsaErrorDescription(err)
-                        println("[ALSA-READ-ERROR] snd_pcm_readi 失败 | 代码: $err ($errName) | 描述: $errDesc | 当前状态: ${getPcmStateName(snd_pcm_state(pcmHandle))}")
+                        println(
+                            "[ALSA-READ-ERROR] snd_pcm_readi 失败 | 代码: $err ($errName) | 描述: $errDesc | 当前状态: ${
+                                getPcmStateName(
+                                    snd_pcm_state(pcmHandle)
+                                )
+                            }"
+                        )
                         handlePcmError(err) // 尝试恢复
-                        val delayMillis = if (err == -EPIPE) brokenPipeRetryDelay else errorRecoveryDelay
+                        val delayMillis =
+                            if (err == -EPIPE) brokenPipeRetryDelay else errorRecoveryDelay
                         delay(delayMillis)
                         errorCount++
                         lastErrorTime = Clock.System.now().toEpochMilliseconds()
@@ -844,8 +856,10 @@ class YanVoskSpeechRecognizer {
                         var processedValue = originalAmplitude
                         if (amplitude > noiseThreshold) {
                             val smoothFactor = 0.8f
-                            val amplifiedValue = originalAmplitude.toFloat() * safeAmplificationFactor
-                            processedValue = (amplifiedValue * smoothFactor + originalAmplitude * (1 - smoothFactor)).toInt()
+                            val amplifiedValue =
+                                originalAmplitude.toFloat() * safeAmplificationFactor
+                            processedValue =
+                                (amplifiedValue * smoothFactor + originalAmplitude * (1 - smoothFactor)).toInt()
                         } else {
                             processedValue = (originalAmplitude.toFloat() * 0.2f).toInt()
                         }
@@ -866,9 +880,11 @@ class YanVoskSpeechRecognizer {
                         println("[WARNING] 检测到无效音频输入（可能静音或麦克风故障）")
                     }
                     if (maxAmplitude > maxValidAmplitude || avgAmplitude > maxValidAmplitude / 2) {
-                        println("[WARNING] 检测到异常音频幅度，跳过此帧 maxAmplitude:$maxAmplitude " +
-                                "maxValidAmplitude:$maxValidAmplitude " +
-                                "avgAmplitude:$avgAmplitude")
+                        println(
+                            "[WARNING] 检测到异常音频幅度，跳过此帧 maxAmplitude:$maxAmplitude " +
+                                    "maxValidAmplitude:$maxValidAmplitude " +
+                                    "avgAmplitude:$avgAmplitude"
+                        )
                         continue
                     }
 
@@ -922,7 +938,8 @@ class YanVoskSpeechRecognizer {
                             when (result) {
                                 0 -> {
                                     try {
-                                        val partialJson = vosk_recognizer_partial_result(voskRecognizer)?.toKString()
+                                        val partialJson =
+                                            vosk_recognizer_partial_result(voskRecognizer)?.toKString()
                                         if (!partialJson.isNullOrEmpty()) {
                                             processPartialResult(partialJson)
                                         }
@@ -930,9 +947,11 @@ class YanVoskSpeechRecognizer {
                                         println("[WARNING] 获取部分结果时出错: ${e.message}")
                                     }
                                 }
+
                                 1 -> {
                                     try {
-                                        val finalJson = vosk_recognizer_result(voskRecognizer)?.toKString()
+                                        val finalJson =
+                                            vosk_recognizer_result(voskRecognizer)?.toKString()
                                         if (!finalJson.isNullOrEmpty()) {
                                             processFinalResult(finalJson)
                                         }
@@ -953,6 +972,7 @@ class YanVoskSpeechRecognizer {
             }
         }
     }
+
     /**
      * 处理最终识别结果
      *
@@ -1045,6 +1065,7 @@ class YanVoskSpeechRecognizer {
             return true
         }
     }
+
     /**
      * 处理PCM错误，尝试恢复设备
      *
@@ -1057,7 +1078,8 @@ class YanVoskSpeechRecognizer {
         val recoverResult = snd_pcm_recover(
             pcm = pcmHandle,
             err = err,
-            silent = 0 /* 0 = enable verbose messages */)
+            silent = 0 /* 0 = enable verbose messages */
+        )
         if (recoverResult == 0) {
             println("[INFO] PCM恢复成功")
             // 特别针对 EPIPE 错误，在恢复后尝试准备 PCM
@@ -1069,7 +1091,7 @@ class YanVoskSpeechRecognizer {
                 } else {
                     println("[RECOVERY] EPIPE 恢复后 PCM 准备成功")
                     val start = snd_pcm_start(pcmHandle)
-                    if(start<0) {
+                    if (start < 0) {
                         println("[ERROR] 启动PCM失败: ${snd_strerror(start)?.toKString()}")
                         val currentState = snd_pcm_state(pcmHandle)
                         println("[STATE] 当前PCM状态: ${getPcmStateName(currentState)}")
@@ -1077,7 +1099,7 @@ class YanVoskSpeechRecognizer {
                         pcmHandle = null
                         _recognitionState.value = RecognitionState.ERROR
                         stopRecognition() // 停止识别以避免进一步错误
-                    }else{
+                    } else {
                         println("[RECOVERY] PCM启动成功")
                         val currentState = snd_pcm_state(pcmHandle)
                         println("[STATE] 当前PCM状态: ${getPcmStateName(currentState)}")
@@ -1091,6 +1113,7 @@ class YanVoskSpeechRecognizer {
             stopRecognition() // 停止识别以避免进一步错误
         }
     }
+
     /**
      * 设置麦克风音量
      *

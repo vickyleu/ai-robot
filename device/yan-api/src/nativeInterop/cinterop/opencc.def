@@ -1,6 +1,6 @@
 language: C++
 # 需要导入stdio.h
 headers:  opencc/hack/opencc_wrapper.h
-
+headerFilter = opencc/hack/opencc_wrapper.h opencc/opencc.h
 # 下面是不透明指针的映射
 ---

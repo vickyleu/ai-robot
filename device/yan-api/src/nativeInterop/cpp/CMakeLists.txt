@@ -18,6 +18,9 @@ set(HACK_THING_INCLUDE
         "${CMAKE_SOURCE_DIR}/include/alsa/hack/"
         "${CMAKE_SOURCE_DIR}/include/vosk/"
         "${CMAKE_SOURCE_DIR}/include/vosk/hack"
+        "${CMAKE_SOURCE_DIR}/include/whisper"
+        "${CMAKE_SOURCE_DIR}/include/opencc"
+        "${CMAKE_SOURCE_DIR}/include/opencc/hack"
 )
 
 option(CMAKE_ASSEMBLE_LIBRARY "开启第三方库合并到二进制" OFF)
