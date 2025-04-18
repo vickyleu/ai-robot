@@ -73,3 +73,46 @@ armv7-unknown-linux-gnueabihf-ar x ../libwhisper.a     # 提取 libwhisper.a
 
 armv7-unknown-linux-gnueabihf-ar rcs libwhisper.a *.o
 armv7-unknown-linux-gnueabihf-ranlib libwhisper.a
+
+# 构建本机量化环境, 不需要交叉编译, 模型通用
+cmake -B build
+cmake --build build --config Release
+# 量化模型
+./build/bin/quantize models/ggml-base.bin models/ggml-base-q4_1.bin q4_1
+# 测试识别
+./build/bin/whisper-cli -m models/ggml-base-q4_1.bin -l zh /Users/vickyleu/Downloads/26.mp3 | opencc -c t2s
+
+# 编译opencc 简繁转换
+git clone https://github.com/BYVoid/OpenCC.git
+cd OpenCC
+mkdir build && cd build
+cmake .. \
+-DCMAKE_SYSTEM_NAME=Linux \
+-DCMAKE_SYSTEM_PROCESSOR=arm \
+-DCMAKE_INSTALL_PREFIX=./build \
+-DCMAKE_SYSROOT=/Volumes/Extra/.konan/dependencies/armv7-unknown-linux-gnueabihf/armv7-unknown-linux-gnueabihf/sysroot \
+-DCMAKE_C_COMPILER=/Volumes/Extra/.konan/dependencies/armv7-unknown-linux-gnueabihf/bin/armv7-unknown-linux-gnueabihf-gcc \
+-DCMAKE_CXX_COMPILER=/Volumes/Extra/.konan/dependencies/armv7-unknown-linux-gnueabihf/bin/armv7-unknown-linux-gnueabihf-g++ \
+-DCMAKE_AR=/Volumes/Extra/.konan/dependencies/armv7-unknown-linux-gnueabihf/bin/armv7-unknown-linux-gnueabihf-ar \
+-DCMAKE_RANLIB=/Volumes/Extra/.konan/dependencies/armv7-unknown-linux-gnueabihf/bin/armv7-unknown-linux-gnueabihf-ranlib \
+-DCMAKE_NM=/Volumes/Extra/.konan/dependencies/armv7-unknown-linux-gnueabihf/bin/armv7-unknown-linux-gnueabihf-nm \
+-DCMAKE_OBJCOPY=/Volumes/Extra/.konan/dependencies/armv7-unknown-linux-gnueabihf/bin/armv7-unknown-linux-gnueabihf-objcopy \
+-DCMAKE_OBJDUMP=/Volumes/Extra/.konan/dependencies/armv7-unknown-linux-gnueabihf/bin/armv7-unknown-linux-gnueabihf-objdump \
+-DCMAKE_STRIP=/Volumes/Extra/.konan/dependencies/armv7-unknown-linux-gnueabihf/bin/armv7-unknown-linux-gnueabihf-strip \
+-DCMAKE_C_FLAGS="-march=armv7-a -mfpu=neon -mfp16-format=ieee -mfloat-abi=hard -fPIC -I/Volumes/Extra/.konan/dependencies/armv7-unknown-linux-gnueabihf/armv7-unknown-linux-gnueabihf/sysroot/usr/include" \
+-DCMAKE_CXX_FLAGS="-march=armv7-a -mfpu=neon -mfp16-format=ieee -mfloat-abi=hard -fPIC -std=c++17 -I/Volumes/Extra/.konan/dependencies/armv7-unknown-linux-gnueabihf/armv7-unknown-linux-gnueabihf/sysroot/usr/include -I/Volumes/Extra/.konan/dependencies/armv7-unknown-linux-gnueabihf/include/c++/13.3.0 -I/Volumes/Extra/.konan/dependencies/armv7-unknown-linux-gnueabihf/include/c++/13.3.0/armv7-unknown-linux-gnueabihf -I/Volumes/Extra/Github/ktor/library/zlib-1.3.1/build/include -I/Volumes/Extra/Github/ktor/library/icu-release-77-1/build/include -O3" \
+-DCMAKE_EXE_LINKER_FLAGS="--sysroot=/Volumes/Extra/.konan/dependencies/armv7-unknown-linux-gnueabihf/armv7-unknown-linux-gnueabihf/sysroot -L/Volumes/Extra/.konan/dependencies/armv7-unknown-linux-gnueabihf/armv7-unknown-linux-gnueabihf/sysroot/usr/lib -L/Volumes/Extra/.konan/dependencies/armv7-unknown-linux-gnueabihf/lib -L/Volumes/Extra/.konan/dependencies/armv7-unknown-linux-gnueabihf/include/c++/13.3.0/armv7-unknown-linux-gnueabihf -L/Volumes/Extra/Github/ktor/library/zlib-1.3.1/build/lib -L/Volumes/Extra/Github/ktor/library/icu-release-77-1/build/lib -static-libstdc++" \
+-DCMAKE_SHARED_LINKER_FLAGS="--sysroot=/Volumes/Extra/.konan/dependencies/armv7-unknown-linux-gnueabihf/armv7-unknown-linux-gnueabihf/sysroot -L/Volumes/Extra/.konan/dependencies/armv7-unknown-linux-gnueabihf/armv7-unknown-linux-gnueabihf/sysroot/usr/lib -L/Volumes/Extra/.konan/dependencies/armv7-unknown-linux-gnueabihf/lib -L/Volumes/Extra/.konan/dependencies/armv7-unknown-linux-gnueabihf/include/c++/13.3.0/armv7-unknown-linux-gnueabihf -L/Volumes/Extra/Github/ktor/library/zlib-1.3.1/build/lib -L/Volumes/Extra/Github/ktor/library/icu-release-77-1/build/lib -static-libstdc++" \
+-DCMAKE_MODULE_LINKER_FLAGS="--sysroot=/Volumes/Extra/.konan/dependencies/armv7-unknown-linux-gnueabihf/armv7-unknown-linux-gnueabihf/sysroot -L/Volumes/Extra/.konan/dependencies/armv7-unknown-linux-gnueabihf/armv7-unknown-linux-gnueabihf/sysroot/usr/lib -L/Volumes/Extra/.konan/dependencies/armv7-unknown-linux-gnueabihf/lib -L/Volumes/Extra/.konan/dependencies/armv7-unknown-linux-gnueabihf/include/c++/13.3.0/armv7-unknown-linux-gnueabihf -L/Volumes/Extra/Github/ktor/library/zlib-1.3.1/build/lib -L/Volumes/Extra/Github/ktor/library/icu-release-77-1/build/lib -static-libstdc++" \
+-DCMAKE_FIND_ROOT_PATH="/Volumes/Extra/.konan/dependencies/armv7-unknown-linux-gnueabihf/armv7-unknown-linux-gnueabihf/sysroot;/Volumes/Extra/.konan/dependencies/armv7-unknown-linux-gnueabihf;/Volumes/Extra/Github/ktor/library/zlib-1.3.1/build;/Volumes/Extra/Github/ktor/library/icu-release-77-1/build;/Users/vickyleu/Downloads/kaldi_root/kaldi/tools/OpenBLAS/install" \
+-DCMAKE_FIND_ROOT_PATH_MODE_PROGRAM=NEVER \
+-DCMAKE_FIND_ROOT_PATH_MODE_LIBRARY=ONLY \
+-DCMAKE_FIND_ROOT_PATH_MODE_INCLUDE=ONLY \
+-DCMAKE_FIND_ROOT_PATH_MODE_PACKAGE=ONLY \
+-DBUILD_SHARED_LIBS=OFF \
+-DBUILD_DOCUMENTATION=ON \
+-DCMAKE_OSX_ARCHITECTURES="" \
+-DCMAKE_OSX_SYSROOT="" \
+-DCMAKE_OSX_DEPLOYMENT_TARGET=""
+
+make

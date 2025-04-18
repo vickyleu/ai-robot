@@ -96,6 +96,7 @@ kotlin {
                     "-lvosk",
                     "-lgomp",
                     "-lwhisper",
+                    "-lopencc",
                     "-latomic",
                     "-Wl,--no-whole-archive",
                     // 强制链接静态库 END
@@ -103,6 +104,7 @@ kotlin {
                     "-l:libyanapi.a",
                     "-l:libvosk.a",
                     "-l:libwhisper.a",
+                    "-l:libopencc.a",
                     "-lasound",
                     "-lpython3.5m",
                     "-lcrypto",
@@ -148,6 +150,21 @@ kotlin {
                 create("alsa") {
                     defFile("src/nativeInterop/cinterop/alsa.def")
                     packageName("com.airobot.alsainterop")
+                    // 从上面四个目录中查找所有的头文件,添加到headers.files
+                    includeDirs(
+                        file("src/nativeInterop/cpp/include/"),
+                    )
+                    compilerOpts(
+                        "-fPIC",
+                        "-nostdinc++",
+                        "-std=c++17",
+                        "-D_GLIBCXX_USE_CXX11_ABI=1",
+                        *armhfToolchain.includedDirs.map { "-I$it" }.toTypedArray()
+                    )
+                }
+                create("opencc") {
+                    defFile("src/nativeInterop/cinterop/opencc.def")
+                    packageName("com.airobot.openccinterop")
                     // 从上面四个目录中查找所有的头文件,添加到headers.files
                     includeDirs(
                         file("src/nativeInterop/cpp/include/"),
