@@ -1,4 +1,4 @@
-import com.airobot.device.yanapi.vosk.examples.vosk
+import vosk.examples.vosk
 
 fun main() {
 //    val launcher = YanLauncher()

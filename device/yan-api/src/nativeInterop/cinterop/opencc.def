@@ -1,5 +1,4 @@
 language: C++
-# 需要导入stdio.h
 headers:  opencc_wrapper.h opencc/opencc.h  opencc_c_api.h
 headerFilter = opencc_wrapper.h opencc_c_api.h
 # 下面是不透明指针的映射

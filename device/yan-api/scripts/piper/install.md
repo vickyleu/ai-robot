@@ -1,29 +1,32 @@
-export CC=armv7-unknown-linux-gnueabihf-gcc
-export CXX=armv7-unknown-linux-gnueabihf-g++
-export AR=armv7-unknown-linux-gnueabihf-ar
-export AS=armv7-unknown-linux-gnueabihf-as
-export LD=armv7-unknown-linux-gnueabihf-ld
-export RANLIB=armv7-unknown-linux-gnueabihf-ranlib
-export STRIP=armv7-unknown-linux-gnueabihf-strip
-export NM=armv7-unknown-linux-gnueabihf-nm
-export OBJCOPY=armv7-unknown-linux-gnueabihf-objcopy
-export OBJDUMP=armv7-unknown-linux-gnueabihf-objdump
-export READELF=armv7-unknown-linux-gnueabihf-readelf
-export SYSROOT=/Volumes/Extra/.konan/dependencies/armv7-unknown-linux-gnueabihf/armv7-unknown-linux-gnueabihf/sysroot
-export PATH=$PATH:/Volumes/Extra/.konan/dependencies/armv7-unknown-linux-gnueabihf/bin
-export CFLAGS="-march=armv7-a -mfpu=neon -mfloat-abi=hard -fPIC -I${SYSROOT}/usr/include"
-export CXXFLAGS="${CFLAGS} -std=c++17 -I${SYSROOT}/../include/c++/13.3.0 -I${SYSROOT}/../include/c++/13.3.0/armv7-unknown-linux-gnueabihf"
-export LDFLAGS="--sysroot=${SYSROOT} -L${SYSROOT}/usr/lib -L${SYSROOT}/../lib -L${SYSROOT}/../include/c++/13.3.0/armv7-unknown-linux-gnueabihf"
-export OLD_LDFLAGS="${LDFLAGS}"
-export LDFLAGS="${LDFLAGS} -static-libstdc++"
-export CXXFLAGS="${CXXFLAGS} -I/Volumes/Extra/Github/ktor/library/zlib-1.3.1/build/include"
-export LDFLAGS="${LDFLAGS} -L/Volumes/Extra/Github/ktor/library/zlib-1.3.1/build/lib"
-export ICU_ROOT=/Volumes/Extra/Github/ktor/library/icu-release-77-1/build
-export CXXFLAGS="${CXXFLAGS} -O3"
-export CMAKE_OSX_ARCHITECTURES=""
-export CMAKE_OSX_SYSROOT=""
+## 构建armv7l的onnxruntime静态库
+git clone https://github.com/vickyleu/onnxruntime-build.git
+cd onnxruntime-build
+export ONNXRUNTIME_VERSION=1.16.3
+export CMAKE_OPTIONS=" -U__STDC_VERSION__ -D__STDC_VERSION__=201112L -DCMAKE_TOOLCHAIN_FILE=$(pwd)/arm-linux-gnueabihf.toolchain.cmake \
+-Donnxruntime_CROSS_COMPILING=ON -Donnxruntime_BUILD_SHARED_LIBS=OFF   -Donnxruntime_BUILD_UNIT_TESTS=OFF  "
 
-cmake .. \
--DCMAKE_TOOLCHAIN_FILE=../fake_linux.cmake \
--DCMAKE_INSTALL_PREFIX=./build \
--DBUILD_SHARED_LIBS=OFF
+sh ./build-static_lib.sh
+# 如果构建失败的话,执行reset可以恢复构建状态,不需要重新下载源码
+git reset --hard HEAD
+# 上传libonnxruntime.a到自己的预编译仓库地址
+
+# piper源码修改下载路径
+
+## 编译piper静态库
+
+
+# 下载piper源码
+git clone https://github.com/vickyleu/piper.git
+cd piper
+mkdir build_pi && cd build_pi
+mkdir build
+# 编译piper
+cmake ..  -DCMAKE_TOOLCHAIN_FILE=$(pwd)/../onnxruntime-build/arm-linux-gnueabihf.toolchain.cmake -DCMAKE_INSTALL_PREFIX=./build -DBUILD_SHARED_LIBS=OFF
+make -j8
+make install
+
+# 合并piper和onnxruntime等静态库, 只保留一个静态库
+
+
+
+

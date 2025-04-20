@@ -85,10 +85,6 @@ set(ZLIB_INCLUDE_DIR "/Volumes/Extra/Github/ktor/library/zlib-1.3.1/build/includ
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} --sysroot=${SYSROOT} -I${SYSROOT_PARENT_DIR}/include/c++/${TOOLCHAIN_VERSION}   \
         -I${SYSROOT_PARENT_DIR}/include/c++/${TOOLCHAIN_VERSION}/${GNU_VAR1}  -fno-use-cxa-atexit")
 
-#/usr/local/Cellar/armv7-unknown-linux-gnueabihf/13.3.0/toolchain/lib/gcc/armv7-unknown-linux-gnueabihf/13.3.0/crtbeginS.o
-#/usr/local/Cellar/armv7-unknown-linux-gnueabihf/13.3.0/toolchain/lib/gcc/armv7-unknown-linux-gnueabihf/13.3.0/libgcc.a
-
-
 
 # 配置链接器搜索路径
 # 获取 TOOLCHAIN_PATH 的上级目录

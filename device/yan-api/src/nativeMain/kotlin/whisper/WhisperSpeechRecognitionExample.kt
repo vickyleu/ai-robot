@@ -86,21 +86,7 @@ fun whisper(): Unit = runBlocking {
     printf("\n切换到单次识别模式，请对着麦克风说话...\n")
     // printf("当前麦克风音量: %d%%\n", speechService.getMicrophoneVolume()) // Whisper音量控制不同
 
-    // 执行5次单次识别
-    repeat(5) { i ->
-        printf("第%d次识别 (最多等待5秒)...
-", i + 1)
-        val result = speechService.recognizeOnce(5000)
 
-        if (result != null) {
-            printf("识别结果: %s\n", result)
-        } else {
-            printf("未能识别语音或超时\n")
-        }
-
-        // 短暂暂停
-        kotlinx.coroutines.delay(1000)
-    }
 
     // 释放资源
     speechService.release()

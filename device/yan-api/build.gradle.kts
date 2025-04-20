@@ -82,7 +82,6 @@ kotlin {
             executable {
                 entryPoint = "main"
                 baseName = "yanshee"
-
                 linkerOpts(
                     "-lstdc++",
                     "-lm",       // 数学库
@@ -96,6 +95,7 @@ kotlin {
                     "-lvosk",
                     "-lgomp",
                     "-lwhisper",
+                    "-lpiper",
                     "-lopencc",
                     "-latomic",
                     "-Wl,--no-whole-archive",
@@ -105,15 +105,23 @@ kotlin {
                     "-l:libvosk.a",
                     "-l:libwhisper.a",
                     "-l:libopencc.a",
+                    "-l:libpiper.a",
                     "-lasound",
                     "-lpython3.5m",
                     "-lcrypto",
+//                    "--pthread",
                     "-lssl",
                     "-lcurl",
                     "-lexpat",
                     "-lm",
                     "-lz",
-                    "-Wl,-rpath,/usr/local/lib",
+                    "-Wl,-rpath,/usr/local/lib/$baseName",
+                    // 补丁,替换C23符号
+//                    "-Wl,--wrap=__isoc23_strtol",
+//                    "-Wl,--wrap=__isoc23_strtoll",
+//                    "-Wl,--wrap=__isoc23_strtoull_l",
+//                    "-Wl,--wrap=__isoc23_strtoll_l",
+//                    "-Wl,-T,${file("src/nativeInterop/patch/wrap_symbols.ld").absolutePath}",
                 )
             }
         }
@@ -174,6 +182,26 @@ kotlin {
                         "-fPIC",
                         "-nostdinc++",
                         "-std=c++17",
+                        "-D_GLIBCXX_USE_CXX11_ABI=1",
+                        *armhfToolchain.includedDirs.map { "-I$it" }.toTypedArray()
+                    )
+                }
+                create("piper") {
+                    defFile("src/nativeInterop/cinterop/piper.def")
+                    packageName("com.airobot.piperinterop")
+                    // 从上面四个目录中查找所有的头文件,添加到headers.files
+                    includeDirs(
+                        file("src/nativeInterop/cpp/include/piper"),
+                        file("src/nativeInterop/cpp/include/piper/onnxruntime"),
+                        file("src/nativeInterop/cpp/include/piper/hack"),
+                    )
+                    compilerOpts(
+                        "-fPIC",
+                        "-nostdinc++",
+                        "-std=c++17",
+//                        "-lpthread",
+                        "-pthread",
+                        "-D__STDC_LIMIT_MACROS",
                         "-D_GLIBCXX_USE_CXX11_ABI=1",
                         *armhfToolchain.includedDirs.map { "-I$it" }.toTypedArray()
                     )
@@ -387,6 +415,8 @@ val jumpModelInstall =
 @Suppress("UNUSED")
 val distDeb: TaskProvider<com.netflix.gradle.plugins.deb.Deb> =
     tasks.register<com.netflix.gradle.plugins.deb.Deb>("distDeb") {
+        group=".树莓派"
+        description="树莓派可执行安装包"
         dependsOn("linkReleaseExecutableLinuxArm32Hfp") // 构建Linux ARM32 HFP二进制文件的任务
         // 基本包信息
         packageName = "yanshee"
@@ -410,7 +440,7 @@ val distDeb: TaskProvider<com.netflix.gradle.plugins.deb.Deb> =
 
         // 复制二进制文件
         from(project.layout.buildDirectory.get().asFile.resolve("bin/linuxArm32Hfp/releaseExecutable/${packageName}")) {
-            into("/usr/local/bin")
+            into("/usr/local/bin/yanshee/")
             @Suppress("DEPRECATION")
             this.fileMode = 0x755
         }
@@ -446,13 +476,15 @@ val distDeb: TaskProvider<com.netflix.gradle.plugins.deb.Deb> =
         }
 
         // 创建符号链接（可选）
-        link("/usr/bin/${packageName}", "/usr/local/bin/${packageName}")
+        link("/usr/bin/${packageName}", "/usr/local/bin/yanshee/${packageName}")
     }
 
 // 添加数据包构建任务
 @Suppress("UNUSED")
 val distDataDeb: TaskProvider<com.netflix.gradle.plugins.deb.Deb>? = if(jumpModelInstall) null else
     tasks.register<com.netflix.gradle.plugins.deb.Deb>("distDataDeb") {
+        group=".树莓派"
+        description="树莓派数据包"
         packageName = "yanshee-data"
         version = "1.0.0"
         summary = "Model and library files for ${project.name}"
@@ -466,18 +498,23 @@ val distDataDeb: TaskProvider<com.netflix.gradle.plugins.deb.Deb>? = if(jumpMode
         postInstallFile(file("src/linuxMain/resources/data-postinst.sh"))
 
         // 添加配置保留文件标记
-        configurationFile("/usr/local/lib")
-        configurationFile("/usr/local/share/yanshee-model")
+        configurationFile("/usr/local/lib/yanshee/")
+        configurationFile("/usr/local/share/yanshee-model/")
 
         // 复制模型和动态库
         from("src/linuxMain/resources/linuxArm32Hfp") {
-            into("/usr/local/lib")
+            into("/usr/local/lib/yanshee/")
+            @Suppress("DEPRECATION")
+            this.fileMode = 0x755
+        }
+        from("src/nativeInterop/cpp/libs/piper/") {
+            into("/usr/local/lib/yanshee/")
             @Suppress("DEPRECATION")
             this.fileMode = 0x755
         }
 
-        from("src/linuxMain/resources/model") {
-            into("/usr/local/share/yanshee-model")
+        from("src/linuxMain/resources/model/") {
+            into("/usr/local/share/yanshee-model/")
             @Suppress("DEPRECATION")
             this.fileMode = 0x755
         }
@@ -485,6 +522,9 @@ val distDataDeb: TaskProvider<com.netflix.gradle.plugins.deb.Deb>? = if(jumpMode
 
 @Suppress("UNUSED")
 val installDeb: TaskProvider<Task> = tasks.register<Task>("installDeb") {
+    group=".树莓派"
+    description="树莓派自动安装"
+
     val debTask = distDeb.get()
     val packageName = debTask.packageName
     val dataDebTask = distDataDeb?.get()

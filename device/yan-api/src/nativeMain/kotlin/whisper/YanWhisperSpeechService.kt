@@ -46,6 +46,7 @@ import com.airobot.alsainterop.snd_pcm_hw_params_set_rate_near
 import com.airobot.alsainterop.snd_pcm_hw_params_t
 import com.airobot.alsainterop.snd_pcm_open
 import com.airobot.alsainterop.snd_pcm_prepare
+import com.airobot.alsainterop.snd_pcm_readi
 import com.airobot.alsainterop.snd_pcm_recover
 import com.airobot.alsainterop.snd_pcm_state
 import com.airobot.alsainterop.snd_pcm_sw_params
@@ -72,6 +73,7 @@ import kotlinx.cinterop.convert
 import kotlinx.cinterop.memScoped
 import kotlinx.cinterop.ptr
 import kotlinx.cinterop.readValue
+import kotlinx.cinterop.refTo
 import kotlinx.cinterop.toKString
 import kotlinx.cinterop.value
 import kotlinx.coroutines.CoroutineScope
@@ -166,7 +168,7 @@ class YanWhisperSpeechService {
             return true
         }
 
-        com.airobot.openccinterop.opencc_open()
+//        com.airobot.openccinterop.opencc_open()
         _recognitionState.value = RecognitionState.INITIALIZING
         println("Initializing Whisper Speech Service...")
 
@@ -454,15 +456,15 @@ class YanWhisperSpeechService {
             println("[ERROR] Whisper service not initialized.")
             return false
         }
-        if (isRunning.get() == 1) {
+        if (isRunning.value == 1) {
             println("[WARN] Whisper recognition already running.")
             return false
         }
-        isRunning.set(1)
+        isRunning.value=1
         _recognitionState.value = RecognitionState.LISTENING
         recognitionJob = serviceScope.launch {
             try {
-                while (isActive && isRunning.get() == 1) {
+                while (isActive && isRunning.value == 1) {
                     _recognitionState.value = RecognitionState.LISTENING
                     val audioData = readAudioFrame() // 采集一帧音频
                     if (audioData != null) {
@@ -489,7 +491,7 @@ class YanWhisperSpeechService {
      * 停止语音识别
      */
     fun stopRecognition() {
-        isRunning.set(0)
+        isRunning.value=0
         recognitionJob?.cancel()
         recognitionJob = null
         _recognitionState.value = RecognitionState.IDLE
@@ -506,11 +508,11 @@ class YanWhisperSpeechService {
     suspend fun recognizeOnce(timeoutMs: Long = 5000): String? {
         if (!isInitialized) return null
         _recognitionText.value = null
-        isRunning.set(1)
+        isRunning.value=1
         _recognitionState.value = RecognitionState.LISTENING
         return try {
             withTimeout(timeoutMs) {
-                while (isActive && isRunning.get() == 1) {
+                while (isActive && isRunning.value == 1) {
                     val audioData = readAudioFrame()
                     if (audioData != null) {
                         _recognitionState.value = RecognitionState.PROCESSING
@@ -531,7 +533,7 @@ class YanWhisperSpeechService {
             stopRecognition()
             null
         } finally {
-            isRunning.set(0)
+            isRunning.value=0
             _recognitionState.value = RecognitionState.IDLE
         }
     }
@@ -545,7 +547,7 @@ class YanWhisperSpeechService {
         if (pcmHandle == null) return null
         val frameCount = periodSize
         val buffer = FloatArray(frameCount * channels)
-        val read = snd_pcm_readi(pcmHandle, buffer.refTo(0), frameCount.toULong())
+        val read = snd_pcm_readi(pcmHandle, buffer.refTo(0), frameCount.toUInt())
         if (read < 0) {
             val err = snd_pcm_recover(pcmHandle, read.toInt(), 1)
             if (err < 0) {
@@ -554,7 +556,7 @@ class YanWhisperSpeechService {
             }
             return null
         }
-        if (read == 0L) return null
+        if (read == 0) return null
         return buffer.copyOf(read.toInt() * channels)
     }
 
