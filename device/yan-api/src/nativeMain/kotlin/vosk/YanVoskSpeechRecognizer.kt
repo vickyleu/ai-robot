@@ -81,6 +81,7 @@ import com.airobot.alsainterop.snd_pcm_sw_params_set_avail_min
 import com.airobot.alsainterop.snd_pcm_sw_params_set_start_threshold
 import com.airobot.alsainterop.snd_pcm_sw_params_t
 import com.airobot.alsainterop.snd_strerror
+import com.airobot.portaudiointerop.PaVersionInfo
 import com.airobot.voskinterop.VoskModel
 import com.airobot.voskinterop.VoskRecognizer
 import com.airobot.voskinterop.vosk_model_free
@@ -174,8 +175,8 @@ class YanVoskSpeechRecognizer {
     private var deviceName = "default"  // ALSA设备名称
     private var sampleRate = 16000      // 采样率 (Hz)
     private var channels = 1           // 通道数 (单声道)
-    private var bufferSize = 8192       // 缓冲区大小 - 调整为更常用的值
-    private var periodSize = 2048       // 周期大小 - 保持不变，但确保与缓冲区大小兼容
+    private var bufferSize = 16384       // 缓冲区大小 - 调整为更常用的值
+    private var periodSize = 4096       // 周期大小 - 保持不变，但确保与缓冲区大小兼容
     private var periods = 4             // 周期数 - 根据新的缓冲区和周期大小计算
     private var micVolume = 100         // 麦克风音量 (0-100)
 
@@ -186,31 +187,6 @@ class YanVoskSpeechRecognizer {
 
     // Vosk模型配置
     private var modelPath = "/usr/local/share/yanshee-model"  // Vosk模型路径
-
-//    // 新增模型路径验证
-//    private fun validateModelPath(): Boolean {
-//        return File(modelPath).run {
-//            when {
-//                !exists() -> {
-//                    println("[MODEL_ERROR] 模型路径不存在: $modelPath")
-//                    false
-//                }
-//                !isDirectory -> {
-//                    println("[MODEL_ERROR] 模型路径不是目录: $modelPath")
-//                    false
-//                }
-//                !canRead() -> {
-//                    println("[MODEL_ERROR] 模型目录不可读，请检查权限: $modelPath")
-//                    false
-//                }
-//                else -> {
-//                    println("[MODEL_DEBUG] 模型路径验证通过，包含文件:\n${listFiles()?.joinToString("\n") { it.name } ?: "空目录"}")
-//                    true
-//                }
-//            }
-//        }
-//    }
-
     // 状态管理
     private val _recognitionState = MutableStateFlow(RecognitionState.IDLE)
     val recognitionState: StateFlow<RecognitionState> = _recognitionState
@@ -331,16 +307,6 @@ class YanVoskSpeechRecognizer {
         println("[DEBUG] 初始化ALSA音频捕获，设备: $deviceName, 采样率: $sampleRate Hz, 缓冲区: $bufferSize, 周期: $periodSize")
         // 新增设备状态检查
         val configCmd = "arecord -D $deviceName --dump-hw-params 2>&1"
-//        println("[HARDWARE] 正在检查音频设备配置:\n${
-//            runCatching {
-//                withContext(Di) {  }
-//            val arecordOutput = executeCommand(configCmd, timeoutMs = 500)
-//            println("[INFO] 系统麦克风设备检查结果:")
-//            println(arecordOutput)
-//            Runtime.getRuntime().exec(arrayOf("sh", "-c", configCmd))
-//            .inputStream.bufferedReader().use { it.readText() }
-//            }
-//                .getOrElse { "执行失败: ${it.message}" }}")
         memScoped {
             // 正确使用方法 https://github.com/UmaRajamani/korge/blob/main/korge-core/src/common/korlibs/audio/sound/backend/ALSA.kt
             val pcmHandlePtr = nativeHeap.allocPointerTo<_snd_pcm>()
@@ -710,8 +676,8 @@ class YanVoskSpeechRecognizer {
                 allocArray<ShortVar>(length = (periodSize.toInt()) * (channels.toInt()))
 
             // 音频处理参数
-            val safeAmplificationFactor = 1.5f // 安全的音频信号放大倍数
-            val noiseThreshold = 30        // 噪声阈值
+            val safeAmplificationFactor = 3.0f // 安全的音频信号放大倍数
+            val noiseThreshold = 20        // 噪声阈值
             var consecutiveSilentFrames = 0  // 连续静音帧计数
             var errorCount = 0              // 错误计数器
             var lastErrorTime = 0L          // 上次错误时间
@@ -735,6 +701,14 @@ class YanVoskSpeechRecognizer {
                     val readSize = periodSize.convert<UInt>()
 
                     val pcmStatusVar = snd_pcm_state(pcmHandle)
+                    if (pcmStatusVar == SND_PCM_STATE_XRUN) {
+                        val err = snd_pcm_prepare(pcmHandle)
+                        if (err >= 0) {
+                            snd_pcm_start(pcmHandle) // 重要：准备后需要重新启动
+                            delay(100) // 给设备一些恢复时间
+                            continue
+                        }
+                    }
                     if (pcmStatusVar != SND_PCM_STATE_RUNNING && pcmStatusVar != SND_PCM_STATE_PREPARED) {
                         println("[PREVENTIVE] 读取前PCM状态异常(${getPcmStateName(pcmStatusVar)})，执行预防性准备")
                         val prepareResult = snd_pcm_prepare(pcmHandle)
@@ -876,7 +850,7 @@ class YanVoskSpeechRecognizer {
 
                     val avgAmplitude = if (sampleCount > 0) sumAmplitude / sampleCount else 0
                     println("[AUDIO-DEBUG] 音频帧振幅范围: 0-$maxAmplitude")
-                    if (maxAmplitude < 100) {
+                    if (maxAmplitude < 50) {
                         println("[WARNING] 检测到无效音频输入（可能静音或麦克风故障）")
                     }
                     if (maxAmplitude > maxValidAmplitude || avgAmplitude > maxValidAmplitude / 2) {
@@ -893,7 +867,7 @@ class YanVoskSpeechRecognizer {
                         // 麦克风状态检测和自动调整
                         if (maxAmplitude < 20) {
                             consecutiveSilentFrames++
-                            if (consecutiveSilentFrames >= 8) {
+                            if (consecutiveSilentFrames >= 4) {
                                 println("[WARNING] 检测到的声音振幅较低 ($maxAmplitude)，可能存在以下问题:")
 //                                println("[WARNING] 1. 麦克风未正确连接或被静音")
 //                                println("[WARNING] 2. 麦克风音量设置过低 (当前: ${micVolume}%)")

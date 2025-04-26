@@ -7,8 +7,3 @@ headerFilter =  whisper.h whisper_wrapper.h whisper_c_api.h
 ---
 struct whisper_context{};
 struct whisper_state{};
-
-// 下面的不确定的
-//     WHISPER_API struct whisper_full_params * whisper_full_default_params_by_ref(enum whisper_sampling_strategy strategy);
-//     WHISPER_API struct whisper_full_params   whisper_full_default_params       (enum whisper_sampling_strategy strategy);
-

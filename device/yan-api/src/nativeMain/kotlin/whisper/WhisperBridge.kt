@@ -13,6 +13,8 @@
 package com.airobot.device.yanapi.whisper
 
 import com.airobot.whisperinterop.my_whisper_full
+import com.airobot.whisperinterop.my_whisper_full_default_params
+import com.airobot.whisperinterop.my_whisper_full_default_params_by_ref
 import com.airobot.whisperinterop.my_whisper_full_parallel
 import com.airobot.whisperinterop.my_whisper_full_with_state
 import com.airobot.whisperinterop.my_whisper_init_from_buffer_with_params
@@ -26,9 +28,13 @@ import com.airobot.whisperinterop.whisper_context
 import com.airobot.whisperinterop.whisper_context_params
 import com.airobot.whisperinterop.whisper_full_params
 import com.airobot.whisperinterop.whisper_model_loader
+import com.airobot.whisperinterop.whisper_sampling_strategy
 import com.airobot.whisperinterop.whisper_state
 import kotlinx.cinterop.ByteVarOf
+import kotlinx.cinterop.CEnumVar
 import kotlinx.cinterop.CPointer
+import kotlinx.cinterop.CPointerVar
+import kotlinx.cinterop.CValue
 import kotlinx.cinterop.CValuesRef
 import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.cinterop.FloatVarOf
@@ -134,6 +140,19 @@ fun whisper_full(
 ): Int {
     return my_whisper_full(ctx, params, samples, n_samples)
 }
+
+fun whisper_full_default_params_by_ref(
+    strategy:CValuesRef<whisper_sampling_strategy.Var>?
+):  CPointer<whisper_full_params>?{
+    return my_whisper_full_default_params_by_ref(strategy)
+}
+fun whisper_full_default_params(
+    strategy:CValuesRef<whisper_sampling_strategy.Var>?
+):  CValue<whisper_full_params>?{
+    return my_whisper_full_default_params(strategy)
+}
+
+
 
 /**
  * @see my_whisper_full_with_state

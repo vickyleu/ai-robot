@@ -35,6 +35,14 @@ static inline  WHISPER_API struct whisper_context * my_whisper_init_with_params_
 static inline  WHISPER_API const char * my_whisper_token_to_str(struct whisper_context * ctx, whisper_token *  token){
     return whisper_token_to_str(ctx, *token);
 }
+
+static inline WHISPER_API struct whisper_full_params * my_whisper_full_default_params_by_ref(enum whisper_sampling_strategy *strategy){
+    return whisper_full_default_params_by_ref(*strategy);
+}
+static inline WHISPER_API struct whisper_full_params  my_whisper_full_default_params(enum whisper_sampling_strategy *strategy){
+    return whisper_full_default_params(*strategy);
+}
+
 static inline  WHISPER_API int my_whisper_full(
         struct whisper_context * ctx,
         struct whisper_full_params   *  params,
@@ -59,6 +67,7 @@ static inline  WHISPER_API int my_whisper_full_parallel(
         int   n_processors){
     return whisper_full_parallel(ctx, *params, samples, n_samples, n_processors);
 }
+//
 
 
 #ifdef __cplusplus

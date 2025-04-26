@@ -11,8 +11,16 @@ case "$1" in
         fi
         
         # 确保文件权限正确
-        chmod 755 /usr/local/share/yanshee-model/*
-        chmod 755 /usr/local/lib/*.so*
+        for f in /usr/local/share/yanshee-model/*; do
+            if [ -f "$f" ]; then
+                chmod 755 "$f"
+            fi
+        done
+        for f in /usr/local/lib/*.so*; do
+            if [ -f "$f" ]; then
+                chmod 755 "$f"
+            fi
+        done
         
         # 更新动态库缓存
         ldconfig

@@ -1,0 +1,6 @@
+language: C++
+headers:  portaudio.h pa_linux_alsa.h
+linkerOpts: -L../cpp/libs/ -lportaudio
+
+# 下面是不透明指针的映射
+---

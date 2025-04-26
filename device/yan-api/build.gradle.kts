@@ -93,6 +93,7 @@ kotlin {
                     "-Wl,--whole-archive",
                     "-lyanapi",
                     "-lvosk",
+                    "-lportaudio",
                     "-lgomp",
                     "-lwhisper",
                     "-lpiper",
@@ -103,6 +104,7 @@ kotlin {
                     // 显式链接顺序
                     "-l:libyanapi.a",
                     "-l:libvosk.a",
+                    "-l:libportaudio.a",
                     "-l:libwhisper.a",
                     "-l:libopencc.a",
                     "-l:libpiper.a",
@@ -161,6 +163,21 @@ kotlin {
                     // 从上面四个目录中查找所有的头文件,添加到headers.files
                     includeDirs(
                         file("src/nativeInterop/cpp/include/"),
+                    )
+                    compilerOpts(
+                        "-fPIC",
+                        "-nostdinc++",
+                        "-std=c++17",
+                        "-D_GLIBCXX_USE_CXX11_ABI=1",
+                        *armhfToolchain.includedDirs.map { "-I$it" }.toTypedArray()
+                    )
+                }
+                create("portaudio") {
+                    defFile("src/nativeInterop/cinterop/portaudio.def")
+                    packageName("com.airobot.portaudiointerop")
+                    // 从上面四个目录中查找所有的头文件,添加到headers.files
+                    includeDirs(
+                        file("src/nativeInterop/cpp/include/portaudio/"),
                     )
                     compilerOpts(
                         "-fPIC",
@@ -417,7 +434,7 @@ val distDeb: TaskProvider<com.netflix.gradle.plugins.deb.Deb> =
     tasks.register<com.netflix.gradle.plugins.deb.Deb>("distDeb") {
         group=".树莓派"
         description="树莓派可执行安装包"
-        dependsOn("linkReleaseExecutableLinuxArm32Hfp") // 构建Linux ARM32 HFP二进制文件的任务
+
         // 基本包信息
         packageName = "yanshee"
         version = "1.0.0"
@@ -430,10 +447,18 @@ val distDeb: TaskProvider<com.netflix.gradle.plugins.deb.Deb> =
 
         // 添加对数据包的依赖
         requires("yanshee-data", "1.0.0", org.redline_rpm.header.Flags.GREATER)
-
+        val dataDebTask = distDataDeb?.get()
+        if (!jumpModelInstall&&dataDebTask!=null) {
+            dataDebTask.dependsOn("linkReleaseExecutableLinuxArm32Hfp")
+            dependsOn(dataDebTask)
+        }else{
+            dependsOn("linkReleaseExecutableLinuxArm32Hfp") // 构建Linux ARM32 HFP二进制文件的任务
+        }
         // 添加配置保留文件，以及前置和后置安装脚本
         preInstallFile(file("src/linuxMain/resources/preinst.sh"))
         postInstallFile(file("src/linuxMain/resources/postinst.sh"))
+        // 修正conffile配置为具体文件而不是目录
+        configurationFile(file("src/linuxMain/resources/config/yanshee.conf").absolutePath)
 
         @Suppress("UNUSED_VARIABLE")
         val fs = project.serviceOf<FileSystemOperations>()
@@ -497,10 +522,6 @@ val distDataDeb: TaskProvider<com.netflix.gradle.plugins.deb.Deb>? = if(jumpMode
         // 添加数据包的后处理脚本
         postInstallFile(file("src/linuxMain/resources/data-postinst.sh"))
 
-        // 添加配置保留文件标记
-        configurationFile("/usr/local/lib/yanshee/")
-        configurationFile("/usr/local/share/yanshee-model/")
-
         // 复制模型和动态库
         from("src/linuxMain/resources/linuxArm32Hfp") {
             into("/usr/local/lib/yanshee/")
@@ -545,9 +566,7 @@ val installDeb: TaskProvider<Task> = tasks.register<Task>("installDeb") {
         properties["ai.install.model.jump"].toString().toBooleanStrictOrNull() == true
 
     dependsOn(debTask)
-    if (!jumpModelInstall&&dataDebTask!=null) {
-        dependsOn(dataDebTask)
-    }
+
 
     doLast {
         if (deb.exists()) {
@@ -561,7 +580,7 @@ val installDeb: TaskProvider<Task> = tasks.register<Task>("installDeb") {
 
             // 然后安装主包（不使用 --purge 命令）
             installCommands.append("sudo dpkg -i /tmp/${deb.name}; ")
-            installCommands.append("gdb /usr/local/bin/$packageName -ex run")
+            installCommands.append("gdb /usr/local/bin/yanshee/$packageName -ex run")
 
             // 使用sshpass传输deb包到树莓派
             // 直接使用exec而不是providers.exec来避免ProcessOutputValueSource错误
@@ -618,7 +637,7 @@ val installDeb: TaskProvider<Task> = tasks.register<Task>("installDeb") {
                 // 配置流式日志输出
                 isIgnoreExitValue = true
 
-                var startProgramIsExecute = false
+                var startProgramIsExecute = true
                 // 实时输出标准输出流，使用UTF-8编码处理中文
                 standardOutput = object : OutputStream() {
 
