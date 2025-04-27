@@ -88,8 +88,8 @@ kotlin {
                     "-L${sharedLibrary}",
                     "-L${libYanPath}",
                     "-L${libThirdpartyPath}",
-                //  "-Wl,--allow-multiple-definition",// 允许符号重复定义
-                    // 强制链接静态库 START
+                  "-Wl,--allow-multiple-definition",// 允许符号重复定义
+//                     强制链接静态库 START
                     "-Wl,--whole-archive",
                     "-lyanapi",
                     "-lvosk",
@@ -111,12 +111,12 @@ kotlin {
                     "-lasound",
                     "-lpython3.5m",
                     "-lcrypto",
-//                    "--pthread",
                     "-lssl",
                     "-lcurl",
                     "-lexpat",
                     "-lm",
                     "-lz",
+                    "-Wl,--gc-sections",
                     "-Wl,-rpath,/usr/local/lib/$baseName",
                     // 补丁,替换C23符号
 //                    "-Wl,--wrap=__isoc23_strtol",
@@ -154,6 +154,8 @@ kotlin {
                         "-nostdinc++",
                         "-std=c++17",
                         "-D_GLIBCXX_USE_CXX11_ABI=1",
+                        "-ffunction-sections",
+                        "-fdata-sections",
                         *armhfToolchain.includedDirs.map { "-I$it" }.toTypedArray()
                     )
                 }
@@ -169,6 +171,8 @@ kotlin {
                         "-nostdinc++",
                         "-std=c++17",
                         "-D_GLIBCXX_USE_CXX11_ABI=1",
+                        "-ffunction-sections",
+                        "-fdata-sections",
                         *armhfToolchain.includedDirs.map { "-I$it" }.toTypedArray()
                     )
                 }
@@ -184,6 +188,8 @@ kotlin {
                         "-nostdinc++",
                         "-std=c++17",
                         "-D_GLIBCXX_USE_CXX11_ABI=1",
+                        "-ffunction-sections",
+                        "-fdata-sections",
                         *armhfToolchain.includedDirs.map { "-I$it" }.toTypedArray()
                     )
                 }
@@ -200,6 +206,8 @@ kotlin {
                         "-nostdinc++",
                         "-std=c++17",
                         "-D_GLIBCXX_USE_CXX11_ABI=1",
+                        "-ffunction-sections",
+                        "-fdata-sections",
                         *armhfToolchain.includedDirs.map { "-I$it" }.toTypedArray()
                     )
                 }
@@ -216,10 +224,11 @@ kotlin {
                         "-fPIC",
                         "-nostdinc++",
                         "-std=c++17",
-//                        "-lpthread",
                         "-pthread",
                         "-D__STDC_LIMIT_MACROS",
                         "-D_GLIBCXX_USE_CXX11_ABI=1",
+                        "-ffunction-sections",
+                        "-fdata-sections",
                         *armhfToolchain.includedDirs.map { "-I$it" }.toTypedArray()
                     )
                 }
@@ -238,6 +247,8 @@ kotlin {
                         "-nostdinc++",
                         "-std=c++17",
                         "-D_GLIBCXX_USE_CXX11_ABI=1",
+                        "-ffunction-sections",
+                        "-fdata-sections",
                         "-L${file("src/nativeInterop/cpp/libs/").absolutePath}",
                         *armhfToolchain.includedDirs.map { "-I$it" }.toTypedArray()
                     )
@@ -255,7 +266,10 @@ kotlin {
                         "-nostdinc++",
                         "-fopenmp",
                         "-std=c++17",
+                        "-pthread",
                         "-D_GLIBCXX_USE_CXX11_ABI=1",
+                        "-ffunction-sections",
+                        "-fdata-sections",
                         "-L${file("src/nativeInterop/cpp/libs/").absolutePath}",
                         *armhfToolchain.includedDirs.map { "-I$it" }.toTypedArray()
                     )

@@ -6,6 +6,7 @@ package whisperPortaudio
 import com.airobot.device.yanapi.whisper.whisper_full
 import com.airobot.device.yanapi.whisper.whisper_full_default_params
 import com.airobot.device.yanapi.whisper.whisper_full_parallel
+import com.airobot.device.yanapi.whisper.whisper_full_with_state
 import com.airobot.device.yanapi.whisper.whisper_init_from_file_with_params
 import com.airobot.portaudiointerop.Pa_AbortStream
 import com.airobot.portaudiointerop.Pa_CloseStream
@@ -18,6 +19,7 @@ import com.airobot.portaudiointerop.Pa_StopStream
 import com.airobot.portaudiointerop.Pa_Terminate
 import com.airobot.portaudiointerop.paInt16
 import com.airobot.portaudiointerop.paNoError
+import com.airobot.pythoninterop.state
 import com.airobot.whisperinterop.whisper_context
 import com.airobot.whisperinterop.whisper_context_params
 import com.airobot.whisperinterop.whisper_decode
@@ -35,6 +37,7 @@ import com.airobot.whisperinterop.whisper_init_state
 import com.airobot.whisperinterop.whisper_pcm_to_mel
 import com.airobot.whisperinterop.whisper_pcm_to_mel_with_state
 import com.airobot.whisperinterop.whisper_sampling_strategy
+import com.airobot.whisperinterop.whisper_state
 import kotlinx.atomicfu.locks.SynchronizedObject
 import kotlinx.atomicfu.locks.synchronized
 import kotlinx.cinterop.COpaquePointerVar
@@ -52,8 +55,10 @@ import kotlinx.cinterop.free
 import kotlinx.cinterop.get
 import kotlinx.cinterop.memScoped
 import kotlinx.cinterop.nativeHeap
+import kotlinx.cinterop.pointed
 import kotlinx.cinterop.ptr
 import kotlinx.cinterop.rawPtr
+import kotlinx.cinterop.readValue
 import kotlinx.cinterop.set
 import kotlinx.cinterop.toKString
 import kotlinx.cinterop.useContents
@@ -95,6 +100,7 @@ class WhisperPortaudioRecognizer {
     }
     private var streamPtr: COpaquePointerVar?= null
     private var whisperCtx: CPointer<whisper_context>? = null
+    private var whisperState: CPointer<whisper_state>? = null
     private var whisperParams: CValue<whisper_full_params>? = null
     private val _recognitionState = MutableStateFlow(RecognitionState.IDLE)
     val recognitionState: StateFlow<RecognitionState> = _recognitionState.asStateFlow()
@@ -176,7 +182,7 @@ class WhisperPortaudioRecognizer {
                     _recognitionState.value = RecognitionState.ERROR
                     return false
                 }
-
+                whisperState = whisper_init_state(whisperCtx)
                 println("[INFO] 初始化完成")
                 _recognitionState.value = RecognitionState.IDLE
                 return true
@@ -433,238 +439,248 @@ class WhisperPortaudioRecognizer {
         scope.launch {
             _recognitionState.value = RecognitionState.PROCESSING
             withContext(Dispatchers.IO) {
-                try {
-                    // 获取音频数据
-                    val bufferSize = audioBufferMutex.withLock { audioBuffer.size }
-                    println("[INFO] 处理音频数据，长度: $bufferSize 样本")
-
-                    // 确保有足够的数据进行处理
-                    if (bufferSize < DEFAULT_SAMPLE_RATE * MIN_AUDIO_SECONDS) {
-                        println("[WARN] 音频数据不足，最小需要 ${DEFAULT_SAMPLE_RATE * MIN_AUDIO_SECONDS} 样本，当前仅有 $bufferSize 样本")
-                        _recognitionState.value = RecognitionState.LISTENING
-                        _isProcessing.store(false)
-                        return@withContext
-                    }
-
-                    // 将音频数据复制到临时缓冲区，并限制最大处理长度以避免内存问题
-                    val maxProcessSize = minOf(bufferSize, DEFAULT_SAMPLE_RATE * 5) // 最多处理5秒的音频
-                    val tempBuffer = audioBufferMutex.withLock {
-                        // 深度复制数据，防止并发修改
-                        if (audioBuffer.size > maxProcessSize) {
-                            audioBuffer.takeLast(maxProcessSize).toFloatArray()
-                        } else {
-                            audioBuffer.toFloatArray()
-                        }
-                    }
-
-                    println("[INFO] 实际处理音频长度: ${tempBuffer.size} 样本")
-
-                    // 确保有足够的数据进行处理
-                    if (tempBuffer.isEmpty() || tempBuffer.size < DEFAULT_SAMPLE_RATE * 1.0) {
-                        println("[WARN] 临时缓冲区数据不足，跳过处理")
-                        _recognitionState.value = RecognitionState.LISTENING
-                        _isProcessing.store(false)
-                       return@withContext
-                    }
-                    // 在处理前检查是否有语音活动
-                    if (!hasVoiceActivity(tempBuffer, 0.01f)) {
-                        println("[INFO] 未检测到语音活动，跳过处理")
-                        _recognitionState.value = RecognitionState.LISTENING
-                        _isProcessing.store(false)
-                        return@withContext
-                    }
-                    // 分配内存并复制数据，添加填充确保内存对齐
-                    val paddedSize = ((tempBuffer.size + 31) / 32) * 32  // 确保32字节对齐
-                    val pcmData = nativeHeap.allocArray<FloatVar>(paddedSize)
+                memScoped {
                     try {
-                        // 初始化为零
-                        for (i in 0 until paddedSize) {
-                            pcmData[i] = 0.0f
-                        }
+                        // 获取音频数据
+                        val bufferSize = audioBufferMutex.withLock { audioBuffer.size }
+                        println("[INFO] 处理音频数据，长度: $bufferSize 样本")
 
-                        // 复制实际数据
-                        for (i in tempBuffer.indices) {
-                            pcmData[i] = tempBuffer[i]
-                        }
-
-                        // 确保Whisper上下文和参数有效
-                        if (whisperCtx == null) {
-                            println("[ERROR] Whisper上下文为空，无法执行推理")
-                            _recognitionState.value = RecognitionState.ERROR
+                        // 确保有足够的数据进行处理
+                        if (bufferSize < DEFAULT_SAMPLE_RATE * MIN_AUDIO_SECONDS) {
+                            println("[WARN] 音频数据不足，最小需要 ${DEFAULT_SAMPLE_RATE * MIN_AUDIO_SECONDS} 样本，当前仅有 $bufferSize 样本")
+                            _recognitionState.value = RecognitionState.LISTENING
+                            _isProcessing.store(false)
                             return@withContext
                         }
 
-                        // 执行Whisper推理
-                        println("[DEBUG] 开始Whisper推理，PCM数据长度: ${tempBuffer.size}，填充后: $paddedSize")
-                        val startTime = System.now().toEpochMilliseconds()
+                        // 将音频数据复制到临时缓冲区，并限制最大处理长度以避免内存问题
+                        val maxProcessSize = minOf(bufferSize, DEFAULT_SAMPLE_RATE * 5) // 最多处理5秒的音频
+                        val tempBuffer = audioBufferMutex.withLock {
+                            // 深度复制数据，防止并发修改
+                            if (audioBuffer.size > maxProcessSize) {
+                                audioBuffer.takeLast(maxProcessSize).toFloatArray()
+                            } else {
+                                audioBuffer.toFloatArray()
+                            }
+                        }
 
-                        // 确保参数复制一份，防止并发修改
-                        val params = whisperParams?.let { it } ?: run {
-                            println("[ERROR] Whisper参数为空")
-                            _recognitionState.value = RecognitionState.ERROR
+                        println("[INFO] 实际处理音频长度: ${tempBuffer.size} 样本")
+
+                        // 确保有足够的数据进行处理
+                        if (tempBuffer.isEmpty() || tempBuffer.size < DEFAULT_SAMPLE_RATE * 1.0) {
+                            println("[WARN] 临时缓冲区数据不足，跳过处理")
+                            _recognitionState.value = RecognitionState.LISTENING
+                            _isProcessing.store(false)
                             return@withContext
                         }
-                        println("whisperParams: ${params}")
-                        val state = whisper_init_state(whisperCtx)
-                        // 创建tokens缓冲区
-                        val tokensCapacity = 1024   // 增大容量
-                        val tokensBuffer = nativeHeap.allocArray<IntVar>(tokensCapacity)
+                        // 在处理前检查是否有语音活动
+                        if (!hasVoiceActivity(tempBuffer, 0.01f)) {
+                            println("[INFO] 未检测到语音活动，跳过处理")
+                            _recognitionState.value = RecognitionState.LISTENING
+                            _isProcessing.store(false)
+                            return@withContext
+                        }
+                        // 分配内存并复制数据，添加填充确保内存对齐
+                        val paddedSize = ((tempBuffer.size + 31) / 32) * 32  // 确保32字节对齐
+                        val pcmData = nativeHeap.allocArray<FloatVar>(paddedSize)
                         try {
-                            // 将PCM转换为Mel频谱图
-                            println("[DEBUG] 转换PCM到Mel频谱图")
-                            val mel = whisper_pcm_to_mel_with_state(
-                                whisperCtx,   // 上下文
-                                state,        // 状态
-                                pcmData,      // 音频数据
-                                tempBuffer.size, // 样本数
-                                8             // 线程数
-                            )
+                            // 初始化为零
+                            for (i in 0 until paddedSize) {
+                                pcmData[i] = 0.0f
+                            }
 
-                            if (mel != 0) {
-                                println("[ERROR] PCM转换MEL失败，错误码: $mel")
+                            // 复制实际数据
+                            for (i in tempBuffer.indices) {
+                                pcmData[i] = tempBuffer[i]
+                            }
+
+                            // 确保Whisper上下文和参数有效
+                            if (whisperCtx == null) {
+                                println("[ERROR] Whisper上下文为空，无法执行推理")
+                                _recognitionState.value = RecognitionState.ERROR
                                 return@withContext
                             }
 
-                            // 运行编码器
-                            println("[DEBUG] 编码PCM数据")
-                            val encodeResult = whisper_encode_with_state(
-                                whisperCtx,   // 上下文
-                                state,
-                                0,            // offset
-                                4             // 线程数
-                            )
+                            // 执行Whisper推理
+                            println("[DEBUG] 开始Whisper推理，PCM数据长度: ${tempBuffer.size}，填充后: $paddedSize")
+                            val startTime = System.now().toEpochMilliseconds()
 
-                            if (encodeResult != 0) {
-                                println("[ERROR] 编码失败，错误码: $encodeResult")
+                            // 确保参数复制一份，防止并发修改
+                            val params = whisperParams?.let { it } ?: run {
+                                println("[ERROR] Whisper参数为空")
+                                _recognitionState.value = RecognitionState.ERROR
                                 return@withContext
                             }
+                            println("whisperParams: ${params}")
 
+                            // 创建tokens缓冲区
+                            val tokensCapacity = 1024   // 增大容量
+                            val tokensBuffer = nativeHeap.allocArray<IntVar>(tokensCapacity)
+                            /*try {
+                                // 将PCM转换为Mel频谱图
+                                println("[DEBUG] 转换PCM到Mel频谱图")
+                                val mel = whisper_pcm_to_mel_with_state(
+                                    whisperCtx,   // 上下文
+                                    whisperState,        // 状态
+                                    pcmData,      // 音频数据
+                                    tempBuffer.size, // 样本数
+                                    8             // 线程数
+                                )
 
-                            var n_tokens = 0
-
-                            // 运行解码器
-                            val decodeResult = whisper_decode_with_state(
-                                whisperCtx,    // 上下文
-                                state,
-                                tokensBuffer,  // tokens缓冲区
-                                n_tokens,      // token数量
-                                0,             // past token数
-                                4              // 线程数
-                            )
-
-                            if (decodeResult != 0) {
-                                println("[ERROR] 解码失败，错误码: $decodeResult")
-                                return@withContext
-                            }
-
-                            // 获取文本结果
-                            val sb = StringBuilder()
-                            val n_segments = whisper_full_n_segments_from_state(state)
-
-                            // 如果没有段落，可能需要使用其他API获取结果
-                            if (n_segments == 0) {
-                                println("[WARN] 没有识别到语音段落")
-                                // 这里可能需要使用其他API获取结果
-                            } else {
-                                for (i in 0 until n_segments) {
-                                    val segment_text = whisper_full_get_segment_text_from_state(state, i)?.toKString() ?: ""
-                                    sb.append(segment_text).append(" ")
+                                if (mel != 0) {
+                                    println("[ERROR] PCM转换MEL失败，错误码: $mel")
+                                    return@withContext
                                 }
-                            }
 
-                            val resultText = sb.toString().trim()
-                            if (resultText.isNotEmpty()) {
-                                println("[INFO] 识别结果: $resultText")
-                                _recognitionResult.value = resultText
-                            } else {
-                                println("[WARN] 识别结果为空")
-                            }
-                        } finally {
-                            // 释放资源
-                            try {
-                                nativeHeap.free(tokensBuffer)
-                            } catch (e: Exception) {
-                                println("[WARN] 释放tokens缓冲区失败: ${e.message}")
-                            }
+                                // 运行编码器
+                                println("[DEBUG] 编码PCM数据")
+                                val encodeResult = whisper_encode_with_state(
+                                    whisperCtx,   // 上下文
+                                    whisperState,
+                                    0,            // offset
+                                    4             // 线程数
+                                )
 
-                            try {
-                                whisper_free_state(state)
-                            } catch (e: Exception) {
-                                println("[WARN] 释放state失败: ${e.message}")
-                            }
-                        }
+                                if (encodeResult != 0) {
+                                    println("[ERROR] 编码失败，错误码: $encodeResult")
+                                    return@withContext
+                                }
 
-                        /*val result = whisper_full(whisperCtx, params, pcmData, tempBuffer.size)
-                        val endTime = System.now().toEpochMilliseconds()
-                        println("[DEBUG] Whisper推理完成，耗时: ${endTime - startTime} 毫秒，结果码: $result")
 
-                        if (result == 0) {
-                            // 获取识别结果
-                            val segmentCount = whisper_full_n_segments(whisperCtx)
-                            println("[DEBUG] 识别到 $segmentCount 个语音片段")
-                            val resultBuilder = StringBuilder()
+                                var n_tokens = 0
 
-                            for (i in 0 until segmentCount) {
-                                val text = whisper_full_get_segment_text(whisperCtx, i)?.toKString() ?: ""
-                                if (text.isNotEmpty()) {
-                                    if(text.equals(" (explosion)").not()){
-                                        // 空的片段，跳过
-                                        println("[DEBUG] 片段 $i: '$text'")
-                                        resultBuilder.append(text).append(" ")
+                                // 运行解码器
+                                val decodeResult = whisper_decode_with_state(
+                                    whisperCtx,    // 上下文
+                                    whisperState,
+                                    tokensBuffer,  // tokens缓冲区
+                                    n_tokens,      // token数量
+                                    0,             // past token数
+                                    4              // 线程数
+                                )
+
+                                if (decodeResult != 0) {
+                                    println("[ERROR] 解码失败，错误码: $decodeResult")
+                                    return@withContext
+                                }
+
+                                // 获取文本结果
+                                val sb = StringBuilder()
+                                val n_segments = whisper_full_n_segments_from_state(whisperState)
+
+                                // 如果没有段落，可能需要使用其他API获取结果
+                                if (n_segments == 0) {
+                                    println("[WARN] 没有识别到语音段落")
+                                    // 这里可能需要使用其他API获取结果
+                                } else {
+                                    for (i in 0 until n_segments) {
+                                        val segment_text = whisper_full_get_segment_text_from_state(whisperState, i)?.toKString() ?: ""
+                                        sb.append(segment_text).append(" ")
                                     }
                                 }
-                            }
 
-                            val resultText = resultBuilder.toString().trim()
-                            if (resultText.isNotEmpty()) {
-                                println("[INFO] 识别结果: $resultText")
-                                _recognitionResult.value = resultText
+                                val resultText = sb.toString().trim()
+                                if (resultText.isNotEmpty()) {
+                                    println("[INFO] 识别结果: $resultText")
+                                    _recognitionResult.value = resultText
+                                } else {
+                                    println("[WARN] 识别结果为空")
+                                }
+                            } finally {
+                                // 释放资源
+                                try {
+                                    nativeHeap.free(tokensBuffer)
+                                } catch (e: Exception) {
+                                    println("[WARN] 释放tokens缓冲区失败: ${e.message}")
+                                }
+
+    //                            try {
+    //                                whisper_free_state(whisperState)
+    //                            } catch (e: Exception) {
+    //                                println("[WARN] 释放state失败: ${e.message}")
+    //                            }
+                            }*/
+
+                            if(whisperState==null){
+                                whisperState = whisper_init_state(whisperCtx)
+                            }
+                            val result = whisper_full_with_state(whisperCtx,
+                                whisperState!!,
+                                params,pcmData,tempBuffer.size)
+
+//                       whisper_full(whisperCtx, params, pcmData, tempBuffer.size)
+                            val endTime = System.now().toEpochMilliseconds()
+                            println("[DEBUG] Whisper推理完成，耗时: ${endTime - startTime} 毫秒，结果码: $result")
+
+                            if (result == 0) {
+                                // 获取识别结果
+                                val segmentCount = whisper_full_n_segments_from_state(whisperState)
+                                println("[DEBUG] 识别到 $segmentCount 个语音片段")
+                                val resultBuilder = StringBuilder()
+
+                                for (i in 0 until segmentCount) {
+                                    val text = whisper_full_get_segment_text_from_state(whisperState, i)?.toKString() ?: ""
+                                    if (text.isNotEmpty()) {
+                                        if(text.equals(" (explosion)").not()){
+                                            // 空的片段，跳过
+                                            println("[DEBUG] 片段 $i: '$text'")
+                                            resultBuilder.append(text).append(" ")
+                                        }
+                                    }
+                                }
+
+                                val resultText = resultBuilder.toString().trim()
+                                if (resultText.isNotEmpty()) {
+                                    println("[INFO] 识别结果: $resultText")
+                                    _recognitionResult.value = resultText
+                                } else {
+                                    println("[WARN] 识别结果为空")
+                                }
                             } else {
-                                println("[WARN] 识别结果为空")
+                                val errorDescription = when(result) {
+                                    -1 -> "一般错误"
+                                    -2 -> "内存分配失败"
+                                    -3 -> "模型问题"
+                                    -4 -> "参数无效"
+                                    -5 -> "状态无效"
+                                    -6 -> "输入无效"
+                                    else -> "未知错误码: $result"
+                                }
+                                println("[ERROR] Whisper推理失败: $errorDescription")
                             }
-                        } else {
-                            val errorDescription = when(result) {
-                                -1 -> "一般错误"
-                                -2 -> "内存分配失败"
-                                -3 -> "模型问题"
-                                -4 -> "参数无效"
-                                -5 -> "状态无效"
-                                -6 -> "输入无效"
-                                else -> "未知错误码: $result"
+                        } catch (e: Exception) {
+                            println("[ERROR] 执行Whisper推理时出现异常: ${e.message}")
+                            e.printStackTrace()
+                        } finally {
+                            // 确保在任何情况下都释放内存
+                            try { nativeHeap.free(pcmData) } catch (e: Exception) {
+                                println("[WARN] 释放PCM数据时出错: ${e.message}")
                             }
-                            println("[ERROR] Whisper推理失败: $errorDescription")
-                        }*/
+                        }
+
+                        // 保留最近的一部分音频数据，丢弃旧数据
+                        audioBufferMutex.withLock {
+                            if (audioBuffer.size > audioBufferSize / 2) { // 降低阈值，更频繁地清理
+                                val keepSize = audioBufferSize / 4 // 保留更少的数据
+                                val newBuffer = audioBuffer.takeLast(keepSize)
+                                audioBuffer.clear()
+                                audioBuffer.addAll(newBuffer)
+                                println("[INFO] 音频缓冲区已清理，保留了 $keepSize 样本")
+                            }
+                        }
+
                     } catch (e: Exception) {
-                        println("[ERROR] 执行Whisper推理时出现异常: ${e.message}")
+                        println("[ERROR] 处理音频数据时出错: ${e.message}")
                         e.printStackTrace()
                     } finally {
-                        // 确保在任何情况下都释放内存
-                        try { nativeHeap.free(pcmData) } catch (e: Exception) {
-                            println("[WARN] 释放PCM数据时出错: ${e.message}")
-                        }
+                        // 恢复监听状态
+                        _recognitionState.value = RecognitionState.LISTENING
+                        // 清除处理标志
+                        _isProcessing.store(false)
+                        println("[INFO] 处理完成，恢复监听状态")
                     }
-
-                    // 保留最近的一部分音频数据，丢弃旧数据
-                    audioBufferMutex.withLock {
-                        if (audioBuffer.size > audioBufferSize / 2) { // 降低阈值，更频繁地清理
-                            val keepSize = audioBufferSize / 4 // 保留更少的数据
-                            val newBuffer = audioBuffer.takeLast(keepSize)
-                            audioBuffer.clear()
-                            audioBuffer.addAll(newBuffer)
-                            println("[INFO] 音频缓冲区已清理，保留了 $keepSize 样本")
-                        }
-                    }
-
-                } catch (e: Exception) {
-                    println("[ERROR] 处理音频数据时出错: ${e.message}")
-                    e.printStackTrace()
-                } finally {
-                    // 恢复监听状态
-                    _recognitionState.value = RecognitionState.LISTENING
-                    // 清除处理标志
-                    _isProcessing.store(false)
-                    println("[INFO] 处理完成，恢复监听状态")
                 }
+
             }
         }
     }
