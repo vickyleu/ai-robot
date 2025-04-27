@@ -148,33 +148,16 @@ class WhisperPortaudioRecognizer {
                     print_timestamps = false   // 关闭时间戳打印
                     translate = false          // 不进行翻译
                     language = languagePtr     // 设置语言为中文
-                    n_threads = 8              // 减少线程数，降低内存压力
-                    no_context = true          // 不使用上下文，减少内存使用
-                    single_segment = true      // 启用单段处理，适合流式处理
-                    max_tokens = 16            // 限制生成的token数量
-                    max_len = 60               // 限制每个段落的最大字符数
-                    audio_ctx = 0              // 设置音频上下文为0，减少内存使用
-                    entropy_thold = 1.0f       // 降低熵阈值
-                    logprob_thold = -2.0f      // 调整对数概率阈值
-                    no_speech_thold = 0.6f     // 提高无语音阈值
-
-                    print_realtime = false
-                    print_progress = true
-                    print_timestamps = true
-                    translate = false
-                    language = languagePtr
-                    n_threads = 1              // 降低到单线程处理，避免线程竞争
-                    no_context = true
-                    single_segment = true
-                    max_tokens = 16
-                    audio_ctx = 0
-                    entropy_thold = 2.0f
-                    logprob_thold = -1.0f
-                    no_speech_thold = 0.6f
+                    n_threads = 1          // 单线程更可靠
+                    max_tokens = 8         // 减少生成的token数量
+                    audio_ctx = 0          // 禁用音频上下文
+                    no_context = true      // 不使用上下文
+                    entropy_thold = 2.5f   // 提高熵阈值，减少低概率预测
+                    no_speech_thold = 0.8f // 提高无语音阈值
                 }
-
+                whisperState = whisper_init_state(whisperCtx)
                 // 初始化PortAudio
-                println("[INFO] 初始化PortAudio...")
+                println("[INFO] 初始化PortAudio...\n")
                 if (Pa_Initialize() != paNoError) {
                     println("[ERROR] PortAudio初始化失败")
                     whisper_free(whisperCtx)
@@ -182,7 +165,7 @@ class WhisperPortaudioRecognizer {
                     _recognitionState.value = RecognitionState.ERROR
                     return false
                 }
-                whisperState = whisper_init_state(whisperCtx)
+
                 println("[INFO] 初始化完成")
                 _recognitionState.value = RecognitionState.IDLE
                 return true
@@ -601,9 +584,24 @@ class WhisperPortaudioRecognizer {
     //                            }
                             }*/
 
-                            if(whisperState==null){
-                                whisperState = whisper_init_state(whisperCtx)
+                            // 每次处理前重新初始化whisperState，避免状态累积导致内存问题
+                            if(whisperState != null) {
+                                try {
+                                    whisper_free_state(whisperState)
+                                    whisperState = null
+                                } catch (e: Exception) {
+                                    println("[WARN] 释放whisperState失败: ${e.message}")
+                                }
                             }
+                            
+                            // 重新创建一个新的state
+                            whisperState = whisper_init_state(whisperCtx)
+                            if(whisperState == null) {
+                                println("[ERROR] 无法创建whisperState")
+                                _recognitionState.value = RecognitionState.ERROR
+                                return@withContext
+                            }
+                            
                             val result = whisper_full_with_state(whisperCtx,
                                 whisperState!!,
                                 params,pcmData,tempBuffer.size)
@@ -655,6 +653,17 @@ class WhisperPortaudioRecognizer {
                             // 确保在任何情况下都释放内存
                             try { nativeHeap.free(pcmData) } catch (e: Exception) {
                                 println("[WARN] 释放PCM数据时出错: ${e.message}")
+                            }
+                            
+                            // 处理完成后释放whisperState，避免内存泄漏
+                            try {
+                                if (whisperState != null) {
+                                    whisper_free_state(whisperState)
+                                    whisperState = null
+                                    println("[INFO] 处理完成后释放whisperState")
+                                }
+                            } catch (e: Exception) {
+                                println("[WARN] 处理完成后释放whisperState失败: ${e.message}")
                             }
                         }
 
@@ -732,11 +741,23 @@ class WhisperPortaudioRecognizer {
             }
         }
 
-        // 释放Whisper资源
+        // 释放Whisper状态资源
+        try {
+            if (whisperState != null) {
+                whisper_free_state(whisperState)
+                whisperState = null
+                println("[INFO] Whisper状态已释放")
+            }
+        } catch (e: Exception) {
+            println("[WARN] 释放Whisper状态时出错: ${e.message}")
+        }
+        
+        // 释放Whisper上下文资源
         try {
             if (whisperCtx != null) {
                 whisper_free(whisperCtx)
                 whisperCtx = null
+                println("[INFO] Whisper上下文已释放")
             }
         } catch (e: Exception) {
             println("[WARN] 释放Whisper上下文时出错: ${e.message}")
