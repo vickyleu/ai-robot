@@ -196,6 +196,7 @@ kotlin {
                     )
                 }
                 create("snowboy") {
+                    // https://github.com/seasalt-ai/snowboy
                     defFile("src/nativeInterop/cinterop/snowboy.def")
                     packageName("com.airobot.snowboyinterop")
                     // 从上面四个目录中查找所有的头文件,添加到headers.files
