@@ -148,7 +148,7 @@ fun whisper_full_default_params_by_ref(
 }
 fun whisper_full_default_params(
     strategy:CValuesRef<whisper_sampling_strategy.Var>?
-):  CValue<whisper_full_params>?{
+):  CValue<whisper_full_params>{
     return my_whisper_full_default_params(strategy)
 }
 

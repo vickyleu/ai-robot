@@ -90,7 +90,8 @@ endif()
 
 # 为编译器设置sysroot但不传递到链接器
 set(CMAKE_C_FLAGS "-std=c11 -fvisibility=default") #--sysroot=${ARMHF_SYSROOT}
-set(CMAKE_CXX_FLAGS "-std=c++17 -D_GLIBCXX_USE_CXX11_ABI=1  -fvisibility=default") #--sysroot=${ARMHF_SYSROOT}
+set(CMAKE_CXX_FLAGS "-std=c++17 -D_GLIBCXX_USE_CXX11_ABI=0  -fvisibility=default") #--sysroot=${ARMHF_SYSROOT}
+#set(CMAKE_CXX_FLAGS "-std=c++17 -D_GLIBCXX_USE_CXX11_ABI=1  -fvisibility=default") #--sysroot=${ARMHF_SYSROOT}
 
 # 添加包含目录
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -I${CMAKE_ARMHF_TOOLCHAIN_CPPROOT} -I${ARMHF_SYSROOT}/sysroot/usr/include -I${CMAKE_ARMHF_TOOLCHAIN_CPP_INCLUDE}")

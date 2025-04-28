@@ -128,7 +128,18 @@ class WhisperPortaudioRecognizer {
         memScoped {
             try {
                 streamPtr = nativeHeap.alloc<COpaquePointerVar>()
-                val contextParamsPtr = nativeHeap.alloc<whisper_context_params>()
+                val contextParamsPtr = nativeHeap.alloc<whisper_context_params>().apply {
+                    use_gpu = false  // 若支持GPU可尝试开启
+//                    bool  use_gpu;
+//                    bool  flash_attn;
+//                    int   gpu_device;  // CUDA device
+//                    // [EXPERIMENTAL] Token-level timestamps with DTW
+//                    bool dtw_token_timestamps;
+//                    enum whisper_alignment_heads_preset dtw_aheads_preset;
+//                    int dtw_n_top;
+//                    struct whisper_aheads dtw_aheads;
+//                    size_t dtw_mem_size; // TODO: remove
+                }
                 // 初始化Whisper模型
                 println("[INFO] 初始化Whisper模型...")
                 whisperCtx = whisper_init_from_file_with_params(modelPath, contextParamsPtr.ptr)
@@ -137,11 +148,14 @@ class WhisperPortaudioRecognizer {
                     _recognitionState.value = RecognitionState.ERROR
                     return false
                 }
+
+
+
                 // 初始化Whisper参数
                 val strategyVar = nativeHeap.alloc<whisper_sampling_strategy.Var>()
                 strategyVar.value = whisper_sampling_strategy.WHISPER_SAMPLING_GREEDY
-                whisperParams = whisper_full_default_params(strategyVar.ptr)
                 val languagePtr = "zh".cstr.getPointer(this)
+                whisperParams = whisper_full_default_params(strategyVar.ptr)
                 whisperParams?.useContents {
                     print_realtime = false     // 关闭实时打印，减少I/O开销
                     print_progress = false     // 关闭进度打印
@@ -497,93 +511,8 @@ class WhisperPortaudioRecognizer {
                             println("whisperParams: ${params}")
 
                             // 创建tokens缓冲区
-                            val tokensCapacity = 1024   // 增大容量
-                            val tokensBuffer = nativeHeap.allocArray<IntVar>(tokensCapacity)
-                            /*try {
-                                // 将PCM转换为Mel频谱图
-                                println("[DEBUG] 转换PCM到Mel频谱图")
-                                val mel = whisper_pcm_to_mel_with_state(
-                                    whisperCtx,   // 上下文
-                                    whisperState,        // 状态
-                                    pcmData,      // 音频数据
-                                    tempBuffer.size, // 样本数
-                                    8             // 线程数
-                                )
-
-                                if (mel != 0) {
-                                    println("[ERROR] PCM转换MEL失败，错误码: $mel")
-                                    return@withContext
-                                }
-
-                                // 运行编码器
-                                println("[DEBUG] 编码PCM数据")
-                                val encodeResult = whisper_encode_with_state(
-                                    whisperCtx,   // 上下文
-                                    whisperState,
-                                    0,            // offset
-                                    4             // 线程数
-                                )
-
-                                if (encodeResult != 0) {
-                                    println("[ERROR] 编码失败，错误码: $encodeResult")
-                                    return@withContext
-                                }
-
-
-                                var n_tokens = 0
-
-                                // 运行解码器
-                                val decodeResult = whisper_decode_with_state(
-                                    whisperCtx,    // 上下文
-                                    whisperState,
-                                    tokensBuffer,  // tokens缓冲区
-                                    n_tokens,      // token数量
-                                    0,             // past token数
-                                    4              // 线程数
-                                )
-
-                                if (decodeResult != 0) {
-                                    println("[ERROR] 解码失败，错误码: $decodeResult")
-                                    return@withContext
-                                }
-
-                                // 获取文本结果
-                                val sb = StringBuilder()
-                                val n_segments = whisper_full_n_segments_from_state(whisperState)
-
-                                // 如果没有段落，可能需要使用其他API获取结果
-                                if (n_segments == 0) {
-                                    println("[WARN] 没有识别到语音段落")
-                                    // 这里可能需要使用其他API获取结果
-                                } else {
-                                    for (i in 0 until n_segments) {
-                                        val segment_text = whisper_full_get_segment_text_from_state(whisperState, i)?.toKString() ?: ""
-                                        sb.append(segment_text).append(" ")
-                                    }
-                                }
-
-                                val resultText = sb.toString().trim()
-                                if (resultText.isNotEmpty()) {
-                                    println("[INFO] 识别结果: $resultText")
-                                    _recognitionResult.value = resultText
-                                } else {
-                                    println("[WARN] 识别结果为空")
-                                }
-                            } finally {
-                                // 释放资源
-                                try {
-                                    nativeHeap.free(tokensBuffer)
-                                } catch (e: Exception) {
-                                    println("[WARN] 释放tokens缓冲区失败: ${e.message}")
-                                }
-
-    //                            try {
-    //                                whisper_free_state(whisperState)
-    //                            } catch (e: Exception) {
-    //                                println("[WARN] 释放state失败: ${e.message}")
-    //                            }
-                            }*/
-
+//                            val tokensCapacity = 1024   // 增大容量
+//                            val tokensBuffer = nativeHeap.allocArray<IntVar>(tokensCapacity)
                             // 每次处理前重新初始化whisperState，避免状态累积导致内存问题
                             if(whisperState != null) {
                                 try {

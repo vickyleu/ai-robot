@@ -1,0 +1,22 @@
+version: '3.8'
+
+services:
+  whisper:
+    build:
+      context: .
+      args:
+        # 使用国内镜像代理
+        DOCKER_REGISTRY_MIRROR: "https://docker.mirrors.ustc.edu.cn"
+    platform: linux/arm/v7
+    volumes:
+      # 挂载音频文件目录（按需修改）
+      - ./audio:/app/whisper.cpp/audio
+    # 资源限制（树莓派3建议配置）
+#    deploy:
+#      resources:
+#        limits:
+#          cpus: '1.5'  # 限制CPU使用防止卡死
+#          memory: 800M
+    # 设备映射（若需要麦克风输入）
+#    devices:
+#      - "/dev/snd:/dev/snd"

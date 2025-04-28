@@ -91,6 +91,7 @@ kotlin {
                   "-Wl,--allow-multiple-definition",// 允许符号重复定义
 //                     强制链接静态库 START
                     "-Wl,--whole-archive",
+                    "-lsnowboy",
                     "-lyanapi",
                     "-lvosk",
                     "-lportaudio",
@@ -102,6 +103,7 @@ kotlin {
                     "-Wl,--no-whole-archive",
                     // 强制链接静态库 END
                     // 显式链接顺序
+                    "-l:libsnowboy.a",
                     "-l:libyanapi.a",
                     "-l:libvosk.a",
                     "-l:libportaudio.a",
@@ -182,6 +184,24 @@ kotlin {
                     // 从上面四个目录中查找所有的头文件,添加到headers.files
                     includeDirs(
                         file("src/nativeInterop/cpp/include/portaudio/"),
+                    )
+                    compilerOpts(
+                        "-fPIC",
+                        "-nostdinc++",
+                        "-std=c++17",
+                        "-D_GLIBCXX_USE_CXX11_ABI=1",
+                        "-ffunction-sections",
+                        "-fdata-sections",
+                        *armhfToolchain.includedDirs.map { "-I$it" }.toTypedArray()
+                    )
+                }
+                create("snowboy") {
+                    defFile("src/nativeInterop/cinterop/snowboy.def")
+                    packageName("com.airobot.snowboyinterop")
+                    // 从上面四个目录中查找所有的头文件,添加到headers.files
+                    includeDirs(
+                        file("src/nativeInterop/cpp/include/snowboy/"),
+                        file("src/nativeInterop/cpp/include/snowboy/hack"),
                     )
                     compilerOpts(
                         "-fPIC",

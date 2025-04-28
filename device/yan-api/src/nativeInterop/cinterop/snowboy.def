@@ -1,0 +1,7 @@
+language: C++
+# 需要导入stdio.h
+headers:   snowboy-c-api.h
+linkerOpts: -L../cpp/libs/ -lsnowboy
+headerFilter: snowboy-c-api.h
+# 下面是不透明指针的映射
+---
