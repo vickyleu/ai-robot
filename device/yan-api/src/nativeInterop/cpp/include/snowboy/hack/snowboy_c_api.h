@@ -4,18 +4,15 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-
 #include <stdint.h>
 #include <stdbool.h>
 
 // Opaque type for SnowboyDetect handle
 typedef struct SnowboyDetectWrapper SnowboyDetectWrapper;
-
 // Opaque type for SnowboyVad handle
-typedef struct SnowboyVadWrapper SnowboyVadWrapper;
+typedef struct SnowboyVadWrapper   SnowboyVadWrapper;
 
 // SnowboyDetect API functions
-
 // Create a new SnowboyDetect instance
 SnowboyDetectWrapper* snowboy_create(const char* resource_filename, const char* model_str);
 

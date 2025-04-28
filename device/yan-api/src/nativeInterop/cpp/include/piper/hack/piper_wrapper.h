@@ -5,7 +5,7 @@
 #else
 #define __PREFFIX
 #endif
-
+#include "piper_c_api.h"
 #include "piper.cpp"
 
 

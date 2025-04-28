@@ -1,6 +1,6 @@
 // snowboy-c-api.cpp
 
-#include "snowboy-c-api.h"
+#include "snowboy_c_api.h"
 #include "snowboy-detect.h"
 #include <string>
 #include <cstring>
@@ -57,7 +57,7 @@ int snowboy_run_detection_float(SnowboyDetectWrapper* wrapper, const float* data
 }
 
 int snowboy_run_detection_int16(SnowboyDetectWrapper* wrapper, const int16_t* data, int array_length, bool is_end) {
-    return wrapper->detector->RunDetection(data, array_length, is_end);
+    return (wrapper)->detector->RunDetection(data, array_length, is_end);
 }
 
 int snowboy_run_detection_int32(SnowboyDetectWrapper* wrapper, const int32_t* data, int array_length, bool is_end) {

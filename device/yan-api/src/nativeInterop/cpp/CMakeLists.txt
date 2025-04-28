@@ -35,8 +35,7 @@ message("CMAKE_ASSEMBLE_LIBRARY=${CMAKE_ASSEMBLE_LIBRARY}")
 add_library(yanapi STATIC source/YanAPI.cpp
         source/alsa_wrapper.cpp
         source/python_export.cpp
-        source/wrap_c23.cpp
-        source/snowboy-c-api.cpp
+        source/snowboy_c_api.cpp
 )
 #add_library(yanapi SHARED YanAPI.cpp python_export.c)
 
