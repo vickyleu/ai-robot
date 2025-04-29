@@ -4,3 +4,4 @@ headerFilter =  piper_wrapper.h piper_c_api.h
 linkerOpts:  -Lpiper -l:libpiper.a -lstdc++ -lc -lm -lpthread
 # 下面是不透明指针的映射
 ---
+struct PiperContext {};

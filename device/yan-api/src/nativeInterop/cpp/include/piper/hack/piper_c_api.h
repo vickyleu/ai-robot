@@ -2,6 +2,7 @@
 #define PIPER_C_API_H
 
 #include <stdint.h>
+#include <limits.h>
 #include <stddef.h>
 
 #ifdef __cplusplus
@@ -19,7 +20,7 @@ typedef enum {
 } PiperStatus;
 
 // Opaque handle to Piper instance
-typedef struct PiperContext{}  PiperContext;
+typedef struct PiperContext  PiperContext;
 
 // Voice configuration
 typedef struct {

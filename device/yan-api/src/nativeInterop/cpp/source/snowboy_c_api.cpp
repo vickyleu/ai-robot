@@ -42,25 +42,25 @@ void snowboy_free(SnowboyDetectWrapper* wrapper) {
     }
 }
 
-bool snowboy_reset(SnowboyDetectWrapper* wrapper) {
+int snowboy_reset(SnowboyDetectWrapper* wrapper) {
     return wrapper->detector->Reset();
 }
 
-int snowboy_run_detection(SnowboyDetectWrapper* wrapper, const char* data, int length, bool is_end) {
+int snowboy_run_detection(SnowboyDetectWrapper* wrapper, const char* data, int length, int is_end) {
     // 显式使用带长度参数的 std::string 构造函数
     std::string data_str(data, length);
     return wrapper->detector->RunDetection(data_str, is_end);
 }
 
-int snowboy_run_detection_float(SnowboyDetectWrapper* wrapper, const float* data, int array_length, bool is_end) {
+int snowboy_run_detection_float(SnowboyDetectWrapper* wrapper, const float* data, int array_length, int is_end) {
     return wrapper->detector->RunDetection(data, array_length, is_end);
 }
 
-int snowboy_run_detection_int16(SnowboyDetectWrapper* wrapper, const int16_t* data, int array_length, bool is_end) {
-    return (wrapper)->detector->RunDetection(data, array_length, is_end);
+int snowboy_run_detection_int16(SnowboyDetectWrapper* wrapper, const int16_t* data, int array_length, int is_end) {
+    return wrapper->detector->RunDetection(data, array_length, is_end);
 }
 
-int snowboy_run_detection_int32(SnowboyDetectWrapper* wrapper, const int32_t* data, int array_length, bool is_end) {
+int snowboy_run_detection_int32(SnowboyDetectWrapper* wrapper, const int32_t* data, int array_length, int is_end) {
     return wrapper->detector->RunDetection(data, array_length, is_end);
 }
 
@@ -103,7 +103,7 @@ int snowboy_num_hotwords(SnowboyDetectWrapper* wrapper) {
     return wrapper->detector->NumHotwords();
 }
 
-void snowboy_apply_frontend(SnowboyDetectWrapper* wrapper, bool apply_frontend) {
+void snowboy_apply_frontend(SnowboyDetectWrapper* wrapper, int apply_frontend) {
     wrapper->detector->ApplyFrontend(apply_frontend);
 }
 
@@ -137,25 +137,25 @@ void snowboy_vad_free(SnowboyVadWrapper* wrapper) {
     }
 }
 
-bool snowboy_vad_reset(SnowboyVadWrapper* wrapper) {
+int snowboy_vad_reset(SnowboyVadWrapper* wrapper) {
     return wrapper->vad->Reset();
 }
 
-int snowboy_vad_run(SnowboyVadWrapper* wrapper, const char* data, int length, bool is_end) {
+int snowboy_vad_run(SnowboyVadWrapper* wrapper, const char* data, int length, int is_end) {
     // 显式使用带长度参数的 std::string 构造函数
     std::string data_str(data, length);
     return wrapper->vad->RunVad(data_str, is_end);
 }
 
-int snowboy_vad_run_float(SnowboyVadWrapper* wrapper, const float* data, int array_length, bool is_end) {
+int snowboy_vad_run_float(SnowboyVadWrapper* wrapper, const float* data, int array_length, int is_end) {
     return wrapper->vad->RunVad(data, array_length, is_end);
 }
 
-int snowboy_vad_run_int16(SnowboyVadWrapper* wrapper, const int16_t* data, int array_length, bool is_end) {
+int snowboy_vad_run_int16(SnowboyVadWrapper* wrapper, const int16_t* data, int array_length, int is_end) {
     return wrapper->vad->RunVad(data, array_length, is_end);
 }
 
-int snowboy_vad_run_int32(SnowboyVadWrapper* wrapper, const int32_t* data, int array_length, bool is_end) {
+int snowboy_vad_run_int32(SnowboyVadWrapper* wrapper, const int32_t* data, int array_length, int is_end) {
     return wrapper->vad->RunVad(data, array_length, is_end);
 }
 
@@ -163,7 +163,7 @@ void snowboy_vad_set_audio_gain(SnowboyVadWrapper* wrapper, float audio_gain) {
     wrapper->vad->SetAudioGain(audio_gain);
 }
 
-void snowboy_vad_apply_frontend(SnowboyVadWrapper* wrapper, bool apply_frontend) {
+void snowboy_vad_apply_frontend(SnowboyVadWrapper* wrapper, int apply_frontend) {
     wrapper->vad->ApplyFrontend(apply_frontend);
 }
 

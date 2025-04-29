@@ -5,7 +5,6 @@
 extern "C" {
 #endif
 #include <stdint.h>
-#include <stdbool.h>
 
 // Opaque type for SnowboyDetect handle
 typedef struct SnowboyDetectWrapper SnowboyDetectWrapper;
@@ -20,19 +19,19 @@ SnowboyDetectWrapper* snowboy_create(const char* resource_filename, const char* 
 void snowboy_free(SnowboyDetectWrapper* wrapper);
 
 // Reset the detection
-bool snowboy_reset(SnowboyDetectWrapper* wrapper);
+int snowboy_reset(SnowboyDetectWrapper* wrapper);
 
 // Run hotword detection on string data
-int snowboy_run_detection(SnowboyDetectWrapper* wrapper, const char* data, int length, bool is_end);
+int snowboy_run_detection(SnowboyDetectWrapper* wrapper, const char* data, int length, int is_end);
 
 // Run hotword detection on float array
-int snowboy_run_detection_float(SnowboyDetectWrapper* wrapper, const float* data, int array_length, bool is_end);
+int snowboy_run_detection_float(SnowboyDetectWrapper* wrapper, const float* data, int array_length, int is_end);
 
 // Run hotword detection on int16 array
-int snowboy_run_detection_int16(SnowboyDetectWrapper* wrapper, const int16_t* data, int array_length, bool is_end);
+int snowboy_run_detection_int16(SnowboyDetectWrapper* wrapper, const int16_t* data, int array_length, int is_end);
 
 // Run hotword detection on int32 array
-int snowboy_run_detection_int32(SnowboyDetectWrapper* wrapper, const int32_t* data, int array_length, bool is_end);
+int snowboy_run_detection_int32(SnowboyDetectWrapper* wrapper, const int32_t* data, int array_length, int is_end);
 
 // Set sensitivity for loaded hotwords
 void snowboy_set_sensitivity(SnowboyDetectWrapper* wrapper, const char* sensitivity_str);
@@ -53,7 +52,7 @@ void snowboy_update_model(SnowboyDetectWrapper* wrapper);
 int snowboy_num_hotwords(SnowboyDetectWrapper* wrapper);
 
 // Apply frontend processing
-void snowboy_apply_frontend(SnowboyDetectWrapper* wrapper, bool apply_frontend);
+void snowboy_apply_frontend(SnowboyDetectWrapper* wrapper, int apply_frontend);
 
 // Get required sample rate
 int snowboy_sample_rate(SnowboyDetectWrapper* wrapper);
@@ -73,25 +72,25 @@ SnowboyVadWrapper* snowboy_vad_create(const char* resource_filename);
 void snowboy_vad_free(SnowboyVadWrapper* wrapper);
 
 // Reset the VAD
-bool snowboy_vad_reset(SnowboyVadWrapper* wrapper);
+int snowboy_vad_reset(SnowboyVadWrapper* wrapper);
 
 // Run VAD on string data
-int snowboy_vad_run(SnowboyVadWrapper* wrapper, const char* data, int length, bool is_end);
+int snowboy_vad_run(SnowboyVadWrapper* wrapper, const char* data, int length, int is_end);
 
 // Run VAD on float array
-int snowboy_vad_run_float(SnowboyVadWrapper* wrapper, const float* data, int array_length, bool is_end);
+int snowboy_vad_run_float(SnowboyVadWrapper* wrapper, const float* data, int array_length, int is_end);
 
 // Run VAD on int16 array
-int snowboy_vad_run_int16(SnowboyVadWrapper* wrapper, const int16_t* data, int array_length, bool is_end);
+int snowboy_vad_run_int16(SnowboyVadWrapper* wrapper, const int16_t* data, int array_length, int is_end);
 
 // Run VAD on int32 array
-int snowboy_vad_run_int32(SnowboyVadWrapper* wrapper, const int32_t* data, int array_length, bool is_end);
+int snowboy_vad_run_int32(SnowboyVadWrapper* wrapper, const int32_t* data, int array_length, int is_end);
 
 // Set audio gain
 void snowboy_vad_set_audio_gain(SnowboyVadWrapper* wrapper, float audio_gain);
 
 // Apply frontend processing
-void snowboy_vad_apply_frontend(SnowboyVadWrapper* wrapper, bool apply_frontend);
+void snowboy_vad_apply_frontend(SnowboyVadWrapper* wrapper, int apply_frontend);
 
 // Get required sample rate
 int snowboy_vad_sample_rate(SnowboyVadWrapper* wrapper);

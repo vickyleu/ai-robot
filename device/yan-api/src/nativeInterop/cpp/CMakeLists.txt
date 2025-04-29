@@ -1,6 +1,7 @@
 cmake_minimum_required(VERSION 3.12)
 project(YanAPI LANGUAGES CXX)
-set(CMAKE_CXX_STANDARD 11)
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_VERBOSE_MAKEFILE OFF)
 
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}   -Wdeprecated-declarations -fPIC ") #//-DPy_GIL_DISABLED=1
@@ -14,12 +15,15 @@ set(EXPAT_LIBRARY "${CMAKE_SOURCE_DIR}/libs/libexpat.so")
 set(ALSA_LIBRARY "${CMAKE_SOURCE_DIR}/libs/libasound.so")
 
 set(SNOWBOY_LIBRARY "${CMAKE_SOURCE_DIR}/libs/libsnowboy.a")
+set(PIPER_LIBRARY "${CMAKE_SOURCE_DIR}/libs/libpiper.a")
 
 set(HACK_THING_INCLUDE
         "${CMAKE_SOURCE_DIR}/include/"
         "${CMAKE_SOURCE_DIR}/include/alsa/hack/"
         "${CMAKE_SOURCE_DIR}/include/vosk/"
         "${CMAKE_SOURCE_DIR}/include/vosk/hack"
+        "${CMAKE_SOURCE_DIR}/include/piper"
+        "${CMAKE_SOURCE_DIR}/include/piper/onnxruntime"
         "${CMAKE_SOURCE_DIR}/include/piper/hack"
         "${CMAKE_SOURCE_DIR}/include/whisper"
         "${CMAKE_SOURCE_DIR}/include/opencc"
@@ -36,6 +40,7 @@ add_library(yanapi STATIC source/YanAPI.cpp
         source/alsa_wrapper.cpp
         source/python_export.cpp
         source/snowboy_c_api.cpp
+        source/piper_c_api.cpp
 )
 #add_library(yanapi SHARED YanAPI.cpp python_export.c)
 
@@ -52,4 +57,4 @@ target_include_directories(yanapi PRIVATE
 #MESSAGE("CMAKE_STATIC_LINKER_FLAGS::${CMAKE_STATIC_LINKER_FLAGS}")
 #MESSAGE("CMAKE_SHARED_LINKER_FLAGS::${CMAKE_SHARED_LINKER_FLAGS}")
 
-target_link_libraries(yanapi PRIVATE ${PYTHON_LIBRARY} ${Z_LIBRARY}  ${ALSA_LIBRARY} ${EXPAT_LIBRARY} ${SNOWBOY_LIBRARY} )
+target_link_libraries(yanapi PRIVATE ${PYTHON_LIBRARY} ${Z_LIBRARY}  ${ALSA_LIBRARY} ${EXPAT_LIBRARY} ${SNOWBOY_LIBRARY}  ${PIPER_LIBRARY} )

@@ -1,16 +1,61 @@
-@file:OptIn(ExperimentalForeignApi::class, ExperimentalStdlibApi::class, ExperimentalTime::class)
+@file:OptIn(ExperimentalForeignApi::class)
+
 package snowboyPiper
 
-import com.airobot.piperinterop.*
-import com.airobot.portaudiointerop.*
-import com.airobot.snowboyinterop.*
-import kotlinx.cinterop.*
-import kotlinx.coroutines.*
+import com.airobot.piperinterop.PIPER_SUCCESS
+import com.airobot.piperinterop.PiperAudioFormat
+import com.airobot.piperinterop.PiperContext
+import com.airobot.piperinterop.PiperVoiceConfig
+import com.airobot.piperinterop.piper_free
+import com.airobot.piperinterop.piper_init
+import com.airobot.piperinterop.piper_synthesize_text
+import com.airobot.portaudiointerop.Pa_CloseStream
+import com.airobot.portaudiointerop.Pa_GetErrorText
+import com.airobot.portaudiointerop.Pa_Initialize
+import com.airobot.portaudiointerop.Pa_OpenDefaultStream
+import com.airobot.portaudiointerop.Pa_ReadStream
+import com.airobot.portaudiointerop.Pa_Sleep
+import com.airobot.portaudiointerop.Pa_StartStream
+import com.airobot.portaudiointerop.Pa_StopStream
+import com.airobot.portaudiointerop.Pa_Terminate
+import com.airobot.portaudiointerop.Pa_WriteStream
+import com.airobot.portaudiointerop.paFloat32
+import com.airobot.portaudiointerop.paInputOverflowed
+import com.airobot.portaudiointerop.paInt16
+import com.airobot.portaudiointerop.paNoError
+import com.airobot.snowboyinterop.SnowboyDetectWrapper
+import com.airobot.snowboyinterop.snowboy_create
+import com.airobot.snowboyinterop.snowboy_free
+import com.airobot.snowboyinterop.snowboy_run_detection_int16
+import com.airobot.snowboyinterop.snowboy_set_sensitivity
+import kotlinx.cinterop.CArrayPointer
+import kotlinx.cinterop.COpaquePointerVar
+import kotlinx.cinterop.CPointer
+import kotlinx.cinterop.CValuesRef
+import kotlinx.cinterop.ExperimentalForeignApi
+import kotlinx.cinterop.FloatVar
+import kotlinx.cinterop.IntVar
+import kotlinx.cinterop.ShortVar
+import kotlinx.cinterop.alloc
+import kotlinx.cinterop.allocArray
+import kotlinx.cinterop.cstr
+import kotlinx.cinterop.free
+import kotlinx.cinterop.memScoped
+import kotlinx.cinterop.nativeHeap
+import kotlinx.cinterop.ptr
+import kotlinx.cinterop.toKString
+import kotlinx.cinterop.value
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import platform.posix.size_tVar
-import kotlin.experimental.ExperimentalNativeApi
 import kotlin.time.ExperimentalTime
 
 /**
@@ -23,8 +68,10 @@ class SnowboyPiperDemo {
         const val DEFAULT_CHANNELS = 1
         const val DEFAULT_RESOURCE_PATH = "/usr/local/share/yanshee-model/snowboy/common.res"
         const val DEFAULT_MODEL_PATH = "/usr/local/share/yanshee-model/snowboy/models/snowboy.umdl"
-        const val DEFAULT_PIPER_MODEL_PATH = "/usr/local/share/yanshee-model/piper/zh_CN-huayan-x_low.onnx"
-        const val DEFAULT_PIPER_CONFIG_PATH = "/usr/local/share/yanshee-model/piper/zh_CN-huayan-x_low.onnx.json"
+        const val DEFAULT_PIPER_MODEL_PATH =
+            "/usr/local/share/yanshee-model/piper/zh_CN-huayan-x_low.onnx"
+        const val DEFAULT_PIPER_CONFIG_PATH =
+            "/usr/local/share/yanshee-model/piper/zh_CN-huayan-x_low.onnx.json"
     }
 
     private var streamPtr = nativeHeap.alloc<COpaquePointerVar>()
@@ -66,10 +113,10 @@ class SnowboyPiperDemo {
             val voiceConfig = nativeHeap.alloc<PiperVoiceConfig>().apply {
                 this.model_path = piperModelPath.cstr.getPointer(this@memScoped)
                 this.config_path = piperConfigPath.cstr.getPointer(this@memScoped)
-                this.speaker_id  = 0.0f
+                this.speaker_id = 0.0f
                 this.noise_scale = 0.667f
-                this.length_scale= 1.0f
-                this.noise_w     = 0.8f
+                this.length_scale = 1.0f
+                this.noise_w = 0.8f
             }
             val status = nativeHeap.alloc<IntVar>()
             piperContext = piper_init(voiceConfig.ptr, status.ptr)
@@ -94,17 +141,12 @@ class SnowboyPiperDemo {
             return true
         }
     }
-    @OptIn(ExperimentalForeignApi::class, ExperimentalNativeApi::class)
-    @CName("snowboy_run_detection_int16")
-    external fun snowboy_run_detection_int16_ptr(
-        wrapper: CPointer<SnowboyDetectWrapper>?,
-        data:    CPointer<ShortVar>?,
-        array_length: Int,
-        is_end:  Boolean
-    ): Int
+
+
     /**
      * 开始关键词检测
      */
+    @OptIn(ExperimentalForeignApi::class)
     fun startDetection() {
         if (_detectionState.value == DetectionState.LISTENING) return
         _detectionState.value = DetectionState.LISTENING
@@ -154,20 +196,26 @@ class SnowboyPiperDemo {
                     }
 
                     // 使用Snowboy检测关键词
-                    val result = snowboy_run_detection_int16_ptr(snowboyDetector, buffer, bufferSize, false)
-                    
+                    val result =
+                        snowboy_run_detection_int16(snowboyDetector, buffer, bufferSize, 0)
+
+
                     when (result) {
-                        -2 -> { /* 静音 */ }
+                        -2 -> { /* 静音 */
+                        }
+
                         -1 -> println("[ERROR] Snowboy检测错误")
-                        0 -> { /* 无事件 */ }
+                        0 -> { /* 无事件 */
+                        }
+
                         else -> {
                             // 检测到关键词
                             println("[INFO] 检测到关键词! 结果: $result")
                             _detectionState.value = DetectionState.DETECTED
-                            
+
                             // 使用Piper播放"你好"
                             playGreeting()
-                            
+
                             // 短暂暂停检测，避免连续触发
                             delay(1000)
                             _detectionState.value = DetectionState.LISTENING
@@ -196,57 +244,57 @@ class SnowboyPiperDemo {
     private fun playGreeting() {
         scope.launch {
             println("[INFO] 使用Piper播放语音...")
-            
+
             // 合成"你好"语音
             val text = "你好"
             val format = nativeHeap.alloc<PiperAudioFormat>()
             val outputSizePtr = nativeHeap.alloc<size_tVar>()
-            
+
             // 首先获取需要的缓冲区大小
             val sizeStatus = piper_synthesize_text(
                 piperContext,
-                text.cstr.ptr, 
-                null, 
-                outputSizePtr.ptr, 
+                text,
+                null,
+                outputSizePtr.ptr,
                 format.ptr
             )
-            
+
             if (sizeStatus != PIPER_SUCCESS) {
                 println("[ERROR] 无法获取音频大小，错误码: $sizeStatus")
                 return@launch
             }
-            
+
             val outputSize = outputSizePtr.value.toInt()
             val audioBuffer = nativeHeap.allocArray<FloatVar>(outputSize)
-            
+
             // 合成语音
             val synthStatus = piper_synthesize_text(
-                piperContext, 
-                text.cstr.ptr, 
-                audioBuffer, 
-                outputSizePtr.ptr, 
+                piperContext,
+                text,
+                audioBuffer,
+                outputSizePtr.ptr,
                 format.ptr
             )
-            
+
             if (synthStatus != PIPER_SUCCESS) {
                 println("[ERROR] 语音合成失败，错误码: $synthStatus")
                 return@launch
             }
-            
+
             // 播放合成的语音
             playAudio(audioBuffer, outputSize, format.sample_rate)
-            
+
             // 释放资源
             nativeHeap.free(audioBuffer)
         }
     }
-    
+
     /**
      * 使用PortAudio播放音频
      */
     private fun playAudio(audioBuffer: CArrayPointer<FloatVar>, bufferSize: Int, sampleRate: Int) {
         val outputStreamPtr = nativeHeap.alloc<COpaquePointerVar>()
-        
+
         // 打开输出流
         val err = Pa_OpenDefaultStream(
             outputStreamPtr.ptr,
@@ -254,32 +302,32 @@ class SnowboyPiperDemo {
             1,  // 1个输出通道
             paFloat32,
             sampleRate.toDouble(),
-            bufferSize.toLong(),
+            bufferSize.toUInt(),
             null,
             null
         )
-        
+
         if (err != paNoError) {
             println("[ERROR] 无法打开音频输出流: ${Pa_GetErrorText(err)?.toKString()}")
             return
         }
-        
+
         // 开始输出流
         if (Pa_StartStream(outputStreamPtr.value) != paNoError) {
             println("[ERROR] 无法启动音频输出流")
             Pa_CloseStream(outputStreamPtr.value)
             return
         }
-        
+
         // 写入音频数据
-        val writeErr = Pa_WriteStream(outputStreamPtr.value, audioBuffer, bufferSize.toULong())
+        val writeErr = Pa_WriteStream(outputStreamPtr.value, audioBuffer, bufferSize.toUInt())
         if (writeErr != paNoError) {
             println("[ERROR] 写入音频数据失败: ${Pa_GetErrorText(writeErr)?.toKString()}")
         }
-        
+
         // 等待所有数据播放完成
         Pa_Sleep(1000)
-        
+
         // 停止并关闭输出流
         Pa_StopStream(outputStreamPtr.value)
         Pa_CloseStream(outputStreamPtr.value)
@@ -301,18 +349,18 @@ class SnowboyPiperDemo {
     fun release() {
         println("[INFO] 释放资源...")
         stopDetection()
-        
+
         // 释放Snowboy资源
         snowboyDetector?.let { snowboy_free(it) }
         snowboyDetector = null
-        
+
         // 释放Piper资源
         piperContext?.let { piper_free(it) }
         piperContext = null
-        
+
         // 终止PortAudio
         Pa_Terminate()
-        
+
         println("[INFO] 资源已释放")
     }
 }
