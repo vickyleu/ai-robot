@@ -25,6 +25,7 @@ typedef struct PiperContext  PiperContext;
 // Voice configuration
 typedef struct {
     const char* model_path;
+    const char* eSpeakDataPath;
     const char* config_path;
     float speaker_id;
     float noise_scale;

@@ -44,7 +44,10 @@ import kotlinx.cinterop.memScoped
 import kotlinx.cinterop.nativeHeap
 import kotlinx.cinterop.ptr
 import kotlinx.cinterop.toKString
+import kotlinx.cinterop.ByteVar
+import kotlinx.cinterop.set
 import kotlinx.cinterop.value
+import kotlinx.cinterop.sizeOf
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -55,6 +58,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import platform.posix.memset
 import platform.posix.size_tVar
 import kotlin.time.ExperimentalTime
 
@@ -72,6 +76,8 @@ class SnowboyPiperDemo {
             "/usr/local/share/yanshee-model/piper/zh_CN-huayan-x_low.onnx"
         const val DEFAULT_PIPER_CONFIG_PATH =
             "/usr/local/share/yanshee-model/piper/zh_CN-huayan-x_low.onnx.json"
+        const val DEFAULT_PIPER_ESpeakData_PATH =
+            "/usr/local/share/yanshee-model/piper/espeak-ng-data"
     }
 
     private var streamPtr = nativeHeap.alloc<COpaquePointerVar>()
@@ -94,6 +100,7 @@ class SnowboyPiperDemo {
         modelPath: String = DEFAULT_MODEL_PATH,
         piperModelPath: String = DEFAULT_PIPER_MODEL_PATH,
         piperConfigPath: String = DEFAULT_PIPER_CONFIG_PATH,
+        piperESpeakDataPath: String = DEFAULT_PIPER_ESpeakData_PATH,
         sampleRate: Int = DEFAULT_SAMPLE_RATE,
         channels: Int = DEFAULT_CHANNELS
     ): Boolean {
@@ -101,6 +108,7 @@ class SnowboyPiperDemo {
             println("[INFO] 开始初始化Snowboy检测器，资源路径: $resourcePath, 模型路径: $modelPath")
             _detectionState.value = DetectionState.INITIALIZING
             // 初始化Snowboy检测器
+            println("[INFO] 创建Snowboy检测器...")
             snowboyDetector = snowboy_create(resourcePath, modelPath)
             if (snowboyDetector == null) {
                 println("[ERROR] Snowboy检测器创建失败")
@@ -108,17 +116,42 @@ class SnowboyPiperDemo {
                 return false
             }
             // 设置灵敏度
+            println("[INFO] 设置灵敏度...")
             snowboy_set_sensitivity(snowboyDetector, "0.5")
             // 初始化Piper语音合成
-            val voiceConfig = nativeHeap.alloc<PiperVoiceConfig>().apply {
-                this.model_path = piperModelPath.cstr.getPointer(this@memScoped)
-                this.config_path = piperConfigPath.cstr.getPointer(this@memScoped)
-                this.speaker_id = 0.0f
-                this.noise_scale = 0.667f
-                this.length_scale = 1.0f
-                this.noise_w = 0.8f
-            }
+            println("[INFO] 初始化Piper语音合成，模型路径: $piperModelPath, 配置路径: $piperConfigPath")
+            val voiceConfig = nativeHeap.alloc<PiperVoiceConfig>()
+            // 先清零结构体
+            memset(voiceConfig.ptr, 0, sizeOf<PiperVoiceConfig>().toUInt())
+            // 然后设置字段值
+            // 使用一种不同的方法来分配字符串
+            // 这种方法确保字符串内存在C++侧是有效的
+            val modelPathData = piperModelPath.encodeToByteArray() + 0  // 添加null终止符
+            val configPathData = piperConfigPath.encodeToByteArray() + 0
+            val eSpeakPathData = piperESpeakDataPath.encodeToByteArray() + 0
+
+            // 在堆上分配内存并复制字符串数据
+            val modelPathPtr = nativeHeap.allocArray<ByteVar>(modelPathData.size)
+            val configPathPtr = nativeHeap.allocArray<ByteVar>(configPathData.size)
+            val eSpeakPathPtr = nativeHeap.allocArray<ByteVar>(eSpeakPathData.size)
+
+            // 复制字符串数据到分配的内存
+            modelPathData.forEachIndexed { index, byte -> modelPathPtr[index] = byte }
+            configPathData.forEachIndexed { index, byte -> configPathPtr[index] = byte }
+            eSpeakPathData.forEachIndexed { index, byte -> eSpeakPathPtr[index] = byte }
+
+            // 设置结构体字段值
+            voiceConfig.model_path = modelPathPtr
+            voiceConfig.config_path = configPathPtr
+            voiceConfig.eSpeakDataPath = eSpeakPathPtr
+            voiceConfig.speaker_id = 0.0f
+            voiceConfig.noise_scale = 0.667f
+            voiceConfig.length_scale = 1.0f
+            voiceConfig.noise_w = 0.8f
+
+
             val status = nativeHeap.alloc<IntVar>()
+            println("[INFO] 创建Piper语音合成上下文...")
             piperContext = piper_init(voiceConfig.ptr, status.ptr)
             if (piperContext == null || status.value != PIPER_SUCCESS) {
                 println("[ERROR] Piper初始化失败，错误码: ${status.value}")
