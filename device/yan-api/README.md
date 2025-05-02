@@ -1,6 +1,18 @@
 # YAN API模块 (YAN API Module)
 
 ## 模块简介
+Porcupine(唤醒词引擎)：
+Leopard和Cheetah
+
+```agsl
+在config.txt中启用音频设备
+bashsudo vi /boot/config.txt
+确保以下行存在且未被注释（没有#前缀）：
+dtparam=audio=on
+如果需要修改，保存文件后重启树莓派：
+bashsudo reboot
+```
+
 
 YAN API模块是设备控制层的标准化接口实现，提供了与YAN协议兼容的机器人控制接口。该模块封装了底层通信细节，提供高级别的设备控制和状态管理功能。
 https://yandev.ubtrobot.com/#/zh/api?api=YanAPI 接口文档

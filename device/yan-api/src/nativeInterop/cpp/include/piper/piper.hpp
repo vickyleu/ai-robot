@@ -114,15 +114,25 @@ void initialize(PiperConfig &config);
 void terminate(PiperConfig &config);
 
 // Load Onnx model and JSON config file
-void loadVoice(PiperConfig &config, std::string modelPath,
-               std::string modelConfigPath, Voice &voice,
-               std::optional<SpeakerId> &speakerId);
+//void loadVoice(PiperConfig &config, std::string modelPath,
+//               std::string modelConfigPath, Voice &voice,
+//               std::optional<SpeakerId> &speakerId, bool useCuda);
+void loadVoice(PiperConfig &config,
+                   std::basic_string<char, std::char_traits<char>, std::allocator<char>> modelPath,
+                   std::basic_string<char, std::char_traits<char>, std::allocator<char>> modelConfigPath,
+                   Voice &voice,
+                   std::optional<long long> &speakerId,
+                   bool useCuda);
 
 // Phonemize text and synthesize audio
-void textToAudio(PiperConfig &config, Voice &voice, std::string text,
-                 std::vector<int16_t> &audioBuffer, SynthesisResult &result,
-                 const std::function<void()> &audioCallback);
-
+//void textToAudio(PiperConfig &config, Voice &voice, std::string text,
+//                 std::vector<int16_t> &audioBuffer, SynthesisResult &result,
+//                 const std::function<void()> &audioCallback);
+void textToAudio(PiperConfig &config, Voice &voice,
+                     std::basic_string<char, std::char_traits<char>, std::allocator<char>> text,
+                     std::vector<short, std::allocator<short>> &audioBuffer,
+                     SynthesisResult &result,
+                     const std::function<void()> &audioCallback);
 // Phonemize text and synthesize audio to WAV file
 void textToWavFile(PiperConfig &config, Voice &voice, std::string text,
                    std::ostream &audioFile, SynthesisResult &result);

@@ -1,7 +1,4 @@
-import com.airobot.device.yanapi.whisperPortaudio.whisperPortaudio
 import snowboyPiper.snowboyPiper
-import vosk.examples.vosk
-import voskPortaudio.portAudio
 
 fun main() {
 //    val launcher = YanLauncher()

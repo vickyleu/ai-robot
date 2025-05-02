@@ -24,7 +24,7 @@ set(HACK_THING_INCLUDE
         "${CMAKE_SOURCE_DIR}/include/vosk/hack"
         "${CMAKE_SOURCE_DIR}/include/piper"
         "${CMAKE_SOURCE_DIR}/include/piper/onnxruntime"
-        "${CMAKE_SOURCE_DIR}/include/piper/hack"
+#        "${CMAKE_SOURCE_DIR}/include/piper/hack"
         "${CMAKE_SOURCE_DIR}/include/whisper"
         "${CMAKE_SOURCE_DIR}/include/opencc"
         "${CMAKE_SOURCE_DIR}/include/opencc/hack"
@@ -40,7 +40,6 @@ add_library(yanapi STATIC source/YanAPI.cpp
         source/alsa_wrapper.cpp
         source/python_export.cpp
         source/snowboy_c_api.cpp
-        source/piper_c_api.cpp
 )
 #add_library(yanapi SHARED YanAPI.cpp python_export.c)
 

@@ -4,8 +4,8 @@ set -e
 case "$1" in
     configure)
         # 解压模型文件
-        if [ -f "/usr/local/share/yanshee-model/vosk-model-small-cn-0.22.zip" ]; then
-            cd /usr/local/share/yanshee-model/
+        if [ -f "/usr/local/share/yanshee-model/vosk/vosk-model-small-cn-0.22.zip" ]; then
+            cd /usr/local/share/yanshee-model/vosk
             unzip -o vosk-model-small-cn-0.22.zip
             rm vosk-model-small-cn-0.22.zip
         fi

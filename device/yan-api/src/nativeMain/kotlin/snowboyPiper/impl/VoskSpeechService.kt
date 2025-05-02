@@ -1,7 +1,7 @@
 @file:OptIn(ExperimentalForeignApi::class, ExperimentalStdlibApi::class, NativeRuntimeApi::class)
 @file:Suppress("FunctionName", "unused", "UNUSED_PARAMETER")
 
-package vosk
+package snowboyPiper.impl
 
 import kotlinx.cinterop.ByteVar
 import kotlinx.cinterop.CPointer
@@ -17,6 +17,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -25,24 +26,25 @@ import platform.posix.FILE
 import platform.posix.fgets
 import platform.posix.pclose
 import platform.posix.popen
+import snowboyPiper.interfaces.SpeechRecognizer
+import snowboyPiper.interfaces.SpeechService
 import kotlin.native.runtime.GC
 import kotlin.native.runtime.NativeRuntimeApi
 
 /**
- * YAN设备Vosk语音服务
+ * Vosk语音服务实现
  *
- * 该类封装了YanVoskSpeechRecognizer，提供了更高级别的API接口，
+ * 该类封装了VoskSpeechRecognizer，提供了更高级别的API接口，
  * 使得在Kotlin Native环境中更容易使用ALSA麦克风采集和Vosk语音识别功能。
  *
- * 增强功能：
+ * 功能：
  * 1. 音频信号增强和降噪
  * 2. 麦克风状态诊断
  * 3. 详细的调试信息输出
  */
-class YanVoskSpeechService {
+class VoskSpeechService(private val recognizer:VoskSpeechRecognizer) : SpeechService {
     companion object {
         // 语音识别器的默认模型路径
-        const val DEFAULT_MODEL = "vosk-model-small-cn-0.22"
 
         /**
          * 执行shell命令并返回输出结果
@@ -52,10 +54,18 @@ class YanVoskSpeechService {
          * @param maxOutputSize 最大输出大小，防止内存溢出，默认4096字节
          * @return 命令执行的输出结果
          */
-        suspend fun executeCommand(
+        /**
+         * 执行shell命令并返回输出结果
+         *
+         * @param command 要执行的命令
+         * @param timeoutMs 命令执行超时时间（毫秒），默认1000ms
+         * @param maxOutputSize 最大输出大小，防止内存溢出，默认4096字节
+         * @return 命令执行的输出结果
+         */
+         suspend fun executeCommand(
             command: String,
-            timeoutMs: Long = 1000,
-            maxOutputSize: Int = 4096
+            timeoutMs: Long= 1000L,
+            maxOutputSize: Int= 4096
         ): String {
             val completableDeferred = CompletableDeferred<String>()
             // 启动一个线程执行命令，以便实现超时控制
@@ -117,8 +127,6 @@ class YanVoskSpeechService {
         }
     }
 
-    // 语音识别器实例
-    private val recognizer = YanVoskSpeechRecognizer()
 
     // 协程作用域和任务
     private val serviceScope = CoroutineScope(Dispatchers.Default)
@@ -126,11 +134,22 @@ class YanVoskSpeechService {
 
     // 识别结果流
     private val _recognitionText = MutableStateFlow<String?>(null)
-    val recognitionText: StateFlow<String?> = _recognitionText.asStateFlow()
+    override val recognitionText: StateFlow<String?> = _recognitionText.asStateFlow()
 
-    // 识别状态流
-    val recognitionState: StateFlow<YanVoskSpeechRecognizer.RecognitionState>
-        get() = recognizer.recognitionState
+    // 识别状态流映射
+    private val _recognitionState = MutableStateFlow(SpeechService.RecognitionState.IDLE)
+    override val recognitionState: StateFlow<SpeechService.RecognitionState> = _recognitionState.asStateFlow()
+
+    // 状态映射函数
+    private fun mapRecognizerState(state: SpeechRecognizer.RecognitionState): SpeechService.RecognitionState {
+        return when (state) {
+            SpeechRecognizer.RecognitionState.IDLE -> SpeechService.RecognitionState.IDLE
+            SpeechRecognizer.RecognitionState.INITIALIZING -> SpeechService.RecognitionState.INITIALIZING
+            SpeechRecognizer.RecognitionState.LISTENING -> SpeechService.RecognitionState.LISTENING
+            SpeechRecognizer.RecognitionState.PROCESSING -> SpeechService.RecognitionState.PROCESSING
+            SpeechRecognizer.RecognitionState.ERROR -> SpeechService.RecognitionState.ERROR
+        }
+    }
 
     /**
      * 初始化语音服务
@@ -138,17 +157,39 @@ class YanVoskSpeechService {
      * @param deviceName ALSA设备名称
      * @param modelPath Vosk模型路径
      * @param sampleRate 音频采样率
+     * @param micVolume 麦克风音量
      * @return 初始化是否成功
      */
-    fun initialize(
-        deviceName: String = "default",
-        modelPath: String = DEFAULT_MODEL,
-        sampleRate: Int = 16000,
-        micVolume: Int = 80
+    override fun initialize(
+        deviceName: String,
+        modelPath: String,
+        sampleRate: Int,
+        micVolume: Int
     ): Boolean {
-        return recognizer.initialize(deviceName, "/usr/local/share/yanshee-model/$modelPath".apply {
-            println("Model path: $this\n")
-        }, sampleRate, micVolume)
+        _recognitionState.value = SpeechService.RecognitionState.INITIALIZING
+
+        println("[INFO] 初始化Vosk语音服务...")
+        try {
+            // 监听识别器状态变化
+            serviceScope.launch {
+                recognizer.recognitionState.collect { state ->
+                    _recognitionState.value = mapRecognizerState(state)
+                }
+            }
+            // 构建完整的模型路径
+            println("[INFO] 使用模型: $modelPath")
+
+
+
+            println("[INFO] Vosk语音服务初始化成功")
+            _recognitionState.value = SpeechService.RecognitionState.IDLE
+            return true
+        } catch (e: Exception) {
+            println("[ERROR] Vosk初始化异常: ${e.message}")
+            e.printStackTrace()
+            _recognitionState.value = SpeechService.RecognitionState.ERROR
+            return false
+        }
     }
 
     /**
@@ -156,142 +197,87 @@ class YanVoskSpeechService {
      *
      * @return 是否成功启动识别
      */
-    fun startRecognition(): Boolean {
-        if (!recognizer.startRecognition()) {
-            return false
+    override fun startRecognition(): Boolean {
+        if (_recognitionState.value == SpeechService.RecognitionState.LISTENING) {
+            println("[WARN] 语音识别已经在运行中")
+            return true
         }
 
-        // 监听识别结果
-        recognitionJob = serviceScope.launch {
-            recognizer.recognitionResult.collect { result ->
-                result?.let {
-                    if (!it.isPartial) {
-                        // 只处理最终结果
-                        _recognitionText.value = it.text
-                    }
+        try {
+            // 重置识别结果
+            _recognitionText.value = null
+
+            // 启动识别器
+            if (!recognizer.startRecognition()) {
+                println("[ERROR] 启动Vosk语音识别失败")
+                return false
+            }
+
+            // 监听识别结果
+            recognitionJob = serviceScope.launch {
+                recognizer.recognitionText.collectLatest { text ->
+                    // 更新服务自身的识别结果流
+                    _recognitionText.value = text
                 }
             }
-        }
 
-        return true
+            return true
+        } catch (e: Exception) {
+            println("[ERROR] 启动语音识别异常: ${e.message}")
+            e.printStackTrace()
+            _recognitionState.value = SpeechService.RecognitionState.ERROR
+            return false
+        }
     }
 
     /**
      * 停止语音识别
      */
-    fun stopRecognition() {
-        recognizer.stopRecognition(true)
-        recognitionJob?.cancel()
-        recognitionJob = null
-    }
-
-    /**
-     * 执行一次语音识别并返回结果
-     *
-     * 这个方法会启动识别，等待一段时间获取结果，然后停止识别
-     *
-     * @param timeoutMs 超时时间（毫秒）
-     * @return 识别结果，如果识别失败则返回null
-     */
-    suspend fun recognizeOnce(timeoutMs: Long = 5000): String? {
-        var result: String? = null
-
-        // 重置结果
-        _recognitionText.value = null
-
-        // 启动识别
-        if (!startRecognition()) {
-            return null
-        }
-
+    override fun stopRecognition() {
         try {
-            // 等待结果或超时
-            withTimeout(timeoutMs) {
-                while (_recognitionText.value == null) {
-                    kotlinx.coroutines.delay(100)
-                }
-                result = _recognitionText.value
-            }
-        } catch (e: TimeoutCancellationException) {
-            // 超时处理
-        } finally {
-            // 停止识别
-            stopRecognition()
-        }
-
-        return result
-    }
-
-    /**
-     * 设置麦克风音量
-     *
-     * @param volume 音量值 (0-100)
-     * @return 设置是否成功
-     */
-    fun setMicrophoneVolume(volume: Int): Boolean {
-        return recognizer.setMicrophoneVolume(volume)
-    }
-
-    /**
-     * 获取当前麦克风音量
-     *
-     * @return 当前音量值 (0-100)
-     */
-    fun getMicrophoneVolume(): Int {
-        return recognizer.getMicrophoneVolume()
-    }
-
-    /**
-     * 检查麦克风状态
-     *
-     * 该方法会尝试捕获一段音频并分析其振幅，以检查麦克风是否正常工作
-     * 同时执行arecord -l命令检查系统麦克风设备
-     *
-     * @param timeout 检查超时时间（毫秒），默认1000ms
-     * @return 麦克风状态信息
-     */
-    suspend fun checkMicrophoneStatus(timeout: Long = 1000): String {
-        // 执行arecord -l命令检查系统麦克风设备，设置超时
-        val arecordOutput = executeCommand("arecord -l", timeoutMs = 500)
-        println("[INFO] 系统麦克风设备检查结果:")
-        println(arecordOutput)
-        var recognitionStarted = false
-        try {
-            // 启动识别以触发音频捕获和分析
-            if (!startRecognition()) {
-                return "麦克风状态检查失败：无法启动语音识别\n系统麦克风设备检查结果:\n$arecordOutput"
-            }
-            recognitionStarted = true
-            // 使用withTimeout避免长时间阻塞
-            withTimeout(timeout + 500) { // 增加500ms以确保有足够时间捕获音频,因为循环刚好是timeout的总时间,加上GC的执行时间, 最后一个循环会导致超时
-                // 短暂等待以收集音频数据，分段收集避免内存压力
-                repeat(5) {
-                    kotlinx.coroutines.delay(timeout / 5)
-                    // 强制GC回收内存
-                    GC.collect()
-                }
-            }
-        } catch (e: TimeoutCancellationException) {
-            println("[WARNING] 麦克风状态检查超时")
+            recognizer.stopRecognition()
+            recognitionJob?.cancel()
+            recognitionJob = null
+            println("[INFO] 语音识别已停止")
         } catch (e: Exception) {
-            println("[ERROR] 麦克风状态检查异常: ${e.message}")
-        } finally {
-            // 确保停止识别并释放资源
-            if (recognitionStarted) {
-                stopRecognition()
-            }
+            println("[ERROR] 停止语音识别异常: ${e.message}")
+            e.printStackTrace()
+            _recognitionState.value = SpeechService.RecognitionState.ERROR
+        }
+    }
+
+    /**
+     * 处理音频数据
+     * @param audioData 音频数据
+     * @return 是否成功处理
+     */
+    override fun processAudio(audioData: ShortArray): Boolean {
+        if (_recognitionState.value != SpeechService.RecognitionState.LISTENING) {
+            return false
         }
 
-        // 返回状态信息
-        return "麦克风状态检查完成，请查看日志输出中的[DEBUG]音频数据信息以诊断问题\n系统麦克风设备检查结果:\n$arecordOutput"
+        try {
+            return recognizer.processAudio(audioData)
+        } catch (e: Exception) {
+            println("[ERROR] 处理音频数据异常: ${e.message}")
+            e.printStackTrace()
+            return false
+        }
     }
+
 
 
     /**
      * 释放资源
      */
-    fun release() {
-        stopRecognition()
-        recognizer.release()
+    override fun release() {
+        try {
+            stopRecognition()
+            recognizer.release()
+            println("[INFO] Vosk资源已释放")
+        } catch (e: Exception) {
+            println("[WARN] 释放Vosk资源时出错: ${e.message}")
+            _recognitionState.value = SpeechService.RecognitionState.ERROR
+        }
     }
 }

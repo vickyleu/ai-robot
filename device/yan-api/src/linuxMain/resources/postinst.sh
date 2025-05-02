@@ -16,8 +16,8 @@ case "$1" in
                 done
                 
                 # 检查是否有需要解压的zip文件
-                if [ -f "/usr/local/share/yanshee-model/vosk-model-small-cn-0.22.zip" ]; then
-                    cd /usr/local/share/yanshee-model/
+                if [ -f "/usr/local/share/yanshee-model/vosk/vosk-model-small-cn-0.22.zip" ]; then
+                    cd /usr/local/share/yanshee-model/vosk
                     unzip vosk-model-small-cn-0.22.zip
                     rm vosk-model-small-cn-0.22.zip
                 fi

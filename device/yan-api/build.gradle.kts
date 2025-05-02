@@ -239,7 +239,6 @@ kotlin {
                     includeDirs(
                         file("src/nativeInterop/cpp/include/piper"),
                         file("src/nativeInterop/cpp/include/piper/onnxruntime"),
-                        file("src/nativeInterop/cpp/include/piper/hack"),
                     )
                     compilerOpts(
                         "-fPIC",
@@ -612,10 +611,14 @@ val installDeb: TaskProvider<Task> = tasks.register<Task>("installDeb") {
             if (!jumpModelInstall && dataDeb.exists()) {
                 installCommands.append("sudo dpkg -i --force-overwrite /tmp/${dataDeb.name}; ")
             }
-
+            installCommands.append("sudo pkill -9 $packageName || true; ")
             // 然后安装主包（不使用 --purge 命令）
             installCommands.append("sudo dpkg -i /tmp/${deb.name}; ")
+            installCommands.append("ls -la /usr/local/bin/yanshee/$packageName; ")
+            installCommands.append("md5sum /usr/local/bin/yanshee/$packageName; ")
+            installCommands.append("sudo ldconfig; ")
             installCommands.append("gdb /usr/local/bin/yanshee/$packageName -ex run")
+//            installCommands.append("gdb /usr/local/bin/yanshee/$packageName -ex 'set confirm off' -ex 'b piper_init' -ex 'run'")
 
             // 使用sshpass传输deb包到树莓派
             // 直接使用exec而不是providers.exec来避免ProcessOutputValueSource错误
