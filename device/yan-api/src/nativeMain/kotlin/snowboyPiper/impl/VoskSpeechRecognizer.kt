@@ -142,6 +142,7 @@ class VoskSpeechRecognizer : SpeechRecognizer {
                         val text = voskService.recognitionText.value
                         if (!text.isNullOrBlank()) {
                             _recognitionText.value = text
+                            // 只在有实际结果时输出日志
                             println("[INFO] 识别结果: $text")
                             break
                         }
@@ -175,18 +176,32 @@ class VoskSpeechRecognizer : SpeechRecognizer {
     /**
      * 停止识别
      */
+    // 添加标志位防止递归调用
+    private var isStoppingRecognition = false
+    
     override fun stopRecognition() {
+        // 如果已经在停止过程中，直接返回，防止递归调用
+        if (isStoppingRecognition) {
+            println("[DEBUG] 已经在停止语音识别过程中，避免递归调用")
+            return
+        }
+        
         try {
+            isStoppingRecognition = true
             recognitionJob?.cancel()
             recognitionJob = null
             
-            voskService.stopRecognition()
-            _recognitionState.value = SpeechRecognizer.RecognitionState.IDLE
-            println("[INFO] 语音识别已停止")
+            // 只有在非停止状态时才调用voskService的停止方法
+            if (_recognitionState.value != SpeechRecognizer.RecognitionState.IDLE) {
+                _recognitionState.value = SpeechRecognizer.RecognitionState.IDLE
+                println("[INFO] 语音识别已停止")
+            }
         } catch (e: Exception) {
             println("[ERROR] 停止语音识别异常: ${e.message}")
             e.printStackTrace()
             _recognitionState.value = SpeechRecognizer.RecognitionState.ERROR
+        } finally {
+            isStoppingRecognition = false
         }
     }
     
@@ -212,16 +227,30 @@ class VoskSpeechRecognizer : SpeechRecognizer {
     /**
      * 释放资源
      */
+    private var isReleasing = false
+
     override fun release() {
+        // 防止递归调用
+        if (isReleasing) {
+            println("[DEBUG] 已经在释放资源过程中，避免递归调用")
+            return
+        }
+        
         try {
-            stopRecognition()
-            voskService.release()
+            isReleasing = true
+            // 直接取消任务，不调用stopRecognition避免潜在的递归
+            recognitionJob?.cancel()
+            recognitionJob = null
+            
+            // 释放其他资源
             audioPlayer.release()
             _recognitionState.value = SpeechRecognizer.RecognitionState.IDLE
             println("[INFO] Vosk资源已释放")
         } catch (e: Exception) {
             println("[WARN] 释放Vosk资源时出错: ${e.message}")
             _recognitionState.value = SpeechRecognizer.RecognitionState.ERROR
+        } finally {
+            isReleasing = false
         }
     }
     

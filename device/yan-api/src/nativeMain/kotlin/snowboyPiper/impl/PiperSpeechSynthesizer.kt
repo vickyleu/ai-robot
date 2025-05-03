@@ -112,17 +112,16 @@ class PiperSpeechSynthesizer : SpeechSynthesizer {
             val audioBufferVar = nativeHeap.allocArray<CPointerVar<ShortVar>>(text.length)
             val audioLengthVar = nativeHeap.alloc<IntVar>()
             val audioData = piper_wrapper_text_to_audio(piperContext, text,audioBufferVar, audioLengthVar.ptr)
-            
-            if (audioData <= 0) {
+            if (audioData < 0) {
                 println("[ERROR] 语音合成失败")
                 _synthesisState.value = SpeechSynthesizer.SynthesisState.ERROR
                 return null
             }
             val audioLength = audioLengthVar.value
+            val buffer: CPointer<ShortVar>? = audioBufferVar.pointed.value
             println("[INFO] 语音合成成功，长度: $audioLength 帧")
-            
             _synthesisState.value = SpeechSynthesizer.SynthesisState.READY
-            return Pair(audioBufferVar.pointed.value, audioLength)
+            return Pair(buffer, audioLength)
         } catch (e: Exception) {
             println("[ERROR] 语音合成异常: ${e.message}")
             e.printStackTrace()

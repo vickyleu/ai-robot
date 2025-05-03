@@ -38,6 +38,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import platform.posix.setenv
 import snowboyPiper.interfaces.AudioDevice
+import kotlin.experimental.ExperimentalNativeApi
 import kotlin.time.ExperimentalTime
 
 /**
@@ -470,6 +471,7 @@ class PortAudioDevice(private val speechRecognizer: VoskSpeechRecognizer) : Audi
     /**
      * 关闭音频流
      */
+    @OptIn(ExperimentalNativeApi::class)
     override suspend fun closeStreams() {
         try {
             audioMutex.withLock {
@@ -478,7 +480,7 @@ class PortAudioDevice(private val speechRecognizer: VoskSpeechRecognizer) : Audi
                     try {
                         Pa_StopStream(inputStreamPtr.value)
                         Pa_CloseStream(inputStreamPtr.value)
-                        println("[INFO] 输入音频流已关闭")
+                        println("[INFO] 输入音频流已关闭 \n ${Throwable().getStackTrace().joinToString(" \n")} \n")
                     } catch (e: Exception) {
                         println("[WARN] 关闭输入流时出错: ${e.message}")
                     }

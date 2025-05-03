@@ -2,20 +2,19 @@
 
 package snowboyPiper.impl
 
-import com.airobot.alsainterop.fclose
-import com.airobot.alsainterop.fopen
-import com.airobot.alsainterop.fwrite
+import com.airobot.device.yanapi.snowboyPiper.interfaces.AudioAnalyzer
 import com.airobot.snowboyinterop.SnowboyDetectWrapper
 import com.airobot.snowboyinterop.snowboy_create
 import com.airobot.snowboyinterop.snowboy_free
 import com.airobot.snowboyinterop.snowboy_run_detection_int16
+import com.airobot.snowboyinterop.snowboy_set_audio_gain
+import com.airobot.snowboyinterop.snowboy_set_high_sensitivity
 import com.airobot.snowboyinterop.snowboy_set_sensitivity
 import kotlinx.cinterop.CPointer
 import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.cinterop.ShortVar
 import kotlinx.cinterop.allocArray
 import kotlinx.cinterop.nativeHeap
-import kotlinx.cinterop.refTo
 import kotlinx.cinterop.set
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -26,6 +25,9 @@ import kotlinx.coroutines.launch
 import snowboyPiper.impl.VoskSpeechService.Companion.executeCommand
 import snowboyPiper.interfaces.AudioPlayer
 import snowboyPiper.interfaces.KeywordDetector
+import snowboyPiper.interfaces.KeywordDetector.DetectorState
+import snowboyPiper.interfaces.KeywordDetector.DetectorState.*
+import kotlin.math.abs
 import kotlin.time.Clock
 import kotlin.time.ExperimentalTime
 
@@ -33,7 +35,9 @@ import kotlin.time.ExperimentalTime
  * Snowboy关键词检测器实现
  * 负责初始化和运行Snowboy关键词检测
  */
-class SnowboyKeywordDetector : KeywordDetector {
+class SnowboyKeywordDetector(private val audioAnalyzer: AudioAnalyzer) : KeywordDetector {
+
+
     // 检测器实例
     private var snowboyDetector: CPointer<SnowboyDetectWrapper>? = null
     
@@ -44,6 +48,15 @@ class SnowboyKeywordDetector : KeywordDetector {
     // 协程作用域
     private val scope = CoroutineScope(Dispatchers.Default)
     
+    // 去抖动控制
+    private var lastDetectionTime = 0L
+    private val debounceTimeMs = 2000L // 2秒去抖动时间
+    
+    // 存储初始化参数，用于可能的重新初始化
+    private var lastResourcePath = ""
+    private var lastModelPath = ""
+    private var lastSensitivity = 0.95f
+    
     /**
      * 初始化检测器
      * @param resourcePath 资源文件路径
@@ -52,6 +65,11 @@ class SnowboyKeywordDetector : KeywordDetector {
      * @return 初始化是否成功
      */
     override fun initialize(resourcePath: String, modelPath: String, sensitivity: Float): Boolean {
+        // 保存初始化参数，用于可能的重新初始化
+        lastResourcePath = resourcePath
+        lastModelPath = modelPath
+        lastSensitivity = sensitivity
+        
         _detectionState.value = KeywordDetector.DetectionState.INITIALIZING
         
         // 检查文件是否存在
@@ -79,9 +97,27 @@ class SnowboyKeywordDetector : KeywordDetector {
                 return false
             }
             
-            // 设置灵敏度
-            println("[INFO] 设置灵敏度${sensitivity}...")
-            snowboy_set_sensitivity(snowboyDetector, sensitivity.toString())
+            // 提高灵敏度以增加检测成功率
+            // 灵敏度范围为0-1，值越高越容易检测到关键词，但可能增加误检率
+            // 调整为0.98以进一步提高检测率
+            println("[INFO] 设置灵敏度 ${sensitivity}）...") // 1.0f
+             snowboy_set_high_sensitivity(snowboyDetector, sensitivity.toString())
+            snowboy_set_audio_gain(snowboyDetector, 8f)
+
+            // 验证灵敏度设置是否生效
+            println("[DEBUG] 灵敏度设置完成，准备进行模型验证")
+            
+            // 检查模型是否正确加载
+            scope.launch {
+                // 验证模型文件大小和权限
+                val checkModelSizeCmd = "ls -la $modelPath"
+                val modelSizeInfo = executeCommand(checkModelSizeCmd).trim()
+                println("[INFO] 模型文件信息: $modelSizeInfo")
+                // 检查模型文件内容格式
+                val checkModelFormatCmd = "file $modelPath"
+                val modelFormatInfo = executeCommand(checkModelFormatCmd).trim()
+                println("[INFO] 模型文件格式: $modelFormatInfo")
+            }
             println("[INFO] Snowboy检测器初始化成功")
             
             _detectionState.value = KeywordDetector.DetectionState.LISTENING
@@ -100,10 +136,10 @@ class SnowboyKeywordDetector : KeywordDetector {
      * @param frameCount 帧数
      * @return 检测结果，大于0表示检测到关键词，0表示未检测到，负值表示错误
      */
-    override fun detect(player: AudioPlayer, buffer: ShortArray, frameCount: Int): Int {
+    override fun detect(player: AudioPlayer, buffer: ShortArray, frameCount: Int): DetectorState {
         if (snowboyDetector == null) {
             println("[ERROR] Snowboy检测器未初始化")
-            return -1
+            return DetectorState.ERROR
         }
 
         if (_detectionState.value != KeywordDetector.DetectionState.LISTENING) {
@@ -112,63 +148,102 @@ class SnowboyKeywordDetector : KeywordDetector {
 
         try {
             val bufferPtr = nativeHeap.allocArray<ShortVar>(frameCount)
-
-            // 复制音频数据到本地内存
-            for (i in 0 until frameCount) {
-                bufferPtr[i] = buffer[i]
-            }
-
-            // 运行检测
-            val result = snowboy_run_detection_int16(snowboyDetector, bufferPtr, frameCount, is_end = 1)
-
-            // 释放本地内存
-            nativeHeap.free(bufferPtr.rawValue)
-
-            if (result > 0) {
-                // 检测到关键词
-                println("[INFO] 检测到关键词！")
-                _detectionState.value = KeywordDetector.DetectionState.DETECTED
-            }
-            if(result==-2){
-
-                // 使用临时文件名
-                val tempFilePath = "/tmp/snowboy_audio_${Clock.System.now().toEpochMilliseconds()}.raw"
-
-                // 使用平台特定的文件写入
-                val file = fopen(tempFilePath, "wb")
-                if (file != null) {
-                    try {
-                        // 写入音频数据
-                        for (i in 0 until frameCount) {
-                            val value = buffer[i].toInt()
-                            val bytes = byteArrayOf(
-                                (value and 0xFF).toByte(),
-                                ((value shr 8) and 0xFF).toByte()
-                            )
-                            fwrite(bytes.refTo(0), 1u, 2u, file)
-                        }
-                    } finally {
-                        fclose(file)
+            // 1. 动态范围压缩 - 提升小信号，压缩大信号
+            fun compressAudio(audio: ShortArray, threshold: Int = 10000, ratio: Float = 0.5f): ShortArray {
+                return ShortArray(audio.size) { i ->
+                    val sample = audio[i]
+                    if (abs(sample.toInt()) > threshold) {
+                        val compressed = threshold + ((abs(sample.toInt()) - threshold) * ratio)
+                        (if (sample > 0) compressed else -compressed).toInt().toShort()
+                    } else {
+                        sample
                     }
-//                    val playCommand = "aplay -D plughw:0,0 -f S16_LE -r 48000 -c 1 $tempFilePath && rm $tempFilePath"
-                    // 执行命令播放音频并在播放后删除临时文件
-                    scope.launch {
-                        player.playAudio(tempFilePath)
-//                        executeCommand(playCommand)
-                    }
-                } else {
-                    println("[ERROR] 无法创建临时文件")
                 }
             }
 
+            // 2. 应用于检测前
+            val processedData = compressAudio(buffer)
+            // 复制音频数据到本地内存
+            for (i in 0 until frameCount) {
+                bufferPtr[i] = processedData[i]
+            }
+            // 检测当前帧是否有语音活动
+            val hasVoice = audioAnalyzer.hasVoiceActivity(processedData)
+            println("[DEBUG] 检测到语音活动: $hasVoice")
+            // 当没有检测到语音活动时，将is_end设为1表示语音结束
+            // 当检测到语音活动时，将is_end设为0表示语音未结束，继续处理
+            val is_end = if (!hasVoice) 1 else 0
+
+            // 执行检测
+            val result =  DetectorState.fromValue(snowboy_run_detection_int16(snowboyDetector, bufferPtr, frameCount, is_end = is_end))
+            // 释放本地内存
+            nativeHeap.free(bufferPtr.rawValue)
+
+            // 处理检测结果
+            when(result){
+                Silence -> {
+                    // 检测到静音，可能是背景噪声或无声
+                    println("[DEBUG] 检测到静音")
+                    _detectionState.value = KeywordDetector.DetectionState.LISTENING
+                }
+                ERROR -> {
+                    // 检测器错误，可能是初始化失败或其他问题
+                    println("[ERROR] 检测器错误")
+                    // 错误情况，应用去抖动机制避免频繁报错
+                    val currentTime = Clock.System.now().toEpochMilliseconds()
+                    if (currentTime - lastDetectionTime > debounceTimeMs) {
+                        println("[WARN] 关键词检测错误，错误码: $result")
+                        // 尝试重新初始化检测器
+                        scope.launch {
+                            println("[INFO] 尝试重新初始化Snowboy检测器...")
+                            // 先释放资源
+                            snowboyDetector?.let {
+                                snowboy_free(it)
+                            }
+                            snowboyDetector = null
+
+                            // 短暂延迟后重新初始化
+                            kotlinx.coroutines.delay(1000)
+                            // 使用类成员变量存储初始化参数，避免硬编码路径
+                            if (lastResourcePath.isNotEmpty() && lastModelPath.isNotEmpty()) {
+                                val success = initialize(lastResourcePath, lastModelPath, lastSensitivity)
+                                if (!success) {
+                                    println("[ERROR] 检测器重新初始化失败")
+                                }
+                            }
+                        }
+                        lastDetectionTime = currentTime
+                    }
+                    _detectionState.value = KeywordDetector.DetectionState.ERROR
+                }
+                NoEvent -> {
+                    // 没有检测到关键词，继续监听
+                    println("[DEBUG] 没有检测到关键词")
+                    _detectionState.value = KeywordDetector.DetectionState.LISTENING
+                }
+                Hotword1Triggered,
+                Hotword2Triggered,
+                Hotword3Triggered -> {
+                    // 检测到关键词，更新状态
+                    println("[DEBUG] 检测到关键词")
+                    val currentTime = Clock.System.now().toEpochMilliseconds()
+                    if (currentTime - lastDetectionTime > debounceTimeMs) {
+                        println("[INFO] 检测到关键词！结果值: $result")
+                        _detectionState.value = KeywordDetector.DetectionState.DETECTED
+                        lastDetectionTime = currentTime
+                    }
+                }
+            }
             return result
         } catch (e: Exception) {
             println("[ERROR] 关键词检测异常: ${e.message}")
-            e.printStackTrace()
             _detectionState.value = KeywordDetector.DetectionState.ERROR
-            return -1
+            return DetectorState.ERROR
         }
     }
+
+    // 移除了不再使用的音频分析方法，简化代码结构
+
 
     /**
      * 释放资源

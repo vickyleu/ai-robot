@@ -26,6 +26,7 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import snowboyPiper.interfaces.KeywordDetector.DetectorState
 import snowboyPiper.interfaces.VoiceAssistantService
 import kotlin.time.Clock
 import kotlin.time.ExperimentalTime
@@ -38,17 +39,17 @@ import kotlin.time.ExperimentalTime
 class SnowboyPiperVoiceAssistant(
     private val config: VoiceAssistantConfig
 ) : VoiceAssistantService {
-
-    // 组件
-    private val keywordDetector = SnowboyKeywordDetector()
-    private val speechSynthesizer = PiperSpeechSynthesizer()
-    private val speechRecognizer = VoskSpeechRecognizer()
-
     // 辅助管理组件
     private val audioAnalyzer: AudioAnalyzer = BasicAudioAnalyzer(
         energyThreshold = config.energyThreshold,
-        noiseGateThreshold = config.noiseGateThreshold
+        noiseGateThreshold = config.noiseGateThreshold,
+        validVoiceRmsThreshold = config.validVoiceRmsThreshold,
+        validVoiceZcrThreshold= config.validVoiceZcrThreshold
     )
+    // 组件
+    private val speechSynthesizer = PiperSpeechSynthesizer()
+    private val speechRecognizer = VoskSpeechRecognizer()
+    private val keywordDetector = SnowboyKeywordDetector(audioAnalyzer)
     private val voiceStateManager: VoiceStateManager = VoiceStateManagerImpl()
     private val audioBufferManager: AudioBufferManager = AudioBufferManagerImpl()
 
@@ -64,6 +65,10 @@ class SnowboyPiperVoiceAssistant(
     private var lastKeywordDetectionTime = 0L
     private var lastCommandProcessingTime = 0L
     private var lastErrorLogTime = 0L
+    
+    // 关键词检测去抖动控制
+    private var lastKeywordTriggerTime = 0L
+    private val keywordDebouncePeriodMs = 3000L // 关键词触发后的去抖动时间（毫秒）
 
     // 协程作用域和任务
     private val scope = CoroutineScope(Dispatchers.Default)
@@ -188,7 +193,7 @@ class SnowboyPiperVoiceAssistant(
 
                             // 如果状态从非说话变为说话，并且在命令状态，清空累积器准备接收新语音
                             if (stateChanged && _assistantState.value == VoiceAssistantService.AssistantState.LISTENING_COMMAND) {
-                                println("[DEBUG] 检测到新语音开始，准备缓冲...")
+                                // 移除调试日志，减少输出
                                 audioBufferManager.clear()
                                 (voiceStateManager as? VoiceStateManagerImpl)?.startSpeechBuffer()
                             }
@@ -268,81 +273,86 @@ class SnowboyPiperVoiceAssistant(
 
                                 if (hasValidVoice) {
                                     // 只在有效语音时进行关键词检测
-                                    val result = keywordDetector.detect(speechRecognizer.playerDevice(),accumulatedData, accumulatedData.size)
+                                    val result = keywordDetector.detect(speechRecognizer.playerDevice(), accumulatedData, accumulatedData.size)
+                                    // 只在结果为正时处理
+                                    if (result.value > 0) {
+                                        // 检查是否在去抖动期内
+                                        if (currentTime - lastKeywordTriggerTime < keywordDebouncePeriodMs) {
+                                            // 去掉调试日志，减少输出
+                                        } else {
+                                            println("[INFO] 检测到关键词！结果: $result")
+                                            lastKeywordTriggerTime = currentTime
 
-                                    // 只在结果为正时打印
-                                    if (result > 0) {
-                                        println("[INFO] 检测到关键词！结果: $result")
+                                            // 如果当前已经在命令监听状态，先停止当前的语音识别会话
+                                            if (_assistantState.value == VoiceAssistantService.AssistantState.LISTENING_COMMAND) {
+                                                println("[INFO] 停止当前语音识别会话，准备开始新的会话")
+                                                speechRecognizer.stopRecognition()
+                                                // 等待语音识别器完全停止
+                                                kotlinx.coroutines.delay(500)
+                                            }
 
-                                        // 检测到关键词，切换到命令监听状态
-                                        println("[INFO] 开始监听命令...")
-                                        _assistantState.value = VoiceAssistantService.AssistantState.LISTENING_COMMAND
+                                            // 检测到关键词，切换到命令监听状态
+                                            println("[INFO] 开始监听命令...")
+                                            _assistantState.value =
+                                                VoiceAssistantService.AssistantState.LISTENING_COMMAND
 
-                                        // 播放提示音
-                                        speak("你好")
+                                            // 播放提示音
+                                            speak("你好")
 
-                                        // 重置状态
-                                        voiceStateManager.reset()
+                                            // 重置状态
+                                            voiceStateManager.reset()
 
-                                        // 清空累积器，准备接收新命令
-                                        audioBufferManager.clear()
+                                            // 清空累积器，准备接收新命令
+                                            audioBufferManager.clear()
 
-                                        // 启动语音识别
-                                        _recognizedText.value = null
-                                        speechRecognizer.startRecognition(config.speechRecognitionTimeoutMs)
-                                    } else if (result == -2) {
-                                        // 减少错误日志频率
-                                        if (currentTime - lastErrorLogTime > config.errorLogIntervalMs) {
+                                            // 启动语音识别
+                                            _recognizedText.value = null
+                                            speechRecognizer.startRecognition(config.speechRecognitionTimeoutMs)
+                                        }
+                                    }else if (result == DetectorState.Silence) {
+                                        // 减少错误日志频率，只在必要时输出
+                                        if (currentTime - lastErrorLogTime > config.errorLogIntervalMs * 10) { // 增加间隔，减少日志
                                             println("[WARN] 关键词检测错误")
                                             lastErrorLogTime = currentTime
                                         }
                                     }
-                                } else {
-                                    // 无有效语音，不进行关键词检测
-                                    // 可以选择打印调试信息或静默处理
-                                    if (currentTime - lastErrorLogTime > config.errorLogIntervalMs) {
-                                        println("[DEBUG] 跳过关键词检测：未检测到有效语音")
-                                        lastErrorLogTime = currentTime
-                                    }
+                                    // 移除无效语音的调试日志
                                 }
 
-                                // 更新关键词检测时间
-                                lastKeywordDetectionTime = currentTime
-
-                                // 保留一部分音频用于连续检测
-                                audioBufferManager.retainOverlap(config.overlapSize)
-                            }
-
-                            // 命令处理逻辑
-                            if (_assistantState.value == VoiceAssistantService.AssistantState.LISTENING_COMMAND &&
-                                audioBufferManager.size >= 8000 && // 约0.5秒的音频
-                                voiceStateManager.speechStarted && voiceStateManager.speechBufferStarted) {
-
-                                if (currentTime - lastCommandProcessingTime >= config.commandProcessingIntervalMs) {
-                                    // 处理累积的音频
-                                    val processingData = audioBufferManager.getAccumulatedAudio()
-                                    speechRecognizer.processAudio(processingData)
-
-                                    // 检查是否超时
-                                    if (!voiceStateManager.isSpeaking &&
-                                        currentTime - voiceStateManager.lastSpeechDetectedTime > config.speechRecognitionTimeoutMs) {
-                                        // 超时，回到关键词监听状态
-                                        println("[INFO] 命令监听超时，回到关键词监听状态")
-                                        speechRecognizer.stopRecognition()
-                                        _assistantState.value = VoiceAssistantService.AssistantState.LISTENING_KEYWORD
-
-                                        // 重置状态
-                                        voiceStateManager.reset()
-                                    }
-                                    // 更新处理时间
-                                    lastCommandProcessingTime = currentTime
+                                    // 更新关键词检测时间
+                                    lastKeywordDetectionTime = currentTime
+                                    // 保留一部分音频用于连续检测
+                                    audioBufferManager.retainOverlap(config.overlapSize)
                                 }
-                            }
+                                // 命令处理逻辑
+                                if (_assistantState.value == VoiceAssistantService.AssistantState.LISTENING_COMMAND &&
+                                    audioBufferManager.size >= 8000 && // 约0.5秒的音频
+                                    voiceStateManager.speechStarted && voiceStateManager.speechBufferStarted) {
 
-                            // 主循环延迟
-                            kotlinx.coroutines.delay(config.mainLoopDelayMs)
-                        }
-                    } finally {
+                                    if (currentTime - lastCommandProcessingTime >= config.commandProcessingIntervalMs) {
+                                        // 处理累积的音频
+                                        val processingData = audioBufferManager.getAccumulatedAudio()
+                                        speechRecognizer.processAudio(processingData)
+
+                                        // 检查是否超时
+                                        if (!voiceStateManager.isSpeaking &&
+                                            currentTime - voiceStateManager.lastSpeechDetectedTime > config.speechRecognitionTimeoutMs) {
+                                            // 超时，回到关键词监听状态
+                                            println("[INFO] 命令监听超时，回到关键词监听状态")
+                                            speechRecognizer.stopRecognition()
+                                            _assistantState.value = VoiceAssistantService.AssistantState.LISTENING_KEYWORD
+
+                                            // 重置状态
+                                            voiceStateManager.reset()
+                                        }
+                                        // 更新处理时间
+                                        lastCommandProcessingTime = currentTime
+                                    }
+                                }
+                                // 主循环延迟
+                                kotlinx.coroutines.delay(config.mainLoopDelayMs)
+                            }
+                    }finally {
                         // 确保缓冲区在循环结束后被释放，而不是在循环内部
                         nativeHeap.free(buffer.rawValue)
                     }
@@ -397,7 +407,9 @@ class SnowboyPiperVoiceAssistant(
             _assistantState.value = VoiceAssistantService.AssistantState.RESPONDING
 
             // 合成语音
-            val (audioData, audioLength) = speechSynthesizer.synthesize(text) ?: return false
+            val (audioData, audioLength) = speechSynthesizer.synthesize(text) ?: return false.apply{
+               println("speechSynthesizer.synthesize(text) text=${text}\n")
+            }
 
             // 打开音频输出流
             if (!speechRecognizer.recordDevice().openOutputStream(-1, config.sampleRate, config.channels)) {
@@ -412,10 +424,6 @@ class SnowboyPiperVoiceAssistant(
             memScoped {
                 com.airobot.piperinterop.piper_wrapper_free_audio(audioData)
             }
-
-            // 关闭音频输出流
-            speechRecognizer.recordDevice().closeStreams()
-
             return result > 0
         } catch (e: Exception) {
             println("[ERROR] 播放语音异常: ${e.message}")

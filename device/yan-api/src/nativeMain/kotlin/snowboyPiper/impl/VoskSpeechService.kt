@@ -197,19 +197,34 @@ class VoskSpeechService(private val recognizer:VoskSpeechRecognizer) : SpeechSer
      *
      * @return 是否成功启动识别
      */
+    // 添加标志位防止重复启动
+    private var isStartingRecognition = false
+    
     override fun startRecognition(): Boolean {
-        if (_recognitionState.value == SpeechService.RecognitionState.LISTENING) {
-            println("[WARN] 语音识别已经在运行中")
+        // 如果已经在启动过程中，直接返回，防止重复调用
+        if (isStartingRecognition) {
+            // 移除调试日志，减少输出
             return true
+        }
+        
+        // 如果已经在监听状态，先停止当前会话再重新启动
+        if (_recognitionState.value == SpeechService.RecognitionState.LISTENING) {
+            // 简化日志输出
+            stopRecognition()
+            // 短暂延迟确保停止完成
+            kotlinx.coroutines.runBlocking { kotlinx.coroutines.delay(100) }
         }
 
         try {
+            isStartingRecognition = true
+            
             // 重置识别结果
             _recognitionText.value = null
 
             // 启动识别器
             if (!recognizer.startRecognition()) {
                 println("[ERROR] 启动Vosk语音识别失败")
+                isStartingRecognition = false
                 return false
             }
 
@@ -227,15 +242,26 @@ class VoskSpeechService(private val recognizer:VoskSpeechRecognizer) : SpeechSer
             e.printStackTrace()
             _recognitionState.value = SpeechService.RecognitionState.ERROR
             return false
+        } finally {
+            isStartingRecognition = false
         }
     }
 
     /**
      * 停止语音识别
      */
+    // 添加标志位防止递归调用
+    private var isStoppingRecognition = false
+    
     override fun stopRecognition() {
+        // 如果已经在停止过程中，直接返回，防止递归调用
+        if (isStoppingRecognition) {
+            println("[DEBUG] 已经在停止语音识别过程中，避免递归调用")
+            return
+        }
+        
         try {
-            recognizer.stopRecognition()
+            isStoppingRecognition = true
             recognitionJob?.cancel()
             recognitionJob = null
             println("[INFO] 语音识别已停止")
@@ -243,6 +269,8 @@ class VoskSpeechService(private val recognizer:VoskSpeechRecognizer) : SpeechSer
             println("[ERROR] 停止语音识别异常: ${e.message}")
             e.printStackTrace()
             _recognitionState.value = SpeechService.RecognitionState.ERROR
+        } finally {
+            isStoppingRecognition = false
         }
     }
 
@@ -270,14 +298,29 @@ class VoskSpeechService(private val recognizer:VoskSpeechRecognizer) : SpeechSer
     /**
      * 释放资源
      */
+    private var isReleasing = false
+
     override fun release() {
+        // 防止递归调用
+        if (isReleasing) {
+            println("[DEBUG] 已经在释放资源过程中，避免递归调用")
+            return
+        }
+        
         try {
-            stopRecognition()
-            recognizer.release()
+            isReleasing = true
+            // 直接取消任务，不调用stopRecognition避免潜在的递归
+            recognitionJob?.cancel()
+            recognitionJob = null
+            
+            // 设置状态为IDLE
+            _recognitionState.value = SpeechService.RecognitionState.IDLE
             println("[INFO] Vosk资源已释放")
         } catch (e: Exception) {
             println("[WARN] 释放Vosk资源时出错: ${e.message}")
             _recognitionState.value = SpeechService.RecognitionState.ERROR
+        } finally {
+            isReleasing = false
         }
     }
 }

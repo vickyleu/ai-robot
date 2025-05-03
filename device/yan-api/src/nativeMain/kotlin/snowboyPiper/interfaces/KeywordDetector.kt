@@ -21,6 +21,19 @@ interface KeywordDetector {
         DETECTED,       // 检测到关键词
         ERROR           // 错误状态
     }
+    enum class DetectorState(val value: Int) {
+        Silence(-2),
+        ERROR(-1),
+        NoEvent(0),
+        Hotword1Triggered(1),
+        Hotword2Triggered(2),
+        Hotword3Triggered(3);
+        companion object {
+            fun fromValue(value: Int): DetectorState {
+                return entries.firstOrNull { it.value == value } ?: ERROR
+            }
+        }
+    }
     
     /**
      * 当前检测状态
@@ -34,7 +47,7 @@ interface KeywordDetector {
      * @param sensitivity 灵敏度，范围0-1
      * @return 初始化是否成功
      */
-    fun initialize(resourcePath: String, modelPath: String, sensitivity: Float = 0.8f): Boolean
+    fun initialize(resourcePath: String, modelPath: String, sensitivity: Float = 1f): Boolean
     
     /**
      * 检测关键词
@@ -42,7 +55,7 @@ interface KeywordDetector {
      * @param frameCount 帧数
      * @return 检测结果，大于0表示检测到关键词，0表示未检测到，负值表示错误
      */
-    fun detect(player: AudioPlayer,buffer: ShortArray, frameCount: Int): Int
+    fun detect(player: AudioPlayer,buffer: ShortArray, frameCount: Int): DetectorState
     
     /**
      * 释放资源

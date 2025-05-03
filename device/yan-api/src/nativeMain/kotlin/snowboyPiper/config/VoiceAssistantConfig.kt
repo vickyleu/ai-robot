@@ -8,7 +8,7 @@ data class VoiceAssistantConfig(
 
     // 模型路径
     val resourcePath: String = "/usr/local/share/yanshee-model/snowboy/common.res",
-    val modelPath: String = "/usr/local/share/yanshee-model/snowboy/models/snowboy.umdl",
+    val modelPath: String = "/usr/local/share/yanshee-model/snowboy/models/xiaodu.pmdl",
     val piperModelPath: String = "/usr/local/share/yanshee-model/piper/zh_CN-huayan-x_low.onnx",
     val piperConfigPath: String = "/usr/local/share/yanshee-model/piper/zh_CN-huayan-x_low.onnx.json",
     val voskModelPath: String = "/usr/local/share/yanshee-model/vosk/vosk-model-small-cn-0.22",
@@ -20,8 +20,10 @@ data class VoiceAssistantConfig(
     val overlapSize: Int = 16000, // 保留约1秒的音频用于连续检测
 
     // VAD参数
-    val energyThreshold: Double = 500.0,
-    val noiseGateThreshold: Double = 200.0,
+    val energyThreshold: Double = 300.0,// 能量阈值，使检测更敏感
+    val noiseGateThreshold: Double = 100.0,
+    val validVoiceRmsThreshold: Double = 150.0,// 有效语音RMS阈值
+    val validVoiceZcrThreshold: Double = 0.5,// 有效语音RMS阈值
     val silenceFramesThreshold: Int = 45,
 
     // 时间控制

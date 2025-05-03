@@ -2,17 +2,21 @@ package com.airobot.device.yanapi.snowboyPiper.impl
 
 import com.airobot.device.yanapi.snowboyPiper.interfaces.AudioAnalyzer
 import kotlin.math.abs
+import kotlin.math.max
 import kotlin.math.sqrt
 
 class BasicAudioAnalyzer(
-    private val energyThreshold: Double = 500.0,
-    private val noiseGateThreshold: Double = 200.0,
-    private val validVoiceRmsThreshold: Double = 500.0,
-    private val validVoiceZcrThreshold: Double = 0.3
+    private val energyThreshold: Double,
+    private val noiseGateThreshold: Double,
+    private val validVoiceRmsThreshold: Double,
+    private val validVoiceZcrThreshold: Double
 ) : AudioAnalyzer {
 
     private var backgroundNoiseLevel = 0.0
-
+    private var adaptiveRmsThreshold = validVoiceRmsThreshold
+    private val adaptationFactor = 0.95 // 适应因子
+    private var silenceCounter = 0
+    private val maxSilenceBeforeAdapt = 10
     override fun hasVoiceActivity(audioData: ShortArray): Boolean {
         var energy = 0.0
         for (sample in audioData) {
@@ -48,14 +52,14 @@ class BasicAudioAnalyzer(
     }
 
     override fun containsValidVoice(audioData: ShortArray): Boolean {
-        // 计算RMS (Root Mean Square)能量
+        // 计算RMS
         var sumSquares = 0.0
         for (sample in audioData) {
             sumSquares += (sample * sample)
         }
         val rms = sqrt(sumSquares / audioData.size)
 
-        // 计算零交叉率(Zero Crossing Rate)，可以帮助区分语音和噪音
+        // 计算ZCR
         var zeroCrossings = 0
         for (i in 1 until audioData.size) {
             if ((audioData[i] > 0 && audioData[i-1] <= 0) ||
@@ -65,14 +69,27 @@ class BasicAudioAnalyzer(
         }
         val zcr = zeroCrossings.toDouble() / audioData.size
 
-        // 语音通常有一定的能量和适中的零交叉率
-        // 纯噪音往往零交叉率高，而无声段能量低
-        val hasVoice = rms > validVoiceRmsThreshold && zcr < validVoiceZcrThreshold
-
-        // 仅在有语音的情况下打印调试信息
-        if (hasVoice) {
-            println("[DEBUG] 音频分析 - RMS: $rms, ZCR: $zcr, 判断: ${if(hasVoice) "有语音" else "无语音"}")
+        // 动态调整RMS阈值
+        if (rms < adaptiveRmsThreshold) {
+            silenceCounter++
+            if (silenceCounter > maxSilenceBeforeAdapt) {
+                // 连续检测到多次"无声"，降低阈值使系统更灵敏
+                adaptiveRmsThreshold *= adaptationFactor
+                adaptiveRmsThreshold =
+                    max(adaptiveRmsThreshold, validVoiceRmsThreshold * 0.5) // 设置下限
+                silenceCounter = 0
+                println("[DEBUG] 调整RMS阈值到: $adaptiveRmsThreshold")
+            }
+        } else {
+            silenceCounter = 0
+            // 检测到"有声"，逐渐恢复阈值
+            adaptiveRmsThreshold = (adaptiveRmsThreshold * 0.95) + (validVoiceRmsThreshold * 0.05)
         }
+
+        // 使用适应性阈值判断
+        val hasVoice = rms > adaptiveRmsThreshold && zcr < validVoiceZcrThreshold
+
+        println("[DEBUG] 音频分析 - RMS: $rms (阈值: $adaptiveRmsThreshold), ZCR: $zcr, 判断: ${if(hasVoice) "有语音" else "无语音"}")
 
         return hasVoice
     }
