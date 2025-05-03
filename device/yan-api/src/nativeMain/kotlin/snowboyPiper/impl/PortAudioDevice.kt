@@ -103,7 +103,9 @@ class PortAudioDevice(private val speechRecognizer: VoskSpeechRecognizer) : Audi
             }
             portAudioInitialized = true
             println("[INFO] PortAudio初始化成功")
-            
+            // **自动把 MIC 增益设为 100%**
+            VoskSpeechService.executeCommand("amixer sset 'MIC SOUT GAIN' 100%")  // 将增益直接调到最大
+
             // 寻找音频设备
             val (inputIdx, outputIdx) = listAudioDevices()
             selectedInputDeviceIndex = inputIdx
@@ -114,7 +116,6 @@ class PortAudioDevice(private val speechRecognizer: VoskSpeechRecognizer) : Audi
                 println("[WARN] 没有找到输入设备，将尝试使用默认设备")
                 selectedInputDeviceIndex = -1
             }
-            speechRecognizer
             println("[INFO] 已选择：输入设备 #$selectedInputDeviceIndex, 输出设备 #$selectedOutputDeviceIndex")
             _deviceState.value = AudioDevice.AudioDeviceState.READY
             return true

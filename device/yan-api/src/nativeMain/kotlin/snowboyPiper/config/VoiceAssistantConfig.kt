@@ -20,10 +20,10 @@ data class VoiceAssistantConfig(
     val overlapSize: Int = 16000, // 保留约1秒的音频用于连续检测
 
     // VAD参数
-    val energyThreshold: Double = 300.0,// 能量阈值，使检测更敏感
-    val noiseGateThreshold: Double = 100.0,
-    val validVoiceRmsThreshold: Double = 150.0,// 有效语音RMS阈值
-    val validVoiceZcrThreshold: Double = 0.5,// 有效语音RMS阈值
+    val energyThreshold: Double = 100.0,// 能量阈值，使检测更敏感
+    val noiseGateThreshold: Double = 50.0,
+    val validVoiceRmsThreshold: Double = 100.0,// 有效语音RMS阈值
+    val validVoiceZcrThreshold: Double = 0.3,// 有效语音RMS阈值
     val silenceFramesThreshold: Int = 45,
 
     // 时间控制

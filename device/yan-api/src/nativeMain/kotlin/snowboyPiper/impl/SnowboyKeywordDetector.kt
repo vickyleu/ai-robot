@@ -139,7 +139,7 @@ class SnowboyKeywordDetector(private val audioAnalyzer: AudioAnalyzer) : Keyword
     override fun detect(player: AudioPlayer, buffer: ShortArray, frameCount: Int): DetectorState {
         if (snowboyDetector == null) {
             println("[ERROR] Snowboy检测器未初始化")
-            return DetectorState.ERROR
+            return ERROR
         }
 
         if (_detectionState.value != KeywordDetector.DetectionState.LISTENING) {
@@ -173,72 +173,80 @@ class SnowboyKeywordDetector(private val audioAnalyzer: AudioAnalyzer) : Keyword
             // 当没有检测到语音活动时，将is_end设为1表示语音结束
             // 当检测到语音活动时，将is_end设为0表示语音未结束，继续处理
             val is_end = if (!hasVoice) 1 else 0
+            if(hasVoice){
+                // 执行检测
+                val result =  DetectorState.fromValue(snowboy_run_detection_int16(snowboyDetector, bufferPtr, frameCount, is_end = is_end))
+                // 释放本地内存
+                nativeHeap.free(bufferPtr.rawValue)
+                // 处理检测结果
+                when(result){
+                    Silence -> {
+                        // 检测到静音，可能是背景噪声或无声
+                        println("[DEBUG] 检测到静音")
+                        _detectionState.value = KeywordDetector.DetectionState.LISTENING
+                    }
+                    ERROR -> {
+                        // 检测器错误，可能是初始化失败或其他问题
+                        println("[ERROR] 检测器错误")
+                        // 错误情况，应用去抖动机制避免频繁报错
+                        val currentTime = Clock.System.now().toEpochMilliseconds()
+                        if (currentTime - lastDetectionTime > debounceTimeMs) {
+                            println("[WARN] 关键词检测错误，错误码: $result")
+                            // 尝试重新初始化检测器
+                            scope.launch {
+                                println("[INFO] 尝试重新初始化Snowboy检测器...")
+                                // 先释放资源
+                                snowboyDetector?.let {
+                                    snowboy_free(it)
+                                }
+                                snowboyDetector = null
 
-            // 执行检测
-            val result =  DetectorState.fromValue(snowboy_run_detection_int16(snowboyDetector, bufferPtr, frameCount, is_end = is_end))
-            // 释放本地内存
-            nativeHeap.free(bufferPtr.rawValue)
-
-            // 处理检测结果
-            when(result){
-                Silence -> {
-                    // 检测到静音，可能是背景噪声或无声
-                    println("[DEBUG] 检测到静音")
-                    _detectionState.value = KeywordDetector.DetectionState.LISTENING
-                }
-                ERROR -> {
-                    // 检测器错误，可能是初始化失败或其他问题
-                    println("[ERROR] 检测器错误")
-                    // 错误情况，应用去抖动机制避免频繁报错
-                    val currentTime = Clock.System.now().toEpochMilliseconds()
-                    if (currentTime - lastDetectionTime > debounceTimeMs) {
-                        println("[WARN] 关键词检测错误，错误码: $result")
-                        // 尝试重新初始化检测器
-                        scope.launch {
-                            println("[INFO] 尝试重新初始化Snowboy检测器...")
-                            // 先释放资源
-                            snowboyDetector?.let {
-                                snowboy_free(it)
-                            }
-                            snowboyDetector = null
-
-                            // 短暂延迟后重新初始化
-                            kotlinx.coroutines.delay(1000)
-                            // 使用类成员变量存储初始化参数，避免硬编码路径
-                            if (lastResourcePath.isNotEmpty() && lastModelPath.isNotEmpty()) {
-                                val success = initialize(lastResourcePath, lastModelPath, lastSensitivity)
-                                if (!success) {
-                                    println("[ERROR] 检测器重新初始化失败")
+                                // 短暂延迟后重新初始化
+                                kotlinx.coroutines.delay(1000)
+                                // 使用类成员变量存储初始化参数，避免硬编码路径
+                                if (lastResourcePath.isNotEmpty() && lastModelPath.isNotEmpty()) {
+                                    val success = initialize(lastResourcePath, lastModelPath, lastSensitivity)
+                                    if (!success) {
+                                        println("[ERROR] 检测器重新初始化失败")
+                                    }
                                 }
                             }
+                            lastDetectionTime = currentTime
                         }
-                        lastDetectionTime = currentTime
+                        _detectionState.value = KeywordDetector.DetectionState.ERROR
                     }
-                    _detectionState.value = KeywordDetector.DetectionState.ERROR
-                }
-                NoEvent -> {
-                    // 没有检测到关键词，继续监听
-                    println("[DEBUG] 没有检测到关键词")
-                    _detectionState.value = KeywordDetector.DetectionState.LISTENING
-                }
-                Hotword1Triggered,
-                Hotword2Triggered,
-                Hotword3Triggered -> {
-                    // 检测到关键词，更新状态
-                    println("[DEBUG] 检测到关键词")
-                    val currentTime = Clock.System.now().toEpochMilliseconds()
-                    if (currentTime - lastDetectionTime > debounceTimeMs) {
-                        println("[INFO] 检测到关键词！结果值: $result")
-                        _detectionState.value = KeywordDetector.DetectionState.DETECTED
-                        lastDetectionTime = currentTime
+                    NoEvent -> {
+                        // 没有检测到关键词，继续监听
+                        println("[DEBUG] 没有检测到关键词")
+                        player.playAudio(buffer = bufferPtr, frameCount = frameCount)
+                        _detectionState.value = KeywordDetector.DetectionState.LISTENING
+                    }
+                    Hotword1Triggered,
+                    Hotword2Triggered,
+                    Hotword3Triggered -> {
+                        // 检测到关键词，更新状态
+                        println("[DEBUG] 检测到关键词")
+                        val currentTime = Clock.System.now().toEpochMilliseconds()
+                        if (currentTime - lastDetectionTime > debounceTimeMs) {
+                            println("[INFO] 检测到关键词！结果值: $result")
+                            _detectionState.value = KeywordDetector.DetectionState.DETECTED
+                            lastDetectionTime = currentTime
+                        }
                     }
                 }
+                return result
+            }else{
+                // 释放本地内存
+                nativeHeap.free(bufferPtr.rawValue)
+                // 没有检测到语音活动，继续监听
+                println("[DEBUG] 没有检测到语音活动，继续监听")
+                _detectionState.value = KeywordDetector.DetectionState.LISTENING
+                return NoEvent
             }
-            return result
         } catch (e: Exception) {
             println("[ERROR] 关键词检测异常: ${e.message}")
             _detectionState.value = KeywordDetector.DetectionState.ERROR
-            return DetectorState.ERROR
+            return ERROR
         }
     }
 
