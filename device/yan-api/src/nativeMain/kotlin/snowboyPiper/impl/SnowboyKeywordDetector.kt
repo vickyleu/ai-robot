@@ -1,15 +1,18 @@
-@file:OptIn(ExperimentalForeignApi::class, ExperimentalTime::class)
+@file:OptIn(ExperimentalForeignApi::class, ExperimentalTime::class, ExperimentalTime::class,
+    ExperimentalForeignApi::class
+)
 
 package snowboyPiper.impl
 
 import com.airobot.device.yanapi.snowboyPiper.interfaces.AudioAnalyzer
+import com.airobot.device.yanapi.snowboyPiper.interfaces.VoiceStateManager
 import com.airobot.snowboyinterop.SnowboyDetectWrapper
 import com.airobot.snowboyinterop.snowboy_create
 import com.airobot.snowboyinterop.snowboy_free
 import com.airobot.snowboyinterop.snowboy_run_detection_int16
 import com.airobot.snowboyinterop.snowboy_set_audio_gain
 import com.airobot.snowboyinterop.snowboy_set_high_sensitivity
-import com.airobot.snowboyinterop.snowboy_set_sensitivity
+import com.airobot.snowboyinterop.snowboy_update_model
 import kotlinx.cinterop.CPointer
 import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.cinterop.ShortVar
@@ -35,7 +38,10 @@ import kotlin.time.ExperimentalTime
  * Snowboy关键词检测器实现
  * 负责初始化和运行Snowboy关键词检测
  */
-class SnowboyKeywordDetector(private val audioAnalyzer: AudioAnalyzer) : KeywordDetector {
+class SnowboyKeywordDetector(
+    private val audioAnalyzer: AudioAnalyzer,
+    private val voiceStateManager: VoiceStateManager
+) : KeywordDetector {
 
 
     // 检测器实例
@@ -102,8 +108,9 @@ class SnowboyKeywordDetector(private val audioAnalyzer: AudioAnalyzer) : Keyword
             // 调整为0.98以进一步提高检测率
             println("[INFO] 设置灵敏度 ${sensitivity}）...") // 1.0f
              snowboy_set_high_sensitivity(snowboyDetector, sensitivity.toString())
-            snowboy_set_audio_gain(snowboyDetector, 8f)
-
+            snowboy_set_audio_gain(snowboyDetector, 2.5f)
+//            // 然后更新模型（如果有这个函数的话）
+//            snowboy_update_model(snowboyDetector)
             // 验证灵敏度设置是否生效
             println("[DEBUG] 灵敏度设置完成，准备进行模型验证")
             
@@ -149,14 +156,15 @@ class SnowboyKeywordDetector(private val audioAnalyzer: AudioAnalyzer) : Keyword
         try {
             val bufferPtr = nativeHeap.allocArray<ShortVar>(frameCount)
             // 1. 动态范围压缩 - 提升小信号，压缩大信号
-            fun compressAudio(audio: ShortArray, threshold: Int = 10000, ratio: Float = 0.5f): ShortArray {
+            fun compressAudio(audio: ShortArray, threshold: Int = 8000, ratio: Float = 0.7f): ShortArray {
                 return ShortArray(audio.size) { i ->
                     val sample = audio[i]
                     if (abs(sample.toInt()) > threshold) {
                         val compressed = threshold + ((abs(sample.toInt()) - threshold) * ratio)
                         (if (sample > 0) compressed else -compressed).toInt().toShort()
                     } else {
-                        sample
+                        // 轻微放大较低信号，确保捕捉到更安静的声音
+                        (sample.toInt() * 1.2).toInt().toShort()
                     }
                 }
             }
@@ -172,10 +180,14 @@ class SnowboyKeywordDetector(private val audioAnalyzer: AudioAnalyzer) : Keyword
             println("[DEBUG] 检测到语音活动: $hasVoice")
             // 当没有检测到语音活动时，将is_end设为1表示语音结束
             // 当检测到语音活动时，将is_end设为0表示语音未结束，继续处理
-            val is_end = if (!hasVoice) 1 else 0
+            // 修改后的代码
+            val isSpeechEnd = voiceStateManager.isSilenceThresholdReached(voiceStateManager.silenceFramesThreshold) && voiceStateManager.speechStarted
+            val is_end = if (isSpeechEnd) 1 else 0
             if(hasVoice){
                 // 执行检测
-                val result =  DetectorState.fromValue(snowboy_run_detection_int16(snowboyDetector, bufferPtr, frameCount, is_end = is_end))
+                val result =  DetectorState.fromValue(snowboy_run_detection_int16(snowboyDetector, bufferPtr, frameCount, is_end = is_end)).apply {
+                    println("[DEBUG] 检测结果: ${this.name}")
+                }
                 // 释放本地内存
                 nativeHeap.free(bufferPtr.rawValue)
                 // 处理检测结果
@@ -217,7 +229,9 @@ class SnowboyKeywordDetector(private val audioAnalyzer: AudioAnalyzer) : Keyword
                     }
                     NoEvent -> {
                         // 没有检测到关键词，继续监听
-                        println("[DEBUG] 没有检测到关键词")
+                        println("[DEBUG] 没有检测到关键词 $frameCount")
+                        // 检查并清理语音活动和缓冲区状态，防止重复播放
+                        voiceStateManager.reset()
                         player.playAudio(buffer = bufferPtr, frameCount = frameCount)
                         _detectionState.value = KeywordDetector.DetectionState.LISTENING
                     }

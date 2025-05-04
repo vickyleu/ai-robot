@@ -88,9 +88,9 @@ class BasicAudioAnalyzer(
 
         // 使用适应性阈值判断
         val hasVoice = rms > adaptiveRmsThreshold && zcr < validVoiceZcrThreshold
-
-        println("[DEBUG] 音频分析 - RMS: $rms (阈值: $adaptiveRmsThreshold), ZCR: $zcr, 判断: ${if(hasVoice) "有语音" else "无语音"}")
-
+        if(hasVoice){
+            println("[DEBUG] 音频分析 - RMS: $rms (阈值: $adaptiveRmsThreshold), ZCR: $zcr")
+        }
         return hasVoice
     }
 

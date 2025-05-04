@@ -456,6 +456,7 @@ class PortAudioDevice(private val speechRecognizer: VoskSpeechRecognizer) : Audi
         return try {
             val result = Pa_WriteStream(outputStreamPtr.value, buffer, frameCount.toUInt())
             if (result == paNoError) {
+                println("[INFO] 播放音频数据成功 ${outputStreamPtr.value}")
                 // 成功播放
                 frameCount
             } else {

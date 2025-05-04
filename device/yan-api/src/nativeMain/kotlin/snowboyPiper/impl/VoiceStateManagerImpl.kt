@@ -1,17 +1,21 @@
 package com.airobot.device.yanapi.snowboyPiper.impl
 
+import com.airobot.device.yanapi.snowboyPiper.config.VoiceAssistantConfig
 import com.airobot.device.yanapi.snowboyPiper.interfaces.VoiceStateManager
 import kotlin.time.Clock
 import kotlin.time.ExperimentalTime
 
 @OptIn(ExperimentalTime::class)
-class VoiceStateManagerImpl : VoiceStateManager {
+class VoiceStateManagerImpl(private val config: VoiceAssistantConfig) : VoiceStateManager {
 
     private var _isSpeaking = false
     override val isSpeaking: Boolean get() = _isSpeaking
 
     private var _speechStarted = false
     override val speechStarted: Boolean get() = _speechStarted
+
+    override val silenceFramesThreshold: Int
+        get() = config.silenceFramesThreshold
 
     private var _speechBufferStarted = false
     override val speechBufferStarted: Boolean get() = _speechBufferStarted

@@ -49,8 +49,9 @@ class SnowboyPiperVoiceAssistant(
     // 组件
     private val speechSynthesizer = PiperSpeechSynthesizer()
     private val speechRecognizer = VoskSpeechRecognizer()
-    private val keywordDetector = SnowboyKeywordDetector(audioAnalyzer)
-    private val voiceStateManager: VoiceStateManager = VoiceStateManagerImpl()
+    private val voiceStateManager: VoiceStateManager = VoiceStateManagerImpl(config)
+    private val keywordDetector = SnowboyKeywordDetector(audioAnalyzer,voiceStateManager)
+
     private val audioBufferManager: AudioBufferManager = AudioBufferManagerImpl()
 
     // 助手状态
@@ -68,7 +69,7 @@ class SnowboyPiperVoiceAssistant(
     
     // 关键词检测去抖动控制
     private var lastKeywordTriggerTime = 0L
-    private val keywordDebouncePeriodMs = 3000L // 关键词触发后的去抖动时间（毫秒）
+    private val keywordDebouncePeriodMs = 2000L // 关键词触发后的去抖动时间（毫秒）
 
     // 协程作用域和任务
     private val scope = CoroutineScope(Dispatchers.Default)
@@ -142,10 +143,16 @@ class SnowboyPiperVoiceAssistant(
         println("[INFO] 启动关键词检测...")
 
         try {
+
             // 打开音频输入流
             if (!speechRecognizer.recordDevice().openInputStream(-1, config.sampleRate, config.channels)) {
                 println("[ERROR] 无法打开音频输入流")
                 _assistantState.value = VoiceAssistantService.AssistantState.ERROR
+                return false
+            }
+            // 打开音频输出流
+            if (!speechRecognizer.recordDevice().openOutputStream(-1, config.sampleRate, config.channels)) {
+                println("[ERROR] 无法打开音频输出流")
                 return false
             }
 
@@ -322,11 +329,11 @@ class SnowboyPiperVoiceAssistant(
                                     // 更新关键词检测时间
                                     lastKeywordDetectionTime = currentTime
                                     // 保留一部分音频用于连续检测
-                                    audioBufferManager.retainOverlap(config.overlapSize)
+                                    audioBufferManager.retainOverlap((config.overlapSize * 1.5).toInt())
                                 }
                                 // 命令处理逻辑
                                 if (_assistantState.value == VoiceAssistantService.AssistantState.LISTENING_COMMAND &&
-                                    audioBufferManager.size >= 8000 && // 约0.5秒的音频
+                                    audioBufferManager.size >= 6000 && // 约0.5秒的音频
                                     voiceStateManager.speechStarted && voiceStateManager.speechBufferStarted) {
 
                                     if (currentTime - lastCommandProcessingTime >= config.commandProcessingIntervalMs) {

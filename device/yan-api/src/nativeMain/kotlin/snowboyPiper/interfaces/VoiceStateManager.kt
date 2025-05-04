@@ -13,6 +13,11 @@ interface VoiceStateManager {
     val speechStarted: Boolean
 
     /**
+     * 静音帧阈值
+     */
+    val silenceFramesThreshold: Int
+
+    /**
      * 语音缓冲是否已开始
      */
     val speechBufferStarted: Boolean

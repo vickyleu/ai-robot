@@ -47,7 +47,7 @@ interface KeywordDetector {
      * @param sensitivity 灵敏度，范围0-1
      * @return 初始化是否成功
      */
-    fun initialize(resourcePath: String, modelPath: String, sensitivity: Float = 1f): Boolean
+    fun initialize(resourcePath: String, modelPath: String, sensitivity: Float = 0.99f): Boolean
     
     /**
      * 检测关键词
