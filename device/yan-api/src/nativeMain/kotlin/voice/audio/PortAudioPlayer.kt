@@ -54,6 +54,8 @@ class PortAudioPlayer : AudioPlayer {
     private var sampleRate = 48000
     private var channels = 1
     private var framesPerBuffer = 1024
+    // 设备默认采样率
+    private var deviceDefaultSampleRate = 48000.0
 
     // 协程作用域
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -93,9 +95,11 @@ class PortAudioPlayer : AudioPlayer {
                 return false
             }
 
+            deviceDefaultSampleRate = deviceInfo.defaultSampleRate
             println("[INFO] 使用播放设备: ${deviceInfo.name ?: "未知设备"}")
             println("[INFO] 最大输出通道数: ${deviceInfo.maxOutputChannels}")
             println("[INFO] 默认采样率: ${deviceInfo.defaultSampleRate}")
+            println("[INFO] 将使用设备默认采样率: ${deviceDefaultSampleRate}Hz")
 
             isInitialized = true
             _state.value = AudioPlayer.PlayerState.IDLE
@@ -141,6 +145,10 @@ class PortAudioPlayer : AudioPlayer {
                         println("[DEBUG] 设备 $i: ${info.name?.toKString()}, 输出通道: ${info.maxOutputChannels}")
                         if(info.name?.toKString()=="dmixed"){
                             if (info.maxOutputChannels > 0) {
+                                // 记录设备默认采样率
+                                deviceDefaultSampleRate = info.defaultSampleRate
+                                println("[INFO] 设备 $i 默认采样率: ${deviceDefaultSampleRate}Hz")
+                                
                                 // 尝试打开此设备
                                 outputParams.device = i
                                 outputParams.channelCount = 1  // 尝试单声道
@@ -152,7 +160,8 @@ class PortAudioPlayer : AudioPlayer {
                                     memScope = memScope,
                                     inputParameters = null,
                                     outputParameters = outputParams.ptr,
-                                    sampleRate = 48000.0,  // 尝试常用的采样率
+                                    // 使用设备默认采样率而不是固定值
+                                    sampleRate = deviceDefaultSampleRate,
                                     framesPerBuffer = 1024u,
                                     streamFlags = 0u,
                                     streamCallback = null,
@@ -191,7 +200,8 @@ class PortAudioPlayer : AudioPlayer {
                     memScope,
                     inputParameters = null, // 输入参数
                     outputParameters = outputParams.ptr, // 输出参数
-                    sampleRate = sampleRate.toDouble(),
+                    // 使用设备默认采样率而不是用户指定的采样率
+                    sampleRate = deviceDefaultSampleRate,
                     framesPerBuffer = framesPerBuffer.convert(),
                     streamFlags = 0u,
                     streamCallback = null, // 回调函数

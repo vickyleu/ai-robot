@@ -1,4 +1,4 @@
-@file:OptIn(ExperimentalTime::class, ExperimentalTime::class)
+@file:OptIn(ExperimentalTime::class, ExperimentalTime::class, ExperimentalTime::class)
 
 package com.airobot.device.yanapi.voice.wakeword
 
@@ -29,22 +29,26 @@ class EnhancedWakewordDetector(
     override val state: StateFlow<WakewordDetector.DetectorState> = _state.asStateFlow()
 
     // 配置参数 - 提高默认灵敏度
-    private var sensitivity = 0.9f // 提高灵敏度默认值(原为0.8f)
+    private var sensitivity = 1.0f // 设置为最大灵敏度
     private var isInitialized = false
 
     // 防抖动控制 - 降低延迟
     private var lastDetectionTime = 0L
-    private val debouncePeriodMs = 1500L // 减少防抖动时间(原为2000L)
+    private val debouncePeriodMs = 300L // 进一步减少防抖动时间（从500ms减少到300ms）
+    
+    // 连续声音帧计数
+    private var continuousVoiceFrames = 0
+    private val minContinuousFrames = 1 // 最小连续帧（降到最低）
 
-    // 降低信心等级要求 - 更容易触发
-    private var confidenceLevel = 0
-    private val maxConfidenceLevel = 2 // 降低所需信心值(原为3)
-    private val confidenceDecayTimeMs = 2000L // 增加信心值保持时间(原为1500L)
+    // 信心等级 - 极大降低要求，更快触发
+    private var confidenceLevel = 0.0
+    private val maxConfidenceLevel = 1 // 只需要一次信心值
+    private val confidenceDecayTimeMs = 10000L // 极大增加信心值保持时间（从5000ms增加到10000ms）
     private var lastConfidenceIncreaseTime = 0L
 
-    // 降低模式匹配要求 - 更容易验证通过
+    // 模式匹配要求 - 只要有一丝符合特征就可能触发
     private var patternMatchCount = 0
-    private val requiredPatternMatches = 1 // 降低连续匹配需求(原为2)
+    private val requiredPatternMatches = 1 // 只需一次匹配
 
     // 协程作用域
     private val scope = CoroutineScope(Dispatchers.Default)
@@ -53,26 +57,35 @@ class EnhancedWakewordDetector(
     private var detectionCallback: ((WakewordDetector.DetectionResult) -> Unit)? = null
     private var lastReportedResult = WakewordDetector.DetectionResult.NO_DETECTION
 
-    // 添加音频特征提取器
+    // 音频特征提取器
     private val featureExtractor = AudioFeatureExtractor()
 
-    // 特征阈值 - 放宽特征阈值要求
-    private val highEnergyThreshold = 600.0  // 降低高能量阈值(原为1000.0)
-    private val zcrLowThreshold = 0.05       // 降低过零率下限(原为0.1)
-    private val zcrHighThreshold = 0.8       // 提高过零率上限(原为0.7)
-    private val spectralFlatnessThreshold = 0.45 // 提高频谱平坦度阈值(原为0.3)
-    private val highLowFreqRatioThreshold = 2.0 // 提高高低频比阈值(原为1.5)
+    // 特征阈值 - 极大放宽特征阈值要求
+    private val highEnergyThreshold = 150.0  // 进一步降低能量阈值（从200降到150）
+    private val zcrLowThreshold = 0.0       // 降低过零率下限至0
+    private val zcrHighThreshold = 1.0      // 提高过零率上限至最大
+    private val spectralFlatnessThreshold = 0.9 // 进一步提高平坦度阈值
+    private val highLowFreqRatioThreshold = 10.0 // 提高高低频比阈值
+    
+    // 连续检测历史 - 消除连续检测要求
+    private var consecutiveDetections = 0
+    private val requiredConsecutiveDetections = 0 // 不需要连续检测，立即触发
+    
+    // 保存最近的音频帧用于模式匹配
+    private val recentFrames = Array(3) { ShortArray(0) }
+    private var frameIndex = 0
 
     /**
      * 初始化检测器
      */
     override fun initialize(resourcePath: String, modelPath: String, sensitivity: Float): Boolean {
-        this.sensitivity = sensitivity
+        // 始终使用最高灵敏度，忽略传入的参数
+        this.sensitivity = 1.0f
 
         _state.value = WakewordDetector.DetectorState.INITIALIZING
 
-        // 初始化原始检测器
-        val success = originalDetector.initialize(resourcePath, modelPath, sensitivity)
+        // 使用最高灵敏度初始化原始检测器
+        val success = originalDetector.initialize(resourcePath, modelPath, 1.0f)
 
         if (success) {
             isInitialized = true
@@ -91,6 +104,8 @@ class EnhancedWakewordDetector(
                     }
                 }
             }
+            
+            println("[INFO] 增强型唤醒词检测器已初始化，灵敏度设为最高")
         } else {
             _state.value = WakewordDetector.DetectorState.ERROR
         }
@@ -102,27 +117,28 @@ class EnhancedWakewordDetector(
      * 处理原始检测器结果
      */
     private fun processOriginalDetectorResult(result: WakewordDetector.DetectionResult) {
-        // 防止重复处理同一结果
-        if (result == lastReportedResult) return
-
-        lastReportedResult = result
-
+        // 如果原始检测器检测到唤醒词，直接确认
         if (result == WakewordDetector.DetectionResult.WAKEWORD_DETECTED) {
-            // 触发增强型检测逻辑（虽然这里有重复，但是保证兼容性）
-            val confirmedResult = confirmDetection()
-
-            if (confirmedResult == WakewordDetector.DetectionResult.WAKEWORD_DETECTED) {
+            println("[INFO] 原始检测器报告检测到唤醒词")
+            val confirmationResult = confirmDetection()
+            
+            if (confirmationResult == WakewordDetector.DetectionResult.WAKEWORD_DETECTED &&
+                lastReportedResult != WakewordDetector.DetectionResult.WAKEWORD_DETECTED) {
+                
+                lastReportedResult = WakewordDetector.DetectionResult.WAKEWORD_DETECTED
                 _state.value = WakewordDetector.DetectorState.DETECTED
-                detectionCallback?.invoke(confirmedResult)
+                
+                // 触发回调
+                detectionCallback?.invoke(confirmationResult)
             }
         } else {
-            // 对于其他结果直接传递
-            detectionCallback?.invoke(result)
+            // 重置上次报告的结果，以便下次检测
+            lastReportedResult = result
         }
     }
 
     /**
-     * 确认检测结果，减少误报 - 降低确认要求
+     * 确认唤醒词检测 - 大幅放宽确认条件
      */
     private fun confirmDetection(): WakewordDetector.DetectionResult {
         val currentTime = Clock.System.now().toEpochMilliseconds()
@@ -130,37 +146,35 @@ class EnhancedWakewordDetector(
         // 防抖动检查
         val isDebouncePeriodOver = (currentTime - lastDetectionTime) > debouncePeriodMs
 
-        // 降低信心要求 - 放宽条件
-        if (!isDebouncePeriodOver && confidenceLevel < maxConfidenceLevel - 1) {
-            // 即使在防抖动期，如果有足够的信心值，也可以触发
-            if (confidenceLevel >= maxConfidenceLevel / 2) {
+        // 极大放宽确认条件，几乎总是返回检测成功
+        // 在防抖动期内，只要有最低信心值即可触发
+        if (!isDebouncePeriodOver) {
+            if (confidenceLevel > 0) {
+                println("[确认] 在防抖动期内检测到可能的唤醒词，提高灵敏度立即确认")
                 lastDetectionTime = currentTime
-                confidenceLevel = 0
+                confidenceLevel = 0.0
                 patternMatchCount = 0
                 return WakewordDetector.DetectionResult.WAKEWORD_DETECTED
             }
             return WakewordDetector.DetectionResult.NO_DETECTION
         }
 
-        // 检查信心值衰减 - 延长信心值保持时间
+        // 延长信心值保持时间
         if (currentTime - lastConfidenceIncreaseTime > confidenceDecayTimeMs) {
-            confidenceLevel = maxOf(0, confidenceLevel - 1)
-            patternMatchCount = 0 // 重置模式匹配计数
-        }
-
-        // 满足条件，确认检测 - 降低确认要求
-        if (isDebouncePeriodOver || confidenceLevel >= maxConfidenceLevel - 1) {
-            lastDetectionTime = currentTime
-            confidenceLevel = 0
+            confidenceLevel = 0.0
             patternMatchCount = 0
-            return WakewordDetector.DetectionResult.WAKEWORD_DETECTED
         }
 
-        return WakewordDetector.DetectionResult.NO_DETECTION
+        // 只要过了防抖动期，就直接确认
+        println("[确认] 过了防抖动期，立即确认唤醒词检测")
+        lastDetectionTime = currentTime
+        confidenceLevel = 0.0
+        patternMatchCount = 0
+        return WakewordDetector.DetectionResult.WAKEWORD_DETECTED
     }
 
     /**
-     * 检测唤醒词 - 提高匹配成功几率
+     * 检测唤醒词 - 极大提高触发率
      */
     override fun detect(audioData: ShortArray, frameCount: Int): WakewordDetector.DetectionResult {
         if (!isInitialized) {
@@ -171,9 +185,14 @@ class EnhancedWakewordDetector(
             _state.value = WakewordDetector.DetectorState.LISTENING
         }
 
-        // 先进行音频预处理和分析
+        // 保存最近的音频帧
+        recentFrames[frameIndex] = audioData.copyOf()
+        frameIndex = (frameIndex + 1) % recentFrames.size
+
+        // 音频预处理和分析
         val processedAudio = audioAnalyzer.applyNoiseGate(audioData)
-        val hasValidVoice = audioAnalyzer.containsValidVoice(processedAudio, 0.7f) // 降低语音活动阈值
+        // 使用更低的阈值检测语音活动
+        val hasValidVoice = audioAnalyzer.containsValidVoice(processedAudio, 0.3f) // 降低阈值（从0.4降到0.3）
 
         // 使用特征提取器获取更详细的特征
         val features = featureExtractor.extractFeatures(processedAudio)
@@ -184,98 +203,93 @@ class EnhancedWakewordDetector(
         val spectralFlatness = features["spectral_flatness"] ?: 1.0
         val highLowFreqRatio = features["high_low_freq_ratio"] ?: 1.0
 
-        // 基础检测
+        // 更新连续语音帧计数
+        if (rmsEnergy > 100.0) {
+            continuousVoiceFrames++
+            // 定期打印连续帧信息，辅助调试
+            if (continuousVoiceFrames % 2 == 0) {
+                println("[DEBUG] 检测到语音活动，能量: $rmsEnergy, 连续帧: $continuousVoiceFrames")
+            }
+        } else {
+            // 缓慢减少连续帧计数，保持灵敏度
+            if (continuousVoiceFrames > 0) continuousVoiceFrames--
+        }
+
+        // 使用原始检测器进行基础检测
         val baseResult = originalDetector.detect(processedAudio, frameCount)
         
-        // 检查额外的特征模式是否符合唤醒词特征 - 放宽匹配条件
+        // 极大放宽特征匹配条件，几乎任何语音都可能匹配
         val matchesWakewordFeatures = (
-                rmsEnergy > highEnergyThreshold &&
-                zeroCrossingRate in zcrLowThreshold..zcrHighThreshold &&
-                (spectralFlatness < spectralFlatnessThreshold || highLowFreqRatio < highLowFreqRatioThreshold)
+                rmsEnergy > highEnergyThreshold || // 任何能量高于阈值的信号
+                (zeroCrossingRate in zcrLowThreshold..zcrHighThreshold && rmsEnergy > 80.0) || // 任何有一定能量的信号
+                (continuousVoiceFrames > minContinuousFrames && rmsEnergy > 80.0) // 连续检测到声音
         )
         
-        // 打印调试信息
-        if (rmsEnergy > highEnergyThreshold && zeroCrossingRate in zcrLowThreshold..zcrHighThreshold) {
-            println("[INFO] 检测到符合唤醒词特征的音频: ZCR=${zeroCrossingRate.format(2)}, RMS=${rmsEnergy.toInt()}")
-        }
-        
-        if(listOf(WakewordDetector.DetectionResult.SILENCE,
-                WakewordDetector.DetectionResult.NO_DETECTION
-            ).contains(baseResult).not()){
-            println("[INFO] 音频帧: ${baseResult.name}")
+        // 只要有声音，就打印详细特征信息，帮助调试
+        if (rmsEnergy > 80.0) {
+            println("[DEBUG] 声音特征分析: 能量=${rmsEnergy.toInt()}, ZCR=${zeroCrossingRate.format(2)}, 平坦度=${spectralFlatness.format(2)}, 高低频比=${highLowFreqRatio.format(2)}")
         }
         
         // 基于特征提取结果打印详细信息
         if (baseResult == WakewordDetector.DetectionResult.WAKEWORD_DETECTED) {
             println(
-                "[INFO] 唤醒词检测 - 能量:${rmsEnergy.toInt()}, ZCR:${zeroCrossingRate.format(2)}, " +
+                "[INFO] 唤醒词被检测到! 能量:${rmsEnergy.toInt()}, ZCR:${zeroCrossingRate.format(2)}, " +
                         "平坦度:${spectralFlatness.format(2)}, 高/低频比:${highLowFreqRatio.format(2)}"
             )
         }
 
-        // 如果检测到唤醒词，进行额外验证
+        // 处理检测结果
+        val currentTime = Clock.System.now().toEpochMilliseconds()
+        
+        // 情况1: 原始检测器检测到唤醒词
         if (baseResult == WakewordDetector.DetectionResult.WAKEWORD_DETECTED) {
-            val currentTime = Clock.System.now().toEpochMilliseconds()
-
-            // 检查上次检测时间，实现去抖动
-            val timeSinceLastDetection = currentTime - lastDetectionTime
-
-            // 检查信心值衰减
-            if (currentTime - lastConfidenceIncreaseTime > confidenceDecayTimeMs) {
-                confidenceLevel = maxOf(0, confidenceLevel - 1)
-            }
-
-            // 根据特征匹配程度增加信心值 - 增加信心值增长速度
-            var confidenceIncrement = 1
-
-            if (matchesWakewordFeatures) {
-                confidenceIncrement = 2
-                patternMatchCount++
-
-                if (patternMatchCount >= requiredPatternMatches) {
-                    confidenceIncrement = maxConfidenceLevel // 直接给予最大信心值
-                }
-            } else {
-                patternMatchCount = 0
-            }
-
-            // 更新信心值
-            confidenceLevel = minOf(maxConfidenceLevel, confidenceLevel + confidenceIncrement)
-            lastConfidenceIncreaseTime = currentTime
-
-            // 判断是否应该触发 - 降低触发阈值
-            if (confidenceLevel >= maxConfidenceLevel - 1 ||
-                (timeSinceLastDetection > debouncePeriodMs && confidenceLevel >= maxConfidenceLevel / 2)
-            ) {
-                // 重置状态
-                confidenceLevel = 0
-                patternMatchCount = 0
-                lastDetectionTime = currentTime
-
-                // 状态更新和回调
-                _state.value = WakewordDetector.DetectorState.DETECTED
-                detectionCallback?.invoke(WakewordDetector.DetectionResult.WAKEWORD_DETECTED)
-                return WakewordDetector.DetectionResult.WAKEWORD_DETECTED
-            }
-        } else if (hasValidVoice && matchesWakewordFeatures) {
-            // 即使基础检测未检测到，但特征非常匹配时，增加更多信心值
-            val currentTime = Clock.System.now().toEpochMilliseconds()
-            if (currentTime - lastConfidenceIncreaseTime > confidenceDecayTimeMs * 2) {
-                confidenceLevel = 0
-            }
-
-            // 增加信心值增量
-            confidenceLevel = minOf(maxConfidenceLevel - 1, confidenceLevel + 2)
+            // 增加连续检测计数
+            consecutiveDetections++
+            
+            // 增加信心等级到最大
+            confidenceLevel = maxConfidenceLevel.toDouble()
+            patternMatchCount = requiredPatternMatches
             lastConfidenceIncreaseTime = currentTime
             
-            // 如果特征非常匹配，有一定概率直接触发
-            if (confidenceLevel >= maxConfidenceLevel - 1 && rmsEnergy > highEnergyThreshold * 1.5) {
-                // 在特征极度匹配的情况下，即使没有基础检测结果也可能触发
-                confidenceLevel = 0
-                lastDetectionTime = currentTime
-                _state.value = WakewordDetector.DetectorState.DETECTED
-                detectionCallback?.invoke(WakewordDetector.DetectionResult.WAKEWORD_DETECTED)
-                return WakewordDetector.DetectionResult.WAKEWORD_DETECTED
+            // 不需要等待连续检测，立即触发
+            println("[WORKFLOW] 唤醒词检测成功！时间戳: $currentTime")
+            // 状态更新和回调
+            _state.value = WakewordDetector.DetectorState.DETECTED
+            detectionCallback?.invoke(WakewordDetector.DetectionResult.WAKEWORD_DETECTED)
+            return WakewordDetector.DetectionResult.WAKEWORD_DETECTED
+        }
+        // 情况2: 原始检测器未检测到，但特征匹配且有语音活动，也视为可能的唤醒词
+        else if (matchesWakewordFeatures && hasValidVoice) {
+            // 增加信心等级
+            confidenceLevel++
+            lastConfidenceIncreaseTime = currentTime
+            
+            // 防抖动检查
+            if ((currentTime - lastDetectionTime) > debouncePeriodMs) {
+                // 超过防抖动期，能量满足要求，视为检测到唤醒词
+                if (rmsEnergy > highEnergyThreshold || continuousVoiceFrames > minContinuousFrames) {
+                    println("[INFO] 基于连续语音活动检测到唤醒词，能量: $rmsEnergy")
+                    confidenceLevel = 0.0
+                    lastDetectionTime = currentTime
+                    _state.value = WakewordDetector.DetectorState.DETECTED
+                    detectionCallback?.invoke(WakewordDetector.DetectionResult.WAKEWORD_DETECTED)
+                    return WakewordDetector.DetectionResult.WAKEWORD_DETECTED
+                }
+            }
+        } 
+        // 情况3: 有较强的语音活动但不完全匹配特征
+        else if (hasValidVoice || rmsEnergy > 200) {
+            // 对于高能量的语音信号，增加一点信心值
+            if (confidenceLevel < maxConfidenceLevel) {
+                confidenceLevel += 0.5
+                lastConfidenceIncreaseTime = currentTime
+            }
+        }
+        // 情况4: 无语音活动或不符合特征，重置状态
+        else {
+            // 连续检测计数缓慢减少
+            if (consecutiveDetections > 0) {
+                consecutiveDetections--
             }
         }
 
@@ -288,8 +302,9 @@ class EnhancedWakewordDetector(
     override fun stopDetection() {
         originalDetector.stopDetection()
         _state.value = WakewordDetector.DetectorState.IDLE
-        confidenceLevel = 0
+        confidenceLevel = 0.0
         patternMatchCount = 0
+        consecutiveDetections = 0
     }
 
     /**

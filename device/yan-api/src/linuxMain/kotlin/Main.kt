@@ -8,5 +8,6 @@ fun main() {
 //    whisperPortaudio()
 //    portAudio()
 //    snowboyPiper()
-    voiceAssistantDemo()
+//    voiceAssistantDemo()
+    snowboyPiper()
 }

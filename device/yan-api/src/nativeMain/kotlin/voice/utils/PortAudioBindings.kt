@@ -133,10 +133,19 @@ object PortAudio {
     /** 获取可写数据数量 */
     fun getStreamWriteAvailable(stream: CPointer<*>?): Int = Pa_GetStreamWriteAvailable(stream)
 
-    /** 读取流数据 */
-    fun readStream(stream: CPointer<*>?, buffer: COpaquePointer?, frames: UInt): Int =
-        Pa_ReadStream(stream, buffer, frames)
+    /**
+     * 读取流数据
+     */
+    fun readStream(stream: CPointer<*>?, buffer: COpaquePointer?, frames: UInt): Int {
+        val result = Pa_ReadStream(stream, buffer, frames)
 
+        // 简单打印示意正在捕获音频
+        if (frames > 0u) {
+            println("【音频捕获】帧数=${frames}, 结果=${result}")
+        }
+
+        return result
+    }
     /** 写入流数据 */
     fun writeStream(stream: CPointer<*>?, buffer: COpaquePointer?, frames: UInt): Int =
         Pa_WriteStream(stream, buffer, frames)

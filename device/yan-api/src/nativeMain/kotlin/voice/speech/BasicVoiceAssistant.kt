@@ -44,10 +44,10 @@ class BasicVoiceAssistant : VoiceAssistant {
     private val audioPlayer: AudioPlayer = PortAudioPlayer()
     private val audioProcessor: AudioProcessor = BasicAudioProcessor()
     private val audioAnalyzer: AudioAnalyzer = BasicAudioAnalyzer(
-        energyThreshold = 800.0,
-        noiseGateThreshold = 300.0,
-        validVoiceRmsThreshold = 1000.0,
-        validVoiceZcrThreshold = 0.2
+        energyThreshold = 300.0,          // 降低能量阈值，更容易检测到语音
+        noiseGateThreshold = 150.0,       // 降低噪声门限，保留更多语音信号
+        validVoiceRmsThreshold = 400.0,   // 大幅降低有效语音RMS阈值
+        validVoiceZcrThreshold = 0.1      // 降低有效语音ZCR阈值
     )
 
     // 使用增强型唤醒词检测器降低误报
@@ -74,14 +74,14 @@ class BasicVoiceAssistant : VoiceAssistant {
     private var commandHandler: (suspend (String) -> String)? = null
 
     // 参数配置
-    private var wakewordSensitivity = 0.6f // 降低灵敏度以减少误触发
-    private var listeningTimeoutMs = 6000L // 监听超时时间
-    private var isSoundFeedbackEnabled = true // 是否启用声音反馈
+    private var wakewordSensitivity = 1.0f // 使用最高灵敏度
+    private var listeningTimeoutMs = 8000L // 延长监听超时时间
+    private var isSoundFeedbackEnabled = true // 启用声音反馈
 
     // 音频处理配置
-    private var gain = 1.2f           // 默认增益
-    private var noiseGate = 120       // 默认噪声门限
-    private var lowPassFilter = 0.85f // 默认低通滤波系数
+    private var gain = 3.0f           // 大幅提高增益
+    private var noiseGate = 60        // 降低噪声门限，保留更多信号
+    private var lowPassFilter = 0.7f  // 调整低通滤波系数
 
     // 状态标志
     private var isInitialized = false
@@ -131,7 +131,7 @@ class BasicVoiceAssistant : VoiceAssistant {
             (audioProcessor as? BasicAudioProcessor)?.let {
                 it.setGain(gain)               // 设置增益
                 it.setNoiseGate(noiseGate)     // 设置噪声门限
-                it.setLowPassFilterCoeff(lowPassFilter) // 设置低通滤波系数
+                it.setLowPassFilter(lowPassFilter) // 设置低通滤波系数
                 it.reset()                     // 重置状态
                 println("[INFO] 音频处理器已配置")
             }
@@ -288,10 +288,21 @@ class BasicVoiceAssistant : VoiceAssistant {
         // 取消之前的超时
         listeningTimeout?.cancel()
 
+        // 播放准备接收命令的提示音
+        if (isSoundFeedbackEnabled) {
+            playReadyForCommandSound()
+        }
+
+        // 将录音增益调高，提高语音识别灵敏度
+        (audioProcessor as? BasicAudioProcessor)?.let {
+            it.setGain(gain * 1.5f)  // 临时提高增益
+            println("[DEBUG] 临时提高录音增益到 ${gain * 1.5f}")
+        }
+
         // 开始识别
         speechRecognizer?.startRecognition()
 
-        // 设置超时
+        // 设置更长的超时，给用户更多时间说话
         listeningTimeout = scope.launch {
             delay(listeningTimeoutMs)
 
@@ -301,25 +312,61 @@ class BasicVoiceAssistant : VoiceAssistant {
 
                 // 停止识别
                 val result = speechRecognizer?.stopRecognition()
+                println("[DEBUG] 超时后的最终识别结果: ${result?.text}, 置信度: ${result?.confidence}")
+
+                // 恢复正常增益
+                (audioProcessor as? BasicAudioProcessor)?.let {
+                    it.setGain(gain)
+                    println("[DEBUG] 恢复正常录音增益")
+                }
 
                 // 返回监听状态
                 _state.value = VoiceAssistant.AssistantState.LISTENING
             }
         }
 
-        // 监听识别结果
+        // 监听识别结果，降低置信度要求
         scope.launch {
             speechRecognizer?.results?.collect { result ->
                 println("[INFO] 识别结果: ${result.text}, 置信度: ${result.confidence}")
-                if (!result.isPartial && result.confidence > 0.6f) {
+                
+                // 降低置信度要求，如果有任何非空文本就尝试处理
+                if (!result.isPartial && result.text.isNotBlank() && result.confidence > 0.3f) {
                     // 取消超时
                     listeningTimeout?.cancel()
+
+                    // 恢复正常增益
+                    (audioProcessor as? BasicAudioProcessor)?.let {
+                        it.setGain(gain)
+                        println("[DEBUG] 恢复正常录音增益")
+                    }
 
                     // 处理命令
                     handleCommand(result.text)
                 }
             }
         }
+    }
+
+    /**
+     * 播放准备接收命令的提示音
+     */
+    private fun playReadyForCommandSound() {
+        // 生成比激活提示音更柔和的提示音，指示系统准备接收命令
+        val readyBeepData = ShortArray(8000) { i ->
+            when {
+                i < 1000 -> (Short.MAX_VALUE * 0.15 * sin(i * 0.02)).toInt().toShort()
+                else -> 0
+            }
+        }
+
+        // 使用音频处理器处理提示音
+        val processedBeep = audioProcessor.processAudio(readyBeepData)
+        
+        audioPlayer.playAudio(processedBeep, processedBeep.size)
+
+        // 通知分析器音频播放事件，避免回声误触发
+        audioAnalyzer.notifyAudioPlayback()
     }
 
     /**
@@ -574,7 +621,7 @@ class BasicVoiceAssistant : VoiceAssistant {
             
             lowPassCoefficient?.let { 
                 this.lowPassFilter = it
-                processor.setLowPassFilterCoeff(it)
+                processor.setLowPassFilter(it)
             }
         }
     }
