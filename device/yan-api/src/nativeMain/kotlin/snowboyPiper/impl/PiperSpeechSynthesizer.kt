@@ -134,7 +134,8 @@ class PiperSpeechSynthesizer : SpeechSynthesizer {
                 espeak_data_path = espeakDataPath,
                 model_path = modelPath,
                 config_path = configPath,
-                speaker_id = speakerId
+                speaker_id = speakerId,
+                language = "zh"
             )
             if (piperContext == null) {
                 println("[ERROR] Piper初始化失败，返回的上下文为空")
