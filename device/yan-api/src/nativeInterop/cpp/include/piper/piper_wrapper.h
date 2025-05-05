@@ -10,7 +10,7 @@ typedef struct PiperContext PiperContext;
 
 // 初始化 Piper
 PiperContext* piper_wrapper_init(const char* espeak_data_path, const char* model_path,
-                                 const char* config_path, int speaker_id, const char* language);
+                                 const char* config_path, int speaker_id, const char* language,int sampleRate,int channels);
 
 // 释放 Piper 资源
 void piper_wrapper_terminate(PiperContext* context);
