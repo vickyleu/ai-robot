@@ -102,15 +102,12 @@ class SnowboyKeywordDetector(
                 _detectionState.value = KeywordDetector.DetectionState.ERROR
                 return false
             }
-            
             // 提高灵敏度以增加检测成功率
             // 灵敏度范围为0-1，值越高越容易检测到关键词，但可能增加误检率
             // 调整为0.98以进一步提高检测率
             println("[INFO] 设置灵敏度 ${sensitivity}）...") // 1.0f
-             snowboy_set_high_sensitivity(snowboyDetector, sensitivity.toString())
+            snowboy_set_high_sensitivity(snowboyDetector, sensitivity.toString())
             snowboy_set_audio_gain(snowboyDetector, 2.5f)
-//            // 然后更新模型（如果有这个函数的话）
-//            snowboy_update_model(snowboyDetector)
             // 验证灵敏度设置是否生效
             println("[DEBUG] 灵敏度设置完成，准备进行模型验证")
             

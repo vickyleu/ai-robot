@@ -136,45 +136,41 @@ class PortAudioDevice(private val speechRecognizer: VoskSpeechRecognizer) : Audi
         scope.launch {
             try {
                 // 创建更简单的ALSA配置，减少冲突
+                // pcm.!default { type plug slave.pcm "hw:0,0" } ctl.!default { type hw card 0 }
                 val minimalConfig = """
-                    | # 最小化ALSA配置，使用独占模式
-                    | pcm.!default {
-                    |     type plug
-                    |     slave.pcm "hw:0,0"
-                    |     card 0
-                    |     device 0
-                    |     format S16_LE
-                    |     channels 1  # 使用单声道
-                    |     rate 48000
-                    |     nonblock true
-                    | }
+                    | # 最小化ALSA配置
+                    | pcm.!default { 
+                    |     type plug 
+                    |     slave.pcm "hw:0,0" 
+                    | } 
                     | 
-                    | ctl.!default {
-                    |     type hw
-                    |     card 0
+                    | ctl.!default { 
+                    |     type hw 
+                    |     card 0 
                     | }
                 """.trimMargin()
-                
+
+
                 // 检查文件是否存在
                 val checkFileCmd = "test -f ~/.asoundrc && echo 'exists' || echo 'not exists'"
                 val fileExists = VoskSpeechService.executeCommand(checkFileCmd).trim() == "exists"
-                
+
                 if (fileExists) {
                     // 备份现有文件
                     VoskSpeechService.executeCommand("mv ~/.asoundrc ~/.asoundrc.bak_$(date +%s)")
                 }
-                
+
                 // 创建新的配置文件
                 VoskSpeechService.executeCommand("echo '$minimalConfig' > ~/.asoundrc")
-                println("[INFO] 创建了最小化ALSA配置(单声道)")
-                
+                println("[INFO] 创建了最小化ALSA配置")
+
                 // 让系统应用新配置
                 VoskSpeechService.executeCommand("sudo alsactl kill rescan")
-                
+
                 // 列举ALSA设备（仅用于调试）
                 val output = VoskSpeechService.executeCommand("cat /proc/asound/cards")
                 println("[ALSA-CARDS]:\n$output")
-                
+
                 val recordDevices = VoskSpeechService.executeCommand("arecord -l")
                 println("[ALSA-CAPTURE-DEVICES]:\n$recordDevices")
             } catch (e: Exception) {
