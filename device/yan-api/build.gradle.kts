@@ -24,6 +24,16 @@ plugins {
 val externalToolchain = properties["ai.use.externalToolchain"].toString().toBooleanStrictOrNull() == true
 val armhfToolchain = Armhfp.executeToolchain(providers,externalToolchain) ?: error("无法找到工具链")
 kotlin {
+    this.compilerOptions {
+        // 设置编译器选项
+        freeCompilerArgs.addAll(
+            listOf(
+                "-Xskip-prerelease-check",
+                "-Xskip-metadata-version-check",
+                "-Xopt-in=kotlinx.cinterop.ExperimentalForeignApi",
+            )
+        )
+    }
     // 配置目标平台
     @Suppress("DEPRECATION")
     linuxArm32Hfp {

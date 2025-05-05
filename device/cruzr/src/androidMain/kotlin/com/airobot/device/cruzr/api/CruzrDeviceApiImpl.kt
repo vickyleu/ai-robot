@@ -166,7 +166,7 @@ class CruzrDeviceApiImpl(private val context: Context) : CruzrDeviceApi {
      */
     private fun createEmptySensorData(): SensorData {
         return SensorData(
-            timestamp = System.currentTimeMillis(),
+            timestamp = Clock.System.now().toEpochMilliseconds(),
             type = "empty",
             values = emptyMap()
         )
@@ -196,7 +196,7 @@ class CruzrDeviceApiImpl(private val context: Context) : CruzrDeviceApi {
                 bridge.sensorData.collect { sensorValues ->
                     if (sensorValues.isNotEmpty()) {
                         _sensorData.value = SensorData(
-                            timestamp = System.currentTimeMillis(),
+                            timestamp = Clock.System.now().toEpochMilliseconds(),
                             type = "status",
                             values = sensorValues
                         )

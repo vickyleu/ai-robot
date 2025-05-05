@@ -1,3 +1,4 @@
+import com.airobot.device.yanapi.voice.demo.voiceAssistantDemo
 import snowboyPiper.snowboyPiper
 
 fun main() {
@@ -6,5 +7,6 @@ fun main() {
     println("Hello, Linux armhf! 我是编译的程序...\n")
 //    whisperPortaudio()
 //    portAudio()
-    snowboyPiper()
+//    snowboyPiper()
+    voiceAssistantDemo()
 }
