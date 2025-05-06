@@ -4,6 +4,7 @@
 
 package snowboyPiper.impl
 
+import com.airobot.device.yanapi.snowboyPiper.config.VoiceAssistantConfig
 import com.airobot.device.yanapi.snowboyPiper.interfaces.AudioAnalyzer
 import com.airobot.device.yanapi.snowboyPiper.interfaces.VoiceStateManager
 import com.airobot.snowboyinterop.SnowboyDetectWrapper
@@ -12,6 +13,7 @@ import com.airobot.snowboyinterop.snowboy_free
 import com.airobot.snowboyinterop.snowboy_run_detection_int16
 import com.airobot.snowboyinterop.snowboy_set_audio_gain
 import com.airobot.snowboyinterop.snowboy_set_high_sensitivity
+import com.airobot.snowboyinterop.snowboy_set_sensitivity
 import com.airobot.snowboyinterop.snowboy_update_model
 import kotlinx.cinterop.CPointer
 import kotlinx.cinterop.ExperimentalForeignApi
@@ -56,12 +58,12 @@ class SnowboyKeywordDetector(
     
     // 去抖动控制
     private var lastDetectionTime = 0L
-    private val debounceTimeMs = 2000L // 2秒去抖动时间
+    private val debounceTimeMs = 500L // 0.5秒去抖动时间
     
     // 存储初始化参数，用于可能的重新初始化
     private var lastResourcePath = ""
     private var lastModelPath = ""
-    private var lastSensitivity = 0.95f
+    private var lastSensitivity = VoiceAssistantConfig.snowboySensitivity
     
     /**
      * 初始化检测器
@@ -106,8 +108,8 @@ class SnowboyKeywordDetector(
             // 灵敏度范围为0-1，值越高越容易检测到关键词，但可能增加误检率
             // 调整为0.98以进一步提高检测率
             println("[INFO] 设置灵敏度 ${sensitivity}）...") // 1.0f
-            snowboy_set_high_sensitivity(snowboyDetector, sensitivity.toString())
-            snowboy_set_audio_gain(snowboyDetector, 2.5f)
+            snowboy_set_sensitivity(snowboyDetector, sensitivity.toString())
+            snowboy_set_audio_gain(snowboyDetector, 1f)
             // 验证灵敏度设置是否生效
             println("[DEBUG] 灵敏度设置完成，准备进行模型验证")
             
@@ -153,33 +155,33 @@ class SnowboyKeywordDetector(
         try {
             val bufferPtr = nativeHeap.allocArray<ShortVar>(frameCount)
             // 1. 动态范围压缩 - 提升小信号，压缩大信号
-            fun compressAudio(audio: ShortArray, threshold: Int = 8000, ratio: Float = 0.7f): ShortArray {
-                return ShortArray(audio.size) { i ->
-                    val sample = audio[i]
-                    if (abs(sample.toInt()) > threshold) {
-                        val compressed = threshold + ((abs(sample.toInt()) - threshold) * ratio)
-                        (if (sample > 0) compressed else -compressed).toInt().toShort()
-                    } else {
-                        // 轻微放大较低信号，确保捕捉到更安静的声音
-                        (sample.toInt() * 1.2).toInt().toShort()
-                    }
-                }
-            }
-
-            // 2. 应用于检测前
-            val processedData = compressAudio(buffer)
+//            fun compressAudio(audio: ShortArray, threshold: Int = 8000, ratio: Float = 0.7f): ShortArray {
+//                return ShortArray(audio.size) { i ->
+//                    val sample = audio[i]
+//                    if (abs(sample.toInt()) > threshold) {
+//                        val compressed = threshold + ((abs(sample.toInt()) - threshold) * ratio)
+//                        (if (sample > 0) compressed else -compressed).toInt().toShort()
+//                    } else {
+//                        // 轻微放大较低信号，确保捕捉到更安静的声音
+//                        (sample.toInt() * 1.2).toInt().toShort()
+//                    }
+//                }
+//            }
+//
+//            // 2. 应用于检测前
+//            val processedData = compressAudio(buffer)
             // 复制音频数据到本地内存
             for (i in 0 until frameCount) {
-                bufferPtr[i] = processedData[i]
+                bufferPtr[i] = buffer[i]
             }
             // 检测当前帧是否有语音活动
-            val hasVoice = audioAnalyzer.hasVoiceActivity(processedData)
+            val hasVoice = audioAnalyzer.hasVoiceActivity(buffer)
             println("[DEBUG] 检测到语音活动: $hasVoice")
             // 当没有检测到语音活动时，将is_end设为1表示语音结束
             // 当检测到语音活动时，将is_end设为0表示语音未结束，继续处理
             // 修改后的代码
-            val isSpeechEnd = voiceStateManager.isSilenceThresholdReached(voiceStateManager.silenceFramesThreshold) && voiceStateManager.speechStarted
-            val is_end = if (isSpeechEnd) 1 else 0
+//            val isSpeechEnd = voiceStateManager.isSilenceThresholdReached(voiceStateManager.silenceFramesThreshold) && voiceStateManager.speechStarted
+            val is_end = /*if (isSpeechEnd) 1 else*/ 0
             if(hasVoice){
                 // 执行检测
                 val result =  DetectorState.fromValue(snowboy_run_detection_int16(snowboyDetector, bufferPtr, frameCount, is_end = is_end)).apply {

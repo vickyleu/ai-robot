@@ -48,6 +48,7 @@ fun main() {
     val wakewordDetector = SnowboyWakewordDetector(audioAnalyzer)
     val initResult = wakewordDetector.initialize(
         resourcePath = "models/snowboy/common.res",
+//        modelPath = "models/snowboy/snowboy.umdl",
         modelPath = "models/snowboy/xiaodu.pmdl",
         sensitivity = 0.99f // 使用较高灵敏度
     )

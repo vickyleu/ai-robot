@@ -69,7 +69,7 @@ class SnowboyPiperVoiceAssistant(
     
     // 关键词检测去抖动控制
     private var lastKeywordTriggerTime = 0L
-    private val keywordDebouncePeriodMs = 2000L // 关键词触发后的去抖动时间（毫秒）
+    private val keywordDebouncePeriodMs = 500L // 关键词触发后的去抖动时间（毫秒）
 
     // 协程作用域和任务
     private val scope = CoroutineScope(Dispatchers.Default)
@@ -305,7 +305,7 @@ class SnowboyPiperVoiceAssistant(
                                                 VoiceAssistantService.AssistantState.LISTENING_COMMAND
 
                                             // 播放提示音
-                                            speak("你好")
+                                            speak("你好阿萨啊大幅度发的速度是多少")
 //                                            speak("hello world!!!")
 
                                             // 重置状态

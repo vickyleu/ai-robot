@@ -51,10 +51,13 @@ fun voiceAssistantDemo() = runBlocking {
     )
     // 模型路径
     val wakewordResource = "/usr/local/share/yanshee-model/snowboy/common.res"
+//    val wakewordModel = "/usr/local/share/yanshee-model/snowboy/models/snowboy.umdl"
     val wakewordModel = "/usr/local/share/yanshee-model/snowboy/models/xiaodu.pmdl"
     val recognizerModel = "/usr/local/share/yanshee-model/vosk/vosk-model-small-cn-0.22"
-    val synthesizerModel = "/usr/local/share/yanshee-model/piper/zh_CN-huayan-x_low.onnx"
-    val synthesizerConfig = "/usr/local/share/yanshee-model/piper/zh_CN-huayan-x_low.onnx.json"
+    val synthesizerModel = "/usr/local/share/yanshee-model/piper/zh_CN-huayan-medium.onnx"
+    val synthesizerConfig = "/usr/local/share/yanshee-model/piper/zh_CN-huayan-medium.onnx.json"
+//    val synthesizerModel = "/usr/local/share/yanshee-model/piper/zh_CN-huayan-x_low.onnx"
+//    val synthesizerConfig = "/usr/local/share/yanshee-model/piper/zh_CN-huayan-x_low.onnx.json"
     val synthesizerESpeakData = "/usr/local/share/yanshee-model/piper/espeak-ng-data"
 
     // 初始化语音助手

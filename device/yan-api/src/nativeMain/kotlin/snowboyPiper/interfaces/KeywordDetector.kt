@@ -2,6 +2,7 @@
 
 package snowboyPiper.interfaces
 
+import com.airobot.device.yanapi.snowboyPiper.config.VoiceAssistantConfig
 import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.cinterop.ShortVar
 import kotlinx.coroutines.flow.StateFlow
@@ -47,7 +48,7 @@ interface KeywordDetector {
      * @param sensitivity 灵敏度，范围0-1
      * @return 初始化是否成功
      */
-    fun initialize(resourcePath: String, modelPath: String, sensitivity: Float = 0.99f): Boolean
+    fun initialize(resourcePath: String, modelPath: String, sensitivity: Float = VoiceAssistantConfig.snowboySensitivity): Boolean
     
     /**
      * 检测关键词

@@ -9,8 +9,13 @@ data class VoiceAssistantConfig(
     // 模型路径
     val resourcePath: String = "/usr/local/share/yanshee-model/snowboy/common.res",
     val modelPath: String = "/usr/local/share/yanshee-model/snowboy/models/xiaodu.pmdl",
-    val piperModelPath: String = "/usr/local/share/yanshee-model/piper/zh_CN-huayan-x_low.onnx",
-    val piperConfigPath: String = "/usr/local/share/yanshee-model/piper/zh_CN-huayan-x_low.onnx.json",
+//    val modelPath: String = "/usr/local/share/yanshee-model/snowboy/models/snowboy.umdl",
+    val piperModelPath: String = "/usr/local/share/yanshee-model/piper/zh_CN-huayan-medium.onnx",
+    val piperConfigPath: String = "/usr/local/share/yanshee-model/piper/zh_CN-huayan-medium.onnx.json",
+
+//    val piperModelPath: String = "/usr/local/share/yanshee-model/piper/zh_CN-huayan-x_low.onnx",
+//    val piperConfigPath: String = "/usr/local/share/yanshee-model/piper/zh_CN-huayan-x_low.onnx.json",
+
     val voskModelPath: String = "/usr/local/share/yanshee-model/vosk/vosk-model-small-cn-0.22",
     val piperESpeakDataPath: String = "/usr/local/share/yanshee-model/piper/espeak-ng-data",
 
@@ -25,6 +30,7 @@ data class VoiceAssistantConfig(
     val validVoiceRmsThreshold: Double = 500.0,// 有效语音RMS阈值
 //    val validVoiceZcrThreshold: Double = 0.5,// 有效语音RMS阈值
     val validVoiceZcrThreshold: Double = 0.5,// 有效语音RMS阈值
+
     val silenceFramesThreshold: Int = 65, // 静音帧阈值
 
     // 时间控制
@@ -33,4 +39,9 @@ data class VoiceAssistantConfig(
     val commandProcessingIntervalMs: Long = 1000L,
     val postSilenceWaitTimeMs: Long = 1500L,
     val errorLogIntervalMs: Long = 5000L
-)
+){
+    companion object{
+        val snowboySensitivity: Float = 0.5f// snowboy灵敏度
+    }
+
+}
