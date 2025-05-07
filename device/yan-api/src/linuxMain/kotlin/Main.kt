@@ -1,4 +1,3 @@
-import com.airobot.device.yanapi.voice.demo.voiceAssistantDemo
 import snowboyPiper.snowboyPiper
 
 fun main() {

@@ -305,8 +305,7 @@ class SnowboyPiperVoiceAssistant(
                                                 VoiceAssistantService.AssistantState.LISTENING_COMMAND
 
                                             // 播放提示音
-                                            speak("你好阿萨啊大幅度发的速度是多少")
-//                                            speak("hello world!!!")
+                                            speak("我在呢!")
 
                                             // 重置状态
                                             voiceStateManager.reset()

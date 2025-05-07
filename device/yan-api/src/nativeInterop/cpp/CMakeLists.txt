@@ -25,7 +25,7 @@ set(HACK_THING_INCLUDE
         "${CMAKE_SOURCE_DIR}/include/piper"
         "${CMAKE_SOURCE_DIR}/include/piper/onnxruntime"
 #        "${CMAKE_SOURCE_DIR}/include/piper/hack"
-        "${CMAKE_SOURCE_DIR}/include/whisper"
+#        "${CMAKE_SOURCE_DIR}/include/whisper"
         "${CMAKE_SOURCE_DIR}/include/opencc"
         "${CMAKE_SOURCE_DIR}/include/opencc/hack"
         "${CMAKE_SOURCE_DIR}/include/snowboy"

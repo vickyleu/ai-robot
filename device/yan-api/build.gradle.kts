@@ -30,7 +30,7 @@ kotlin {
             listOf(
                 "-Xskip-prerelease-check",
                 "-Xskip-metadata-version-check",
-                "-Xopt-in=kotlinx.cinterop.ExperimentalForeignApi",
+//                "-Xopt-in=kotlinx.cinterop.ExperimentalForeignApi",
             )
         )
     }
@@ -62,33 +62,6 @@ kotlin {
                 project.layout.buildDirectory.get().asFile.resolve("cmake").absolutePath
             val libThirdpartyPath = file("src/nativeInterop/cpp/libs").absolutePath
             val sharedLibrary = file("src/linuxMain/resources/linuxArm32Hfp").absolutePath
-            /*staticLib{
-                // Add the -fopenmp flag to linker options
-                // 添加链接器选项
-                linkerOpts.addAll(listOf(
-                    "-lstdc++",
-                    "-lm",
-                    "-L${libThirdpartyPath}",
-                    "-l:libyanapi.a",
-                    "-l:libvosk.a",
-                    "-l:libwhisper.a",
-                ))
-            }
-            sharedLib{
-                linkerOpts.addAll(listOf(
-                    "-L${sharedLibrary}",
-                    "-L${libYanPath}",
-                    "-lm",       // 数学库
-                    "-lasound",
-                    "-lpython3.5m",
-                    "-lcrypto",
-                    "-lssl",
-                    "-lcurl",
-                    "-lexpat",
-                    "-lm",
-                    "-lz",
-                ))
-            }*/
             executable {
                 entryPoint = "main"
                 baseName = "yanshee"
@@ -106,7 +79,6 @@ kotlin {
                     "-lvosk",
                     "-lportaudio",
                     "-lgomp",
-                    "-lwhisper",
                     "-lpiper",
                     "-lopencc",
                     "-latomic",
@@ -117,7 +89,6 @@ kotlin {
                     "-l:libyanapi.a",
                     "-l:libvosk.a",
                     "-l:libportaudio.a",
-                    "-l:libwhisper.a",
                     "-l:libopencc.a",
                     "-l:libpiper.a",
                     "-lasound",
@@ -285,27 +256,27 @@ kotlin {
                         *armhfToolchain.includedDirs.map { "-I$it" }.toTypedArray()
                     )
                 }
-                create("whisper") {
-                    defFile("src/nativeInterop/cinterop/whisper.def")
-                    packageName("com.airobot.whisperinterop")
-                    // 从上面四个目录中查找所有的头文件,添加到headers.files
-                    includeDirs(
-                        file("src/nativeInterop/cpp/include/whisper"),
-                        file("src/nativeInterop/cpp/include/whisper/hack"),
-                    )
-                    compilerOpts(
-                        "-fPIC",
-                        "-nostdinc++",
-                        "-fopenmp",
-                        "-std=c++17",
-                        "-pthread",
-                        "-D_GLIBCXX_USE_CXX11_ABI=1",
-                        "-ffunction-sections",
-                        "-fdata-sections",
-                        "-L${file("src/nativeInterop/cpp/libs/").absolutePath}",
-                        *armhfToolchain.includedDirs.map { "-I$it" }.toTypedArray()
-                    )
-                }
+//                create("whisper") {
+//                    defFile("src/nativeInterop/cinterop/whisper.def")
+//                    packageName("com.airobot.whisperinterop")
+//                    // 从上面四个目录中查找所有的头文件,添加到headers.files
+//                    includeDirs(
+//                        file("src/nativeInterop/cpp/include/whisper"),
+//                        file("src/nativeInterop/cpp/include/whisper/hack"),
+//                    )
+//                    compilerOpts(
+//                        "-fPIC",
+//                        "-nostdinc++",
+//                        "-fopenmp",
+//                        "-std=c++17",
+//                        "-pthread",
+//                        "-D_GLIBCXX_USE_CXX11_ABI=1",
+//                        "-ffunction-sections",
+//                        "-fdata-sections",
+//                        "-L${file("src/nativeInterop/cpp/libs/").absolutePath}",
+//                        *armhfToolchain.includedDirs.map { "-I$it" }.toTypedArray()
+//                    )
+//                }
             }else{
                 create("fake"){
                     defFile("src/nativeInterop/cinterop/fake.def")

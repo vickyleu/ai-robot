@@ -50,6 +50,9 @@ import snowboyPiper.interfaces.AudioPlayer
 import snowboyPiper.interfaces.KeywordDetector
 import snowboyPiper.interfaces.KeywordDetector.DetectorState
 import snowboyPiper.interfaces.KeywordDetector.DetectorState.*
+import kotlin.math.abs
+import kotlin.math.max
+import kotlin.math.min
 import kotlin.time.Clock
 import kotlin.time.ExperimentalTime
 
@@ -91,41 +94,13 @@ class SnowboyKeywordDetector(
      * @return 初始化是否成功
      */
     override fun initialize(resourcePath: String, modelPath: String, sensitivity: Float): Boolean {
-        // 保存初始化参数，用于可能的重新初始化
+        // 保存参数以便重新初始化
         lastResourcePath = resourcePath
         lastModelPath = modelPath
         lastSensitivity = sensitivity
 
         _detectionState.value = KeywordDetector.DetectionState.INITIALIZING
 
-        // 检查文件是否存在
-        scope.launch {
-            val checkResourceCmd = "test -f $resourcePath && echo 'exists' || echo 'not exists'"
-            val resourceExists = executeCommand(checkResourceCmd).trim() == "exists"
-            if (!resourceExists) {
-                println("[WARN] Snowboy资源文件不存在: $resourcePath")
-            }
-
-            val checkModelCmd = "test -f $modelPath && echo 'exists' || echo 'not exists'"
-            val modelExists = executeCommand(checkModelCmd).trim() == "exists"
-            if (!modelExists) {
-                println("[WARN] Snowboy模型文件不存在: $modelPath")
-            } else {
-                // 在初始化方法中添加
-                println("加载模型: ${modelPath}")
-                val fileInfo = nativeHeap.alloc<stat>()
-                if (stat(modelPath, fileInfo.ptr) != 0) {
-                    perror("模型文件访问失败")
-                    nativeHeap.free(fileInfo.rawPtr)
-                    return@launch
-                }
-                println("模型文件大小: ${fileInfo.st_size} bytes")
-                nativeHeap.free(fileInfo.rawPtr)
-            }
-        }
-
-        // 初始化Snowboy检测器
-        println("[INFO] 创建Snowboy检测器...")
         try {
             snowboyDetector = snowboy_create(resourcePath, modelPath)
             if (snowboyDetector == null) {
@@ -133,13 +108,20 @@ class SnowboyKeywordDetector(
                 _detectionState.value = KeywordDetector.DetectionState.ERROR
                 return false
             }
-            // 提高灵敏度以增加检测成功率
+            
+            // 使用最高灵敏度，确保检测到唤醒词
+            val actualSensitivity = 0.35f
+            
             // 灵敏度范围为0-1，值越高越容易检测到关键词，但可能增加误检率
-            // 调整为0.98以进一步提高检测率
-            println("[INFO] 设置灵敏度 ${sensitivity}）...") // 1.0f
-            snowboy_set_sensitivity(snowboyDetector, sensitivity.toString())
-            snowboy_set_audio_gain(snowboyDetector, 1f)
-            snowboy_apply_frontend(snowboyDetector, 0)
+            println("[INFO] 设置灵敏度 ${actualSensitivity}")
+            snowboy_set_sensitivity(snowboyDetector, actualSensitivity.toString())
+            
+            // 设置高音频增益，确保信号足够强
+            snowboy_set_audio_gain(snowboyDetector, 0.05f)
+            
+            // 关闭前端处理
+            snowboy_apply_frontend(snowboyDetector, 1)
+            
             // 验证灵敏度设置是否生效
             println("[DEBUG] 灵敏度设置完成，准备进行模型验证")
 
@@ -184,146 +166,132 @@ class SnowboyKeywordDetector(
             return ERROR
         }
 
+        // 添加调试日志
+        println("[DEBUG] SnowboyKeywordDetector.detect 被调用，帧数: $frameCount")
+
         if (_detectionState.value != KeywordDetector.DetectionState.LISTENING) {
             _detectionState.value = KeywordDetector.DetectionState.LISTENING
         }
 
         try {
-            val bufferPtr = nativeHeap.allocArray<ShortVar>(frameCount)
-            // 1. 动态范围压缩 - 提升小信号，压缩大信号
-//            fun compressAudio(audio: ShortArray, threshold: Int = 8000, ratio: Float = 0.7f): ShortArray {
-//                return ShortArray(audio.size) { i ->
-//                    val sample = audio[i]
-//                    if (abs(sample.toInt()) > threshold) {
-//                        val compressed = threshold + ((abs(sample.toInt()) - threshold) * ratio)
-//                        (if (sample > 0) compressed else -compressed).toInt().toShort()
-//                    } else {
-//                        // 轻微放大较低信号，确保捕捉到更安静的声音
-//                        (sample.toInt() * 1.2).toInt().toShort()
-//                    }
-//                }
-//            }
-//
-//            // 2. 应用于检测前
-//            val processedData = compressAudio(buffer)
-            // 复制音频数据到本地内存
-            for (i in 0 until frameCount) {
-                bufferPtr[i] = buffer[i]
+            // 计算音频能量
+            var sumSquares = 0.0
+            for (sample in buffer) {
+                sumSquares += (sample * sample)
             }
-            // 检测当前帧是否有语音活动
-            val hasVoice = audioAnalyzer.hasVoiceActivity(buffer)
-            println("[DEBUG] 检测到语音活动: $hasVoice")
-            // 当没有检测到语音活动时，将is_end设为1表示语音结束
-            // 当检测到语音活动时，将is_end设为0表示语音未结束，继续处理
-            // 修改后的代码
-//            val isSpeechEnd = voiceStateManager.isSilenceThresholdReached(voiceStateManager.silenceFramesThreshold) && voiceStateManager.speechStarted
-            val is_end = /*if (isSpeechEnd) 1 else*/ 0
-            if (hasVoice) {
-                // 在初始化后立即获取并打印采样率要求
-                val requiredSampleRate = snowboy_sample_rate(snowboyDetector)
-                val requiredChannels = snowboy_num_channels(snowboyDetector)
-                val requiredBitsPerSample = snowboy_bits_per_sample(snowboyDetector)
-                println("Snowboy要求：采样率=$requiredSampleRate Hz, 通道数=$requiredChannels, 位深=$requiredBitsPerSample bit")
-                println("当前音频：采样率=$sampleRate Hz, 通道数=$channels, 位深=${16} bit")
-                // 检查采样率和通道数是否匹配
-                val (bufferTransPtr, outputSize) = if (sampleRate != requiredSampleRate || channels != requiredChannels) {
-                     val bufferTrans = transcoding(frameCount, bufferPtr, sampleRate, requiredSampleRate)
-                    if(bufferTrans==null){
-                        nativeHeap.free(bufferPtr.rawValue)
-                        return  ERROR
-                    }
-                    bufferTrans
-                }
-                else {
-                    // 直接使用当前音频数据进行检测
-                    println("[DEBUG] 音频数据符合要求，开始检测")
-                    bufferPtr to frameCount
-                }
-                // 执行检测
-                val result = DetectorState.fromValue(
-                    snowboy_run_detection_int16(
-                        snowboyDetector,
-                        bufferTransPtr,
-                        outputSize,
-                        is_end = is_end
-                    )
-                ).apply {
-                    println("[DEBUG] 检测结果: ${this.name}")
-                }
-                // 释放本地内存
-                nativeHeap.free(bufferTransPtr.rawValue)
-                // 处理检测结果
-                when (result) {
-                    Silence -> {
-                        // 检测到静音，可能是背景噪声或无声
-                        println("[DEBUG] 检测到静音")
-                        _detectionState.value = KeywordDetector.DetectionState.LISTENING
-                    }
-
-                    ERROR -> {
-                        // 检测器错误，可能是初始化失败或其他问题
-                        println("[ERROR] 检测器错误")
-                        // 错误情况，应用去抖动机制避免频繁报错
-                        val currentTime = Clock.System.now().toEpochMilliseconds()
-                        if (currentTime - lastDetectionTime > debounceTimeMs) {
-                            println("[WARN] 关键词检测错误，错误码: $result")
-                            // 尝试重新初始化检测器
-                            scope.launch {
-                                println("[INFO] 尝试重新初始化Snowboy检测器...")
-                                // 先释放资源
-                                snowboyDetector?.let {
-                                    snowboy_free(it)
-                                }
-                                snowboyDetector = null
-
-                                // 短暂延迟后重新初始化
-                                kotlinx.coroutines.delay(1000)
-                                // 使用类成员变量存储初始化参数，避免硬编码路径
-                                if (lastResourcePath.isNotEmpty() && lastModelPath.isNotEmpty()) {
-                                    val success =
-                                        initialize(lastResourcePath, lastModelPath, lastSensitivity)
-                                    if (!success) {
-                                        println("[ERROR] 检测器重新初始化失败")
-                                    }
-                                }
-                            }
-                            lastDetectionTime = currentTime
-                        }
-                        _detectionState.value = KeywordDetector.DetectionState.ERROR
-                    }
-
-                    NoEvent -> {
-                        // 没有检测到关键词，继续监听
-                        println("[DEBUG] 没有检测到关键词 $outputSize")
-                        // 检查并清理语音活动和缓冲区状态，防止重复播放
-                        voiceStateManager.reset()
-                        _detectionState.value = KeywordDetector.DetectionState.LISTENING
-                    }
-
-                    Hotword1Triggered,
-                    Hotword2Triggered,
-                    Hotword3Triggered -> {
-                        // 检测到关键词，更新状态
-                        println("[DEBUG] 检测到关键词")
-                        val currentTime = Clock.System.now().toEpochMilliseconds()
-                        if (currentTime - lastDetectionTime > debounceTimeMs) {
-                            println("[INFO] 检测到关键词！结果值: $result")
-                            _detectionState.value = KeywordDetector.DetectionState.DETECTED
-                            lastDetectionTime = currentTime
-                        }
-                    }
-                }
-                return result
-            } else {
-                // 释放本地内存
-                nativeHeap.free(bufferPtr.rawValue)
-                // 没有检测到语音活动，继续监听
-                println("[DEBUG] 没有检测到语音活动，继续监听")
-                _detectionState.value = KeywordDetector.DetectionState.LISTENING
+            val rms = kotlin.math.sqrt(sumSquares / frameCount)
+            
+            // 如果能量非常低，直接忽略
+            if (rms < 150.0) {
+                println("[DEBUG] 音频能量极低，忽略: $rms")
                 return NoEvent
+            }
+            
+            // 计算过零率
+            var zeroCrossings = 0
+            for (i in 1 until frameCount) {
+                if ((buffer[i] > 0 && buffer[i-1] <= 0) ||
+                    (buffer[i] <= 0 && buffer[i-1] > 0)) {
+                    zeroCrossings++
+                }
+            }
+            val zcr = zeroCrossings.toDouble() / frameCount
+            
+            // 过零率检查 - 只过滤明显的非语音噪音（如高频机械噪声）
+            if (zcr > 0.5) {
+                println("[DEBUG] 过零率极高，可能是机械噪音: $zcr")
+                return NoEvent
+            }
+            
+            println("[DEBUG] 音频通过初步特征检查，RMS: $rms, ZCR: $zcr")
+            
+            val bufferPtr = nativeHeap.allocArray<ShortVar>(frameCount)
+            
+            // 使用适中的增益
+            for (i in 0 until frameCount) {
+                val gain = 0.3f
+                val ampValue = buffer[i].toInt() * gain
+                bufferPtr[i] = kotlin.math.max(-32768, kotlin.math.min(32767, ampValue.toInt())).toShort()
+            }
+
+            // 检测音频格式要求
+            val requiredSampleRate = snowboy_sample_rate(snowboyDetector)
+            val requiredChannels = snowboy_num_channels(snowboyDetector)
+            val requiredBitsPerSample = snowboy_bits_per_sample(snowboyDetector)
+            println("[DEBUG] Snowboy要求：采样率=$requiredSampleRate Hz, 通道数=$requiredChannels, 位深=$requiredBitsPerSample bit")
+            println("[DEBUG] 当前音频：采样率=$sampleRate Hz, 通道数=$channels, 位深=16 bit")
+            
+            // 执行转码（如果需要）
+            val (finalBufferPtr, outputSize) = if (sampleRate != requiredSampleRate || channels != requiredChannels) {
+                println("[DEBUG] 需要转码，从 $sampleRate/$channels 到 $requiredSampleRate/$requiredChannels")
+                val bufferTrans = transcoding(frameCount, bufferPtr, sampleRate, requiredSampleRate)
+                if (bufferTrans == null) {
+                    println("[ERROR] 转码失败")
+                    nativeHeap.free(bufferPtr.rawValue)
+                    return ERROR
+                }
+                bufferTrans
+            } else {
+                println("[DEBUG] 音频格式匹配，无需转码")
+                bufferPtr to frameCount
+            }
+            
+            // 直接执行关键词检测
+            println("[DEBUG] 执行关键词检测，输入大小: $outputSize")
+            val result = snowboy_run_detection_int16(snowboyDetector, finalBufferPtr, outputSize, 0)
+            println("[DEBUG] 检测结果: $result")
+            
+            // 释放缓冲区
+            if (finalBufferPtr != bufferPtr) {
+                nativeHeap.free(finalBufferPtr.rawValue)
+            }
+            nativeHeap.free(bufferPtr.rawValue)
+            
+            // 处理检测结果
+            if (result > 0) {
+                // 检测到关键词
+                println("[INFO] 检测到关键词！结果值: $result")
+                
+                // 最基本的验证 - 只过滤极端情况
+                if (rms > 10000.0) {
+                    println("[DEBUG] 音频能量过高，可能是非语音噪音: $rms")
+                    return NoEvent
+                }
+                
+                // 去抖动
+                val currentTime = Clock.System.now().toEpochMilliseconds()
+                if (currentTime - lastDetectionTime < debounceTimeMs) {
+                    println("[INFO] 在去抖动期间内，忽略此次检测")
+                    return NoEvent
+                }
+                
+                // 更新状态
+                lastDetectionTime = currentTime
+                _detectionState.value = KeywordDetector.DetectionState.DETECTED
+                             
+                // 返回检测结果
+                return DetectorState.fromValue(result)
+            }
+            
+            // 处理其他结果
+            return when (result) {
+                -2 -> {
+                    println("[DEBUG] 检测到静音")
+                    Silence
+                }
+                -1 -> {
+                    println("[ERROR] 检测器错误")
+                    ERROR
+                }
+                0 -> {
+                    println("[DEBUG] 未检测到关键词")
+                    NoEvent
+                }
+                else -> NoEvent
             }
         } catch (e: Exception) {
             println("[ERROR] 关键词检测异常: ${e.message}")
+            e.printStackTrace()
             _detectionState.value = KeywordDetector.DetectionState.ERROR
             return ERROR
         }
@@ -387,7 +355,142 @@ class SnowboyKeywordDetector(
         return resampledBuffer to outputSize
     }
 
+    /**
+     * 计算音频的能量模式得分，用于判断是否符合唤醒词特征
+     * 唤醒词通常有明显的能量变化模式，如"小度小度"有明显的两段能量峰值
+     */
+    private fun calculateEnergyPattern(audioData: ShortArray): Double {
+        // 将音频分成多个小段，计算每段的能量
+        val segmentCount = 12 // 分12段，可以捕捉"小度小度"的音节变化
+        val segmentSize = audioData.size / segmentCount
+        val segmentEnergies = DoubleArray(segmentCount)
+        
+        // 计算每段的能量
+        for (i in 0 until segmentCount) {
+            var energy = 0.0
+            val start = i * segmentSize
+            val end = minOf((i + 1) * segmentSize, audioData.size)
+            
+            for (j in start until end) {
+                energy += audioData[j] * audioData[j]
+            }
+            segmentEnergies[i] = energy / (end - start)
+        }
+        
+        // 标准化能量值
+        val maxEnergy = segmentEnergies.maxOrNull() ?: 1.0
+        if (maxEnergy > 0) {
+            for (i in segmentEnergies.indices) {
+                segmentEnergies[i] = segmentEnergies[i] / maxEnergy
+            }
+        }
+        
+        // 检查能量模式是否符合唤醒词特征 - "小度小度"通常有两个能量峰值
+        // 计算能量峰值数量和位置
+        var peakCount = 0
+        val peakPositions = mutableListOf<Int>()
+        
+        for (i in 1 until segmentCount - 1) {
+            if (segmentEnergies[i] > 0.6 && // 能量峰值必须足够高
+                segmentEnergies[i] > segmentEnergies[i-1] && 
+                segmentEnergies[i] > segmentEnergies[i+1]) {
+                peakCount++
+                peakPositions.add(i)
+            }
+        }
+        
+        // 计算模式匹配得分
+        var patternScore = 0.0
+        
+        // 理想的"小度小度"应该有2-4个能量峰值，且峰值之间有一定间隔
+        if (peakCount >= 2 && peakCount <= 4) {
+            patternScore += 0.5 // 基础分
+            
+            // 检查峰值间隔是否合理
+            if (peakPositions.size >= 2) {
+                for (i in 0 until peakPositions.size - 1) {
+                    val gap = peakPositions[i+1] - peakPositions[i]
+                    // 合理的间隔应该在1-5段之间
+                    if (gap >= 1 && gap <= 5) {
+                        patternScore += 0.25
+                    }
+                }
+            }
+        }
+        
+        // 记录能量模式信息
+        println("[DEBUG] 能量模式分析: 峰值数=$peakCount, 峰值位置=$peakPositions, 匹配得分=$patternScore")
+        return patternScore
+    }
+    
+    /**
+     * 根据能量模式判断是否符合唤醒词特征
+     */
+    private fun hasWakewordEnergyPattern(audioData: ShortArray): Boolean {
+        val energyPatternScore = calculateEnergyPattern(audioData)
+        // 要求至少达到0.7的匹配度
+        return energyPatternScore >= 0.7
+    }
 
+    /**
+     * 检查音频是否具有人声的频谱特征模式
+     */
+    private fun hasHumanVoicePattern(buffer: ShortArray, frameCount: Int): Boolean {
+        // 暂时放宽检测标准，默认接受所有音频
+        println("[DEBUG] 人声模式检测：暂时放宽标准，接受所有音频")
+        return true;
+        
+        /*
+        // 将音频分为多个子帧
+        val subFrameSize = 1024
+        val subFrameCount = frameCount / subFrameSize
+        
+        if (subFrameCount < 3) {
+            return true // 帧太短，无法进行充分分析
+        }
+        
+        // 计算每个子帧的能量
+        val subFrameEnergies = DoubleArray(subFrameCount)
+        for (i in 0 until subFrameCount) {
+            var energy = 0.0
+            val startIdx = i * subFrameSize
+            val endIdx = minOf((i + 1) * subFrameSize, frameCount)
+            
+            for (j in startIdx until endIdx) {
+                energy += buffer[j] * buffer[j]
+            }
+            subFrameEnergies[i] = energy / (endIdx - startIdx)
+        }
+        
+        // 计算能量变化模式 - 人声通常有明显的能量波动
+        var energyVariations = 0
+        for (i in 1 until subFrameCount) {
+            val ratio = subFrameEnergies[i] / subFrameEnergies[i-1]
+            if (ratio < 0.5 || ratio > 2.0) {
+                energyVariations++
+            }
+        }
+        
+        // 人声通常有足够的能量变化
+        val hasEnoughVariations = energyVariations >= subFrameCount / 5
+        
+        // 人声通常不会有突然的能量峰值
+        var hasSuddenPeaks = false
+        for (i in 1 until subFrameCount - 1) {
+            val peakRatio1 = subFrameEnergies[i] / subFrameEnergies[i-1]
+            val peakRatio2 = subFrameEnergies[i] / subFrameEnergies[i+1]
+            
+            if (peakRatio1 > 10.0 && peakRatio2 > 10.0) {
+                hasSuddenPeaks = true
+                break
+            }
+        }
+        
+        // 键盘敲击通常有突然的能量峰值，然后快速下降
+        // 人声通常有更平滑的能量变化
+        return hasEnoughVariations && !hasSuddenPeaks
+        */
+    }
 
     /**
      * 释放资源

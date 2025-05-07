@@ -25,8 +25,8 @@ data class VoiceAssistantConfig(
     val overlapSize: Int = 16000, // 保留约1秒的音频用于连续检测
 
     // VAD参数
-    val energyThreshold: Double = 500.0,// 能量阈值，使检测更敏感
-    val noiseGateThreshold: Double = 200.0, // 噪声门阈值
+    val energyThreshold: Double = 600.0,// 能量阈值，使检测更敏感
+    val noiseGateThreshold: Double = 400.0, // 噪声门阈值
     val validVoiceRmsThreshold: Double = 500.0,// 有效语音RMS阈值
 //    val validVoiceZcrThreshold: Double = 0.5,// 有效语音RMS阈值
     val validVoiceZcrThreshold: Double = 0.5,// 有效语音RMS阈值
@@ -41,7 +41,7 @@ data class VoiceAssistantConfig(
     val errorLogIntervalMs: Long = 5000L
 ){
     companion object{
-        val snowboySensitivity: Float = 0.5f// snowboy灵敏度
+        val snowboySensitivity: Float = 0.95f// 设置非常高的灵敏度，确保能检测到唤醒词
     }
 
 }
