@@ -4,7 +4,6 @@ package snowboyPiper.interfaces
 
 import com.airobot.device.yanapi.snowboyPiper.config.VoiceAssistantConfig
 import kotlinx.cinterop.ExperimentalForeignApi
-import kotlinx.cinterop.ShortVar
 import kotlinx.coroutines.flow.StateFlow
 
 /**
@@ -56,7 +55,13 @@ interface KeywordDetector {
      * @param frameCount 帧数
      * @return 检测结果，大于0表示检测到关键词，0表示未检测到，负值表示错误
      */
-    fun detect(player: AudioPlayer,buffer: ShortArray, frameCount: Int): DetectorState
+    fun detect(
+        player: AudioPlayer,
+        buffer: ShortArray,
+        frameCount: Int,
+        sampleRate: Int,
+        channels: Int
+    ): DetectorState
     
     /**
      * 释放资源

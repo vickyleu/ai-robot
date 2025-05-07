@@ -40,6 +40,7 @@ add_library(yanapi STATIC source/YanAPI.cpp
         source/alsa_wrapper.cpp
         source/python_export.cpp
         source/snowboy_c_api.cpp
+        source/yanshee.cpp
 )
 #add_library(yanapi SHARED YanAPI.cpp python_export.c)
 

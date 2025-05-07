@@ -281,7 +281,7 @@ class SnowboyPiperVoiceAssistant(
                                 if (hasValidVoice) {
                                     // 只在有效语音时进行关键词检测
                                     println("[INFO] 存在有效音频, 检测关键词...")
-                                    val result = keywordDetector.detect(speechRecognizer.playerDevice(), accumulatedData, accumulatedData.size)
+                                    val result = keywordDetector.detect(speechRecognizer.playerDevice(), accumulatedData, accumulatedData.size,config.sampleRate, config.channels)
                                     // 只在结果为正时处理
                                     if (result.value > 0) {
                                         // 检查是否在去抖动期内

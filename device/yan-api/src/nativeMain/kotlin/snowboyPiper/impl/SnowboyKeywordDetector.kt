@@ -1,4 +1,5 @@
-@file:OptIn(ExperimentalForeignApi::class, ExperimentalTime::class, ExperimentalTime::class,
+@file:OptIn(
+    ExperimentalForeignApi::class, ExperimentalTime::class, ExperimentalTime::class,
     ExperimentalForeignApi::class
 )
 
@@ -7,19 +8,34 @@ package snowboyPiper.impl
 import com.airobot.device.yanapi.snowboyPiper.config.VoiceAssistantConfig
 import com.airobot.device.yanapi.snowboyPiper.interfaces.AudioAnalyzer
 import com.airobot.device.yanapi.snowboyPiper.interfaces.VoiceStateManager
+import com.airobot.piperinterop.SOXR_FLOAT32_I
+import com.airobot.piperinterop.soxr_io_spec_create
+import com.airobot.piperinterop.soxr_quality_spec_create
+import com.airobot.piperinterop.soxr_wrapper_create
+import com.airobot.piperinterop.soxr_wrapper_create_resampler
+import com.airobot.piperinterop.soxr_wrapper_destroy
+import com.airobot.piperinterop.soxr_wrapper_process
 import com.airobot.snowboyinterop.SnowboyDetectWrapper
+import com.airobot.snowboyinterop.snowboy_apply_frontend
+import com.airobot.snowboyinterop.snowboy_bits_per_sample
 import com.airobot.snowboyinterop.snowboy_create
 import com.airobot.snowboyinterop.snowboy_free
+import com.airobot.snowboyinterop.snowboy_num_channels
 import com.airobot.snowboyinterop.snowboy_run_detection_int16
+import com.airobot.snowboyinterop.snowboy_sample_rate
 import com.airobot.snowboyinterop.snowboy_set_audio_gain
-import com.airobot.snowboyinterop.snowboy_set_high_sensitivity
 import com.airobot.snowboyinterop.snowboy_set_sensitivity
-import com.airobot.snowboyinterop.snowboy_update_model
+import kotlinx.cinterop.CArrayPointer
 import kotlinx.cinterop.CPointer
 import kotlinx.cinterop.ExperimentalForeignApi
+import kotlinx.cinterop.FloatVar
 import kotlinx.cinterop.ShortVar
+import kotlinx.cinterop.alloc
 import kotlinx.cinterop.allocArray
+import kotlinx.cinterop.get
 import kotlinx.cinterop.nativeHeap
+import kotlinx.cinterop.pointed
+import kotlinx.cinterop.ptr
 import kotlinx.cinterop.set
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -27,12 +43,13 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import platform.posix.perror
+import platform.posix.stat
 import snowboyPiper.impl.VoskSpeechService.Companion.executeCommand
 import snowboyPiper.interfaces.AudioPlayer
 import snowboyPiper.interfaces.KeywordDetector
 import snowboyPiper.interfaces.KeywordDetector.DetectorState
 import snowboyPiper.interfaces.KeywordDetector.DetectorState.*
-import kotlin.math.abs
 import kotlin.time.Clock
 import kotlin.time.ExperimentalTime
 
@@ -48,23 +65,24 @@ class SnowboyKeywordDetector(
 
     // 检测器实例
     private var snowboyDetector: CPointer<SnowboyDetectWrapper>? = null
-    
+
     // 检测状态
     private val _detectionState = MutableStateFlow(KeywordDetector.DetectionState.IDLE)
-    override val detectionState: StateFlow<KeywordDetector.DetectionState> = _detectionState.asStateFlow()
-    
+    override val detectionState: StateFlow<KeywordDetector.DetectionState> =
+        _detectionState.asStateFlow()
+
     // 协程作用域
     private val scope = CoroutineScope(Dispatchers.Default)
-    
+
     // 去抖动控制
     private var lastDetectionTime = 0L
     private val debounceTimeMs = 500L // 0.5秒去抖动时间
-    
+
     // 存储初始化参数，用于可能的重新初始化
     private var lastResourcePath = ""
     private var lastModelPath = ""
     private var lastSensitivity = VoiceAssistantConfig.snowboySensitivity
-    
+
     /**
      * 初始化检测器
      * @param resourcePath 资源文件路径
@@ -77,9 +95,9 @@ class SnowboyKeywordDetector(
         lastResourcePath = resourcePath
         lastModelPath = modelPath
         lastSensitivity = sensitivity
-        
+
         _detectionState.value = KeywordDetector.DetectionState.INITIALIZING
-        
+
         // 检查文件是否存在
         scope.launch {
             val checkResourceCmd = "test -f $resourcePath && echo 'exists' || echo 'not exists'"
@@ -87,14 +105,25 @@ class SnowboyKeywordDetector(
             if (!resourceExists) {
                 println("[WARN] Snowboy资源文件不存在: $resourcePath")
             }
-            
+
             val checkModelCmd = "test -f $modelPath && echo 'exists' || echo 'not exists'"
             val modelExists = executeCommand(checkModelCmd).trim() == "exists"
             if (!modelExists) {
                 println("[WARN] Snowboy模型文件不存在: $modelPath")
+            } else {
+                // 在初始化方法中添加
+                println("加载模型: ${modelPath}")
+                val fileInfo = nativeHeap.alloc<stat>()
+                if (stat(modelPath, fileInfo.ptr) != 0) {
+                    perror("模型文件访问失败")
+                    nativeHeap.free(fileInfo.rawPtr)
+                    return@launch
+                }
+                println("模型文件大小: ${fileInfo.st_size} bytes")
+                nativeHeap.free(fileInfo.rawPtr)
             }
         }
-        
+
         // 初始化Snowboy检测器
         println("[INFO] 创建Snowboy检测器...")
         try {
@@ -110,9 +139,10 @@ class SnowboyKeywordDetector(
             println("[INFO] 设置灵敏度 ${sensitivity}）...") // 1.0f
             snowboy_set_sensitivity(snowboyDetector, sensitivity.toString())
             snowboy_set_audio_gain(snowboyDetector, 1f)
+            snowboy_apply_frontend(snowboyDetector, 0)
             // 验证灵敏度设置是否生效
             println("[DEBUG] 灵敏度设置完成，准备进行模型验证")
-            
+
             // 检查模型是否正确加载
             scope.launch {
                 // 验证模型文件大小和权限
@@ -125,7 +155,7 @@ class SnowboyKeywordDetector(
                 println("[INFO] 模型文件格式: $modelFormatInfo")
             }
             println("[INFO] Snowboy检测器初始化成功")
-            
+
             _detectionState.value = KeywordDetector.DetectionState.LISTENING
             return true
         } catch (e: Exception) {
@@ -142,7 +172,13 @@ class SnowboyKeywordDetector(
      * @param frameCount 帧数
      * @return 检测结果，大于0表示检测到关键词，0表示未检测到，负值表示错误
      */
-    override fun detect(player: AudioPlayer, buffer: ShortArray, frameCount: Int): DetectorState {
+    override fun detect(
+        player: AudioPlayer,
+        buffer: ShortArray,
+        frameCount: Int,
+        sampleRate: Int,
+        channels: Int
+    ): DetectorState {
         if (snowboyDetector == null) {
             println("[ERROR] Snowboy检测器未初始化")
             return ERROR
@@ -182,20 +218,48 @@ class SnowboyKeywordDetector(
             // 修改后的代码
 //            val isSpeechEnd = voiceStateManager.isSilenceThresholdReached(voiceStateManager.silenceFramesThreshold) && voiceStateManager.speechStarted
             val is_end = /*if (isSpeechEnd) 1 else*/ 0
-            if(hasVoice){
+            if (hasVoice) {
+                // 在初始化后立即获取并打印采样率要求
+                val requiredSampleRate = snowboy_sample_rate(snowboyDetector)
+                val requiredChannels = snowboy_num_channels(snowboyDetector)
+                val requiredBitsPerSample = snowboy_bits_per_sample(snowboyDetector)
+                println("Snowboy要求：采样率=$requiredSampleRate Hz, 通道数=$requiredChannels, 位深=$requiredBitsPerSample bit")
+                println("当前音频：采样率=$sampleRate Hz, 通道数=$channels, 位深=${16} bit")
+                // 检查采样率和通道数是否匹配
+                val (bufferTransPtr, outputSize) = if (sampleRate != requiredSampleRate || channels != requiredChannels) {
+                     val bufferTrans = transcoding(frameCount, bufferPtr, sampleRate, requiredSampleRate)
+                    if(bufferTrans==null){
+                        nativeHeap.free(bufferPtr.rawValue)
+                        return  ERROR
+                    }
+                    bufferTrans
+                }
+                else {
+                    // 直接使用当前音频数据进行检测
+                    println("[DEBUG] 音频数据符合要求，开始检测")
+                    bufferPtr to frameCount
+                }
                 // 执行检测
-                val result =  DetectorState.fromValue(snowboy_run_detection_int16(snowboyDetector, bufferPtr, frameCount, is_end = is_end)).apply {
+                val result = DetectorState.fromValue(
+                    snowboy_run_detection_int16(
+                        snowboyDetector,
+                        bufferTransPtr,
+                        outputSize,
+                        is_end = is_end
+                    )
+                ).apply {
                     println("[DEBUG] 检测结果: ${this.name}")
                 }
                 // 释放本地内存
-                nativeHeap.free(bufferPtr.rawValue)
+                nativeHeap.free(bufferTransPtr.rawValue)
                 // 处理检测结果
-                when(result){
+                when (result) {
                     Silence -> {
                         // 检测到静音，可能是背景噪声或无声
                         println("[DEBUG] 检测到静音")
                         _detectionState.value = KeywordDetector.DetectionState.LISTENING
                     }
+
                     ERROR -> {
                         // 检测器错误，可能是初始化失败或其他问题
                         println("[ERROR] 检测器错误")
@@ -216,7 +280,8 @@ class SnowboyKeywordDetector(
                                 kotlinx.coroutines.delay(1000)
                                 // 使用类成员变量存储初始化参数，避免硬编码路径
                                 if (lastResourcePath.isNotEmpty() && lastModelPath.isNotEmpty()) {
-                                    val success = initialize(lastResourcePath, lastModelPath, lastSensitivity)
+                                    val success =
+                                        initialize(lastResourcePath, lastModelPath, lastSensitivity)
                                     if (!success) {
                                         println("[ERROR] 检测器重新初始化失败")
                                     }
@@ -226,14 +291,15 @@ class SnowboyKeywordDetector(
                         }
                         _detectionState.value = KeywordDetector.DetectionState.ERROR
                     }
+
                     NoEvent -> {
                         // 没有检测到关键词，继续监听
-                        println("[DEBUG] 没有检测到关键词 $frameCount")
+                        println("[DEBUG] 没有检测到关键词 $outputSize")
                         // 检查并清理语音活动和缓冲区状态，防止重复播放
                         voiceStateManager.reset()
-//                        player.playAudio(buffer = bufferPtr, frameCount = frameCount)
                         _detectionState.value = KeywordDetector.DetectionState.LISTENING
                     }
+
                     Hotword1Triggered,
                     Hotword2Triggered,
                     Hotword3Triggered -> {
@@ -248,7 +314,7 @@ class SnowboyKeywordDetector(
                     }
                 }
                 return result
-            }else{
+            } else {
                 // 释放本地内存
                 nativeHeap.free(bufferPtr.rawValue)
                 // 没有检测到语音活动，继续监听
@@ -263,7 +329,64 @@ class SnowboyKeywordDetector(
         }
     }
 
-    // 移除了不再使用的音频分析方法，简化代码结构
+    private fun transcoding(
+        frameCount: Int,
+        bufferPtr: CArrayPointer<ShortVar>,
+        sampleRate: Int,
+        requiredSampleRate: Int
+    ): Pair<CArrayPointer<ShortVar>,Int>? {
+        // 使用soxr c api 进行音频转换
+        println("[WARN] 采样率或通道数不匹配，使用soxr进行转换\n")
+        // 1. 将short转换为float用于soxr处理（可选，取决于您的soxr配置）
+        val floatInput = nativeHeap.allocArray<FloatVar>(frameCount)
+        for (i in 0 until frameCount) {
+            floatInput[i] = (bufferPtr[i]).toFloat() / 32768.0f
+        }
+        // 2. 计算输出缓冲区大小
+        val outputSize =
+            ((frameCount.toDouble() * sampleRate) / requiredSampleRate + 0.5).toInt()
+        val floatOutput = nativeHeap.allocArray<FloatVar>(outputSize)
+        // 3. 配置soxr
+        val wrapper = soxr_wrapper_create()
+        if (wrapper == null) {
+            println("[ERROR] 音频转码失败")
+            return null
+        }
+        soxr_io_spec_create(SOXR_FLOAT32_I, SOXR_FLOAT32_I, wrapper)
+        soxr_quality_spec_create(SOXR_FLOAT32_I, wrapper) // 使用最高质量
+        // 4. 创建soxr重采样器
+        soxr_wrapper_create_resampler(
+            wrapper, sampleRate.toDouble(), sampleRate.toDouble()
+        )
+        if (wrapper.pointed.soxr == null) {
+            println("[ERROR] 创建soxr失败")
+            return null
+        }
+        // 5. 执行重采样
+        soxr_wrapper_process(
+            wrapper,
+            in_data = bufferPtr,
+            in_size = frameCount.toUInt(),
+            out_data = floatOutput,
+            out_size = outputSize.toUInt(),
+        )
+        val resampledBuffer = nativeHeap.allocArray<ShortVar>(outputSize)
+        // 6. 将float转换回short
+        for (i in 0 until outputSize) {
+            var sample = floatOutput[i]
+            // 限制在[-1.0, 1.0]范围内防止截断失真
+            if (sample > 1.0f) sample = 1.0f
+            if (sample < -1.0f) sample = -1.0f
+            resampledBuffer[i] = (sample * 32767.0f).toInt().toShort()
+        }
+        // 7. 释放soxr资源
+        nativeHeap.free(floatInput.rawValue)
+        nativeHeap.free(floatOutput.rawValue)
+        soxr_wrapper_destroy(wrapper)
+        println("[INFO] 音频转换完成，输出大小: $outputSize 样本")
+        return resampledBuffer to outputSize
+    }
+
 
 
     /**

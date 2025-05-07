@@ -247,7 +247,9 @@ kotlin {
                     packageName("com.airobot.piperinterop")
                     // 从上面四个目录中查找所有的头文件,添加到headers.files
                     includeDirs(
+                        file("src/nativeInterop/cpp/include"),
                         file("src/nativeInterop/cpp/include/piper"),
+                        file("src/nativeInterop/cpp/include/piper/soxr"),
                         file("src/nativeInterop/cpp/include/piper/onnxruntime"),
                     )
                     compilerOpts(
