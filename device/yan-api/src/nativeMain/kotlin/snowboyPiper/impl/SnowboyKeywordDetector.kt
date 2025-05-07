@@ -110,14 +110,14 @@ class SnowboyKeywordDetector(
             }
             
             // 使用最高灵敏度，确保检测到唤醒词
-            val actualSensitivity = 0.35f
+            val actualSensitivity = 0.15f
             
             // 灵敏度范围为0-1，值越高越容易检测到关键词，但可能增加误检率
             println("[INFO] 设置灵敏度 ${actualSensitivity}")
             snowboy_set_sensitivity(snowboyDetector, actualSensitivity.toString())
             
             // 设置高音频增益，确保信号足够强
-            snowboy_set_audio_gain(snowboyDetector, 0.05f)
+            snowboy_set_audio_gain(snowboyDetector, 1.5f)
             
             // 关闭前端处理
             snowboy_apply_frontend(snowboyDetector, 1)
@@ -209,9 +209,10 @@ class SnowboyKeywordDetector(
             
             // 使用适中的增益
             for (i in 0 until frameCount) {
-                val gain = 0.3f
-                val ampValue = buffer[i].toInt() * gain
-                bufferPtr[i] = kotlin.math.max(-32768, kotlin.math.min(32767, ampValue.toInt())).toShort()
+//                val gain = 0.3f
+//                val ampValue = buffer[i].toInt() * gain
+//                bufferPtr[i] = kotlin.math.max(-32768, kotlin.math.min(32767, ampValue.toInt())).toShort()
+                bufferPtr[i] = buffer[i]
             }
 
             // 检测音频格式要求

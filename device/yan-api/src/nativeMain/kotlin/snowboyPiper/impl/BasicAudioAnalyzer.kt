@@ -34,14 +34,13 @@ class BasicAudioAnalyzer(
     
     // 添加连续语音检测计数器
     private var consecutiveVoiceFrames = 0
-    private val minConsecutiveFramesForVoice = 3 // 需要至少3帧连续满足语音特征才认为是真实语音
+    private val minConsecutiveFramesForVoice = 2 // 需要至少2帧连续满足语音特征才认为是真实语音
     
     override fun hasVoiceActivity(audioData: ShortArray): Boolean {
         // 简化版本，暂时总是返回true以便调试
-        println("[DEBUG] 检测语音活动 - 暂时返回true以便调试")
-        return true
+//        println("[DEBUG] 检测语音活动 - 暂时返回true以便调试")
+//        return true
         
-        /*
         // 计算能量
         var energy = 0.0
         for (sample in audioData) {
@@ -91,9 +90,9 @@ class BasicAudioAnalyzer(
         // 1. 能量必须高于动态阈值
         // 2. 信噪比必须高
         // 3. ZCR(过零率)必须在合理范围内 - 人声通常在0.1到0.3之间
-        val isPotentialVoice = energy > dynamicThreshold && 
-                               signalToNoiseRatio > 4.0 && 
-                               zcr > 0.1 && zcr < 0.3
+        val isPotentialVoice = energy > dynamicThreshold &&
+                signalToNoiseRatio > 2.0 &&
+                zcr > 0.05 && zcr < 0.5
         
         // 更新连续语音帧计数器
         if (isPotentialVoice) {
@@ -112,6 +111,7 @@ class BasicAudioAnalyzer(
         // 检查特征历史中是否有稳定的语音模式
         var stableVoicePattern = false
         if (featureHistoryIndex >= featureHistorySize - 1) {
+            println("[DEBUG] 潜在语音检测: 能量=$energy, 阈值=$dynamicThreshold, SNR=$signalToNoiseRatio, ZCR=$zcr")
             var stableFrames = 0
             // 检查能量稳定性和ZCR稳定性
             for (i in 0 until featureHistorySize - 1) {
@@ -136,14 +136,12 @@ class BasicAudioAnalyzer(
         }
         
         return isVoiceActive
-        */
     }
 
     override fun applyNoiseGate(audioData: ShortArray): ShortArray {
         // 简化版，直接返回原始数据
-        return audioData
+//        return audioData
         
-        /*
         val result = ShortArray(audioData.size)
 
         // 先计算平均背景噪声水平（如果尚未初始化）
@@ -167,15 +165,13 @@ class BasicAudioAnalyzer(
         }
 
         return result
-        */
     }
 
     override fun containsValidVoice(audioData: ShortArray): Boolean {
         // 简化版本，暂时返回true以便调试
-        println("[DEBUG] 检查有效语音 - 暂时返回true以便调试")
-        return true
+//        println("[DEBUG] 检查有效语音 - 暂时返回true以便调试")
+//        return true
         
-        /*
         // 计算RMS
         var sumSquares = 0.0
         for (sample in audioData) {
@@ -244,15 +240,15 @@ class BasicAudioAnalyzer(
         // 1. RMS必须高于阈值
         // 2. ZCR必须在人声范围内
         // 3. 能量方差必须够大（人声有明显波动）
+
         val hasVoice = rms > adaptiveRmsThreshold && 
                        zcr >= 0.1 && zcr <= 0.3 && 
-                       normalizedEnergyVariance > 0.2
+                       normalizedEnergyVariance > 0.1 //能量方差阈值
                        
         if (hasVoice) {
             println("[DEBUG] 音频分析 - RMS: $rms, ZCR: $zcr, 能量方差: $normalizedEnergyVariance")
         }
         return hasVoice
-        */
     }
 
     /**
