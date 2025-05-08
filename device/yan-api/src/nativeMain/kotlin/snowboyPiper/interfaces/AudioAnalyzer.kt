@@ -10,7 +10,7 @@ interface AudioAnalyzer {
      * @param audioData 音频数据
      * @return 是否检测到语音活动
      */
-    fun hasVoiceActivity(audioData: ShortArray): Boolean
+    fun hasVoiceActivity(buffer: ShortArray): Boolean
 
     /**
      * 应用噪声门限，去除无用噪音

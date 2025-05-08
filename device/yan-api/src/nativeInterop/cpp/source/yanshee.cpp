@@ -200,7 +200,7 @@ void rnnoise_wrapper_set_vad_threshold(RNNoiseWrapper* wrapper, float threshold)
     if (threshold > 1.0f) threshold = 1.0f;
 
     wrapper->vad_threshold = threshold;
-    printf("[INFO] RNNoise VAD threshold set to %.2f\n", threshold);
+//    printf("[INFO] RNNoise VAD threshold set to %.2f\n", threshold);
 }
 
 void rnnoise_wrapper_set_gain(RNNoiseWrapper* wrapper, float gain) {
@@ -214,7 +214,7 @@ void rnnoise_wrapper_set_gain(RNNoiseWrapper* wrapper, float gain) {
     if (gain > 5.0f) gain = 5.0f;
 
     wrapper->gain = gain;
-    printf("[INFO] RNNoise gain set to %.2f\n", gain);
+//    printf("[INFO] RNNoise gain set to %.2f\n", gain);
 }
 
 int rnnoise_wrapper_process_frame(

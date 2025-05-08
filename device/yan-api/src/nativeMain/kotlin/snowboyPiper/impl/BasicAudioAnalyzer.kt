@@ -95,6 +95,13 @@ class BasicAudioAnalyzer(
     private val minZcrThreshold = 0.01 // 从0.03降低到0.01
     private val maxZcrThreshold = 0.5 // 从0.3提高到0.5
     
+    // 添加键盘声特征检测相关变量
+    private val keyboardPatternHistorySize = 10
+    private val keyboardEnergies = DoubleArray(keyboardPatternHistorySize) { 0.0 }
+    private val keyboardZcrs = DoubleArray(keyboardPatternHistorySize) { 0.0 }
+    private var keyboardPatternIndex = 0
+    private var keyboardPatternCount = 0
+
     override fun hasVoiceActivity(buffer: ShortArray): Boolean {
         // 检查是否在回声抑制时间内
         val currentTime = Clock.System.now().toEpochMilliseconds()
@@ -126,6 +133,12 @@ class BasicAudioAnalyzer(
             }
         }
         val zcr = zeroCrossings.toDouble() / buffer.size
+        
+        // 检测是否符合键盘敲击特征
+        updateKeyboardPatternHistory(rms, zcr)
+        if (isLikelyKeyboardNoise(rms, zcr)) {
+            return false
+        }
         
         // 使用RNNoise进行人声检测 - 在连续语音中可以跳过以提高效率
         val isHumanVoice = if (!isInContinuousSpeech || rms > 100.0) {
@@ -168,12 +181,7 @@ class BasicAudioAnalyzer(
             }
         }
         
-        // 在连续语音中更宽容
-        if (isInContinuousSpeech) {
-            return true
-        }
-        
-        // 计算音频能量
+        // 计算音频能量和过零率用于键盘声检测
         var sumSquares = 0.0
         for (sample in buffer) {
             val sampleValue = sample.toDouble()
@@ -181,7 +189,6 @@ class BasicAudioAnalyzer(
         }
         val rms = sqrt(sumSquares / buffer.size)
         
-        // 计算过零率
         var zeroCrossings = 0
         for (i in 1 until buffer.size) {
             if ((buffer[i] > 0 && buffer[i-1] <= 0) ||
@@ -190,6 +197,16 @@ class BasicAudioAnalyzer(
             }
         }
         val zcr = zeroCrossings.toDouble() / buffer.size
+        
+        // 检查是否为键盘声
+        if (isLikelyKeyboardNoise(rms, zcr)) {
+            return false
+        }
+        
+        // 在连续语音中更宽容
+        if (isInContinuousSpeech) {
+            return true
+        }
         
         // 使用RNNoise进行人声检测
         val isHumanVoice = checkVoiceWithRNNoise(buffer)
@@ -635,5 +652,98 @@ class BasicAudioAnalyzer(
         }
         
         return false
+    }
+
+    /**
+     * 更新键盘敲击模式历史
+     */
+    private fun updateKeyboardPatternHistory(rms: Double, zcr: Double) {
+        // 只在历史记录达到一定量后才开始分析
+        if (keyboardPatternCount < keyboardPatternHistorySize) {
+            keyboardPatternCount++
+        }
+        
+        // 记录能量和过零率
+        keyboardEnergies[keyboardPatternIndex] = rms
+        keyboardZcrs[keyboardPatternIndex] = zcr
+        
+        // 更新索引
+        keyboardPatternIndex = (keyboardPatternIndex + 1) % keyboardPatternHistorySize
+    }
+    
+    /**
+     * 检测是否可能是键盘敲击声
+     * 键盘敲击声特征：
+     * 1. 能量突然上升又迅速下降
+     * 2. 高过零率
+     * 3. 声音间隔规律
+     */
+    private fun isLikelyKeyboardNoise(currentRms: Double, currentZcr: Double): Boolean {
+        // 需要足够的历史数据才能判断
+        if (keyboardPatternCount < keyboardPatternHistorySize / 2) {
+            return false
+        }
+        
+        // 检查是否有能量突然高峰和快速衰减的模式
+        var hasEnergySpikePattern = false
+        var hasRegularInterval = false
+        var hasHighZcr = false
+        
+        // 能量是否有突然高峰
+        val lastEnergies = Array(4) { i ->
+            val idx = (keyboardPatternIndex - i - 1 + keyboardPatternHistorySize) % keyboardPatternHistorySize
+            keyboardEnergies[idx]
+        }
+        
+        // 计算当前帧与历史平均值的比例
+        val avgEnergy = lastEnergies.sum() / lastEnergies.size
+        val currentToAvgRatio = if (avgEnergy > 0) currentRms / avgEnergy else 1.0
+        
+        // 判断能量突然上升又快速下降的模式
+        val recentEnergyPattern = keyboardEnergies
+            .toList()
+            .takeLast(5)
+            .windowed(3, 1)
+            .any { window ->
+                // 中间高，两边低是键盘敲击的特征
+                window[1] > window[0] * 3.0 && window[1] > window[2] * 2.0
+            }
+        
+        // 检查是否有规律的间隔模式
+        val energyPeaks = mutableListOf<Int>()
+        for (i in 1 until keyboardPatternHistorySize - 1) {
+            if (keyboardEnergies[i] > keyboardEnergies[i-1] * 1.5 && 
+                keyboardEnergies[i] > keyboardEnergies[i+1] * 1.5 &&
+                keyboardEnergies[i] > 100.0) {
+                energyPeaks.add(i)
+            }
+        }
+        
+        // 如果有多个峰值，检查间隔是否规律（键盘敲击通常很规律）
+        if (energyPeaks.size >= 3) {
+            val intervals = mutableListOf<Int>()
+            for (i in 1 until energyPeaks.size) {
+                intervals.add(energyPeaks[i] - energyPeaks[i-1])
+            }
+            
+            // 计算间隔的标准差，越小越规律
+            val avgInterval = intervals.average()
+            val stdDev = sqrt(intervals.map { (it - avgInterval).pow(2) }.sum() / intervals.size)
+            
+            // 规律的间隔标准差应该小
+            hasRegularInterval = stdDev / avgInterval < 0.3 && intervals.size >= 2
+        }
+        
+        // 过零率检查 - 键盘声通常过零率较高
+        hasHighZcr = currentZcr > 0.3
+        
+        // 组合判断是否为键盘声
+        val isKeyboard = (recentEnergyPattern || currentToAvgRatio > 3.0 || hasRegularInterval) && hasHighZcr
+        
+        if (isKeyboard) {
+            println("[DEBUG] 检测到可能的键盘敲击声: 能量=$currentRms, ZCR=$currentZcr, 能量比=$currentToAvgRatio")
+        }
+        
+        return isKeyboard
     }
 }

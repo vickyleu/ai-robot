@@ -208,6 +208,11 @@ class SnowboyKeywordDetector(
                 return NoEvent
             }
             
+            // 检测是否为键盘敲击声
+            if (detectKeyboardNoise(buffer)) {
+                return NoEvent
+            }
+            
             // 计算音频能量
             var sumSquares = 0.0
             var maxSample = 0.0
@@ -610,6 +615,11 @@ class SnowboyKeywordDetector(
      */
     private fun checkVoiceWithRNNoise(buffer: ShortArray): Boolean {
         try {
+            // 检测是否为键盘敲击声
+            if (detectKeyboardNoise(buffer)) {
+                return false
+            }
+            
             // 创建输入和输出缓冲区
             val frameCount = buffer.size
             val inputBuffer = nativeHeap.allocArray<ShortVar>(frameCount)
@@ -686,6 +696,66 @@ class SnowboyKeywordDetector(
             println("[ERROR] RNNoise VAD检测异常: ${e.message}")
             return true // 出错时默认接受，避免错误地过滤掉语音
         }
+    }
+
+    /**
+     * 检测是否为键盘敲击声
+     * 键盘敲击特征：1）能量突然上升下降快 2）声音持续时间短 3）高频成分多
+     */
+    private fun detectKeyboardNoise(buffer: ShortArray): Boolean {
+        // 计算基本特征
+        var sumSquares = 0.0
+        var maxSample = 0.0
+        var zeroCrossings = 0
+        
+        for (i in 1 until buffer.size) {
+            val sampleValue = buffer[i].toDouble()
+            sumSquares += (sampleValue * sampleValue)
+            maxSample = maxOf(maxSample, abs(sampleValue))
+            
+            // 计算过零率
+            if ((buffer[i] > 0 && buffer[i-1] <= 0) ||
+                (buffer[i] <= 0 && buffer[i-1] > 0)) {
+                zeroCrossings++
+            }
+        }
+        
+        val rms = kotlin.math.sqrt(sumSquares / buffer.size)
+        val zcr = zeroCrossings.toDouble() / buffer.size
+        
+        // 检查帧内能量分布 - 键盘敲击通常开始部分能量高，然后快速衰减
+        val segmentCount = 4
+        val segmentSize = buffer.size / segmentCount
+        val segmentEnergies = DoubleArray(segmentCount)
+        
+        for (i in 0 until segmentCount) {
+            var segEnergy = 0.0
+            val start = i * segmentSize
+            val end = kotlin.math.min((i + 1) * segmentSize, buffer.size)
+            
+            for (j in start until end) {
+                segEnergy += buffer[j] * buffer[j]
+            }
+            segmentEnergies[i] = kotlin.math.sqrt(segEnergy / (end - start))
+        }
+        
+        // 键盘敲击特征1：能量快速衰减
+        val hasRapidDecay = segmentEnergies[0] > segmentEnergies[segmentCount-1] * 2.5
+        
+        // 键盘敲击特征2：高过零率
+        val hasHighZcr = zcr > 0.3
+        
+        // 键盘敲击特征3：帧总体能量有一定阈值
+        val hasEnoughEnergy = rms > 50.0 && rms < 5000.0
+        
+        // 组合判断
+        val isKeyboard = hasHighZcr && hasRapidDecay && hasEnoughEnergy
+        
+        if (isKeyboard) {
+            println("[DEBUG] 检测到键盘敲击噪音: rms=$rms, zcr=$zcr, 衰减比率=${segmentEnergies[0]/segmentEnergies[segmentCount-1]}")
+        }
+        
+        return isKeyboard
     }
 
     private fun applyNoiseReduction(
