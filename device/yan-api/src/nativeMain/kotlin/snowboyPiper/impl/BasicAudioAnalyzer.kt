@@ -1,11 +1,29 @@
 package com.airobot.device.yanapi.snowboyPiper.impl
 
 import com.airobot.device.yanapi.snowboyPiper.interfaces.AudioAnalyzer
+import com.airobot.rnnoiseinterop.RNNoiseWrapper
+import com.airobot.rnnoiseinterop.rnnoise_wrapper_create
+import com.airobot.rnnoiseinterop.rnnoise_wrapper_destroy
+import com.airobot.rnnoiseinterop.rnnoise_wrapper_process
+import com.airobot.rnnoiseinterop.rnnoise_wrapper_set_vad_threshold
+import com.airobot.rnnoiseinterop.rnnoise_wrapper_set_gain
+import kotlinx.cinterop.ExperimentalForeignApi
+import kotlinx.cinterop.FloatVar
+import kotlinx.cinterop.ShortVar
+import kotlinx.cinterop.allocArray
+import kotlinx.cinterop.get
+import kotlinx.cinterop.nativeHeap
+import kotlinx.cinterop.CPointer
+import kotlinx.cinterop.set
 import kotlin.math.abs
 import kotlin.math.max
+import kotlin.math.min
 import kotlin.math.sqrt
 import kotlin.math.pow
+import kotlin.time.Clock
+import kotlin.time.ExperimentalTime
 
+@OptIn(ExperimentalTime::class, ExperimentalForeignApi::class)
 class BasicAudioAnalyzer(
     private val energyThreshold: Double,
     private val noiseGateThreshold: Double,
@@ -14,7 +32,7 @@ class BasicAudioAnalyzer(
 ) : AudioAnalyzer {
 
     private var backgroundNoiseLevel = 0.0
-    private var adaptiveRmsThreshold = validVoiceRmsThreshold
+    private var adaptiveRmsThreshold = validVoiceRmsThreshold * 0.5 // 降低初始阈值以提高灵敏度
     private val adaptationFactor = 0.95 // 适应因子
     private var silenceCounter = 0
     private val maxSilenceBeforeAdapt = 10
@@ -34,151 +52,529 @@ class BasicAudioAnalyzer(
     
     // 添加连续语音检测计数器
     private var consecutiveVoiceFrames = 0
-    private val minConsecutiveFramesForVoice = 2 // 需要至少2帧连续满足语音特征才认为是真实语音
+    private val minConsecutiveFramesForVoice = 2 // 降低连续帧要求，提高灵敏度
     
-    override fun hasVoiceActivity(audioData: ShortArray): Boolean {
-        // 简化版本，暂时总是返回true以便调试
-//        println("[DEBUG] 检测语音活动 - 暂时返回true以便调试")
-//        return true
-        
-        // 计算能量
-        var energy = 0.0
-        for (sample in audioData) {
-            energy += (sample * sample)
+    // 用于上升和下降模式分析的变量
+    private val energyPatternSize = 8
+    private val recentEnergies = DoubleArray(energyPatternSize) { 0.0 }
+    private var energyPatternIndex = 0
+    
+    // 回声消除相关变量
+    private var lastPlaybackTime = 0L
+    private val echoSuppressionTimeMs = 1500L // 增加回声抑制时间到1.5秒
+    
+    // 音频特征记忆，用于辨别回声
+    private val echoSignatureSize = 5
+    private val lastPlaybackSignatures = Array(5) { DoubleArray(echoSignatureSize) } // 增加到5个签名
+    private var signatureIndex = 0
+    private var hasPlaybackSignature = false
+    
+    // 增强回声检测的相似度阈值，降低防止误判
+    private val echoSimilarityThreshold = 0.65f // 从0.7降到0.65
+    
+    // 记录连续语音状态
+    private var lastVoiceActivityTime = 0L
+    private var isInContinuousSpeech = false
+    private val voiceContinuityThreshold = 800L // 连续语音阈值800ms
+    private val silencePauseThreshold = 1000L // 静音阈值1000ms
+    
+    // RNNoise相关变量
+    private var useRNNoise = true // 默认启用RNNoise
+    private var lastVadProbability = 0.0f
+    
+    // 缓存RNNoise实例，避免频繁创建和销毁
+    private var cachedRNNoiseWrapper: CPointer<RNNoiseWrapper>? = null
+    private var lastRNNoiseUseTime = 0L
+    private val rnnoiseCacheTimeout = 30000L // 30秒超时，避免长时间占用资源
+    
+    // 降低人声检测的能量阈值
+    private val minEnergyThreshold = 30.0 // 从150.0降低到30.0
+    private val maxEnergyThreshold = 10000.0
+    
+    // 放宽过零率范围
+    private val minZcrThreshold = 0.01 // 从0.03降低到0.01
+    private val maxZcrThreshold = 0.5 // 从0.3提高到0.5
+    
+    override fun hasVoiceActivity(buffer: ShortArray): Boolean {
+        // 检查是否在回声抑制时间内
+        val currentTime = Clock.System.now().toEpochMilliseconds()
+        if (currentTime - lastPlaybackTime < echoSuppressionTimeMs) {
+            // 检查是否是回声
+            val currentSignature = extractAudioSignature(buffer)
+            if (isEchoSignature(currentSignature)) {
+                return false // 认为是回声，忽略
+            }
         }
-        energy /= audioData.size
         
-        // 计算ZCR
+        // 更新连续语音状态
+        updateContinuousSpeechState(buffer)
+        
+        // 计算音频能量
+        var sumSquares = 0.0
+        for (sample in buffer) {
+            val sampleValue = sample.toDouble()
+            sumSquares += (sampleValue * sampleValue)
+        }
+        val rms = sqrt(sumSquares / buffer.size)
+        
+        // 计算过零率
         var zeroCrossings = 0
-        for (i in 1 until audioData.size) {
-            if ((audioData[i] > 0 && audioData[i-1] <= 0) ||
-                (audioData[i] <= 0 && audioData[i-1] > 0)) {
+        for (i in 1 until buffer.size) {
+            if ((buffer[i] > 0 && buffer[i-1] <= 0) ||
+                (buffer[i] <= 0 && buffer[i-1] > 0)) {
                 zeroCrossings++
             }
         }
-        val zcr = zeroCrossings.toDouble() / audioData.size
+        val zcr = zeroCrossings.toDouble() / buffer.size
         
-        // 更新噪声历史
-        noiseHistory[noiseHistoryIndex] = energy
-        noiseHistoryIndex = (noiseHistoryIndex + 1) % noiseHistorySize
-        
-        // 更新特征历史
-        energyHistory[featureHistoryIndex] = energy
-        zcrHistory[featureHistoryIndex] = zcr
-        featureHistoryIndex = (featureHistoryIndex + 1) % featureHistorySize
-        
-        // 定期计算噪声基线
-        if (noiseHistoryIndex == 0 || !hasEstablishedNoise) {
-            val sortedEnergies = noiseHistory.sortedArray()
-            // 使用较低百分位数估计背景噪声
-            noiseBaseline = sortedEnergies[noiseHistorySize / 5]
-            hasEstablishedNoise = true
-        }
-        
-        // 计算信噪比 - 当前能量与噪声基线的比值
-        val signalToNoiseRatio = if (noiseBaseline > 0) energy / noiseBaseline else 1.0
-        
-        // 使用动态阈值 - 确保能量明显高于噪声基线
-        val dynamicThreshold = if (hasEstablishedNoise) {
-            // 至少需要比噪声基线高5倍，或达到固定阈值
-            max(noiseBaseline * 5.0, energyThreshold * 1.2)
+        // 使用RNNoise进行人声检测 - 在连续语音中可以跳过以提高效率
+        val isHumanVoice = if (!isInContinuousSpeech || rms > 100.0) {
+            checkVoiceWithRNNoise(buffer)
         } else {
-            energyThreshold * 1.2 // 提高固定阈值要求
+            true // 连续语音中默认认为是人声
         }
         
-        // 检查是否符合语音特征：
-        // 1. 能量必须高于动态阈值
-        // 2. 信噪比必须高
-        // 3. ZCR(过零率)必须在合理范围内 - 人声通常在0.1到0.3之间
-        val isPotentialVoice = energy > dynamicThreshold &&
-                signalToNoiseRatio > 2.0 &&
-                zcr > 0.05 && zcr < 0.5
+        // 判断是否有语音活动 - 放宽条件
+        val hasEnergy = rms >= minEnergyThreshold
+        val hasValidZcr = zcr >= minZcrThreshold && zcr <= maxZcrThreshold
         
-        // 更新连续语音帧计数器
-        if (isPotentialVoice) {
+        // 在连续语音中要更宽容
+        val result = if (isInContinuousSpeech) {
+            // 在连续语音中，只要有基本的能量就接受
+            rms > minEnergyThreshold * 0.7 || isHumanVoice
+        } else {
+            // 首次检测需要更严格
+            (hasEnergy && hasValidZcr) || isHumanVoice
+        }
+        
+        // 更新连续语音帧计数
+        if (result) {
             consecutiveVoiceFrames++
-            if (consecutiveVoiceFrames > 20) {  // 限制计数器上限
-                consecutiveVoiceFrames = 20
-            }
         } else {
-            // 快速减少计数器，防止噪声积累
-            consecutiveVoiceFrames -= 2
-            if (consecutiveVoiceFrames < 0) {
-                consecutiveVoiceFrames = 0
-            }
+            consecutiveVoiceFrames = max(0, consecutiveVoiceFrames - 1)
         }
         
-        // 检查特征历史中是否有稳定的语音模式
-        var stableVoicePattern = false
-        if (featureHistoryIndex >= featureHistorySize - 1) {
-            println("[DEBUG] 潜在语音检测: 能量=$energy, 阈值=$dynamicThreshold, SNR=$signalToNoiseRatio, ZCR=$zcr")
-            var stableFrames = 0
-            // 检查能量稳定性和ZCR稳定性
-            for (i in 0 until featureHistorySize - 1) {
-                val energyRatio = energyHistory[i+1] / energyHistory[i]
-                // 能量变化在0.7-1.3之间视为稳定
-                if (energyRatio > 0.7 && energyRatio < 1.3 && 
-                    zcrHistory[i] > 0.1 && zcrHistory[i] < 0.3) {
-                    stableFrames++
-                }
-            }
-            stableVoicePattern = stableFrames >= 3 // 至少3帧稳定
-        }
-        
-        // 必须同时满足条件：
-        // 1. 有足够连续帧被检测为潜在语音
-        // 2. 特征历史表明有稳定的语音模式 或 当前帧信噪比极高
-        val isVoiceActive = consecutiveVoiceFrames >= minConsecutiveFramesForVoice && 
-                           (stableVoicePattern || signalToNoiseRatio > 8.0)
-        
-        if (isVoiceActive) {
-            println("[DEBUG] 检测到有效语音: 能量=$energy, SNR=$signalToNoiseRatio, ZCR=$zcr, 连续帧=$consecutiveVoiceFrames")
-        }
-        
-        return isVoiceActive
+        return result || consecutiveVoiceFrames >= minConsecutiveFramesForVoice
     }
 
-    override fun applyNoiseGate(audioData: ShortArray): ShortArray {
-        // 简化版，直接返回原始数据
-//        return audioData
+    override fun containsValidVoice(buffer: ShortArray): Boolean {
+        // 检查是否在回声抑制时间内
+        val currentTime = Clock.System.now().toEpochMilliseconds()
+        if (currentTime - lastPlaybackTime < echoSuppressionTimeMs) {
+            // 检查是否是回声
+            val currentSignature = extractAudioSignature(buffer)
+            if (isEchoSignature(currentSignature)) {
+                return false // 认为是回声，忽略
+            }
+        }
         
+        // 在连续语音中更宽容
+        if (isInContinuousSpeech) {
+            return true
+        }
+        
+        // 计算音频能量
+        var sumSquares = 0.0
+        for (sample in buffer) {
+            val sampleValue = sample.toDouble()
+            sumSquares += (sampleValue * sampleValue)
+        }
+        val rms = sqrt(sumSquares / buffer.size)
+        
+        // 计算过零率
+        var zeroCrossings = 0
+        for (i in 1 until buffer.size) {
+            if ((buffer[i] > 0 && buffer[i-1] <= 0) ||
+                (buffer[i] <= 0 && buffer[i-1] > 0)) {
+                zeroCrossings++
+            }
+        }
+        val zcr = zeroCrossings.toDouble() / buffer.size
+        
+        // 使用RNNoise进行人声检测
+        val isHumanVoice = checkVoiceWithRNNoise(buffer)
+        
+        // 判断是否包含有效人声 - 极大放宽条件
+        val hasEnergy = rms >= minEnergyThreshold && rms <= maxEnergyThreshold
+        val hasValidZcr = zcr >= minZcrThreshold && zcr <= maxZcrThreshold
+        
+        // 任一条件满足即可
+        return hasEnergy || hasValidZcr || isHumanVoice
+    }
+
+    /**
+     * 获取RNNoise包装器，使用缓存避免频繁创建销毁
+     */
+    private fun getRNNoiseWrapper(): CPointer<RNNoiseWrapper>? {
+        val currentTime = Clock.System.now().toEpochMilliseconds()
+        
+        // 检查缓存是否超时
+        if (cachedRNNoiseWrapper != null && currentTime - lastRNNoiseUseTime > rnnoiseCacheTimeout) {
+            // 超时释放资源
+            rnnoise_wrapper_destroy(cachedRNNoiseWrapper)
+            cachedRNNoiseWrapper = null
+        }
+        
+        if (cachedRNNoiseWrapper == null) {
+            cachedRNNoiseWrapper = rnnoise_wrapper_create()
+        }
+        
+        // 更新最后使用时间
+        if (cachedRNNoiseWrapper != null) {
+            lastRNNoiseUseTime = currentTime
+        }
+        
+        return cachedRNNoiseWrapper
+    }
+    
+    /**
+     * 使用RNNoise检测是否为人声
+     */
+    private fun checkVoiceWithRNNoise(buffer: ShortArray): Boolean {
+        try {
+            val rnnWrapper = getRNNoiseWrapper() ?: return true // 无法创建时默认接受
+            
+            // 设置极低的VAD阈值和高增益
+            rnnoise_wrapper_set_vad_threshold(rnnWrapper, 0.05f) // 极低阈值
+            rnnoise_wrapper_set_gain(rnnWrapper, 3.0f) // 高增益
+            
+            // 创建输入和输出缓冲区
+            val frameCount = buffer.size
+            val inputBuffer = nativeHeap.allocArray<ShortVar>(frameCount)
+            val outputBuffer = nativeHeap.allocArray<ShortVar>(frameCount)
+            
+            // 复制音频数据到输入缓冲区
+            for (i in 0 until frameCount) {
+                inputBuffer[i] = buffer[i]
+            }
+            
+            // 创建VAD概率数组
+            val maxVadValues = frameCount / 480 + 1 // 每480样本一个VAD值
+            val vadProbabilitiesPtr = nativeHeap.allocArray<FloatVar>(maxVadValues)
+            
+            // 处理音频数据
+            val processResult = rnnoise_wrapper_process(
+                rnnWrapper,
+                inputBuffer,
+                outputBuffer,
+                frameCount,
+                vadProbabilitiesPtr,
+                maxVadValues
+            )
+            
+            // 检查处理结果
+            if (processResult <= 0) {
+                nativeHeap.free(inputBuffer.rawValue)
+                nativeHeap.free(outputBuffer.rawValue)
+                nativeHeap.free(vadProbabilitiesPtr.rawValue)
+                return true // 出错时默认接受
+            }
+            
+            // 分析VAD概率
+            var voiceFrames = 0
+            var totalFrames = minOf(processResult, maxVadValues)
+            var maxProb = 0.0f
+            
+            for (i in 0 until totalFrames) {
+                val prob = vadProbabilitiesPtr[i]
+                maxProb = max(maxProb, prob)
+                if (prob >= 0.05f) { // 极低阈值
+                    voiceFrames++
+                }
+            }
+            
+            // 释放资源
+            nativeHeap.free(inputBuffer.rawValue)
+            nativeHeap.free(outputBuffer.rawValue)
+            nativeHeap.free(vadProbabilitiesPtr.rawValue)
+            
+            // 判断是否检测到足够的人声帧 - 极低阈值
+            val voiceRatio = if (totalFrames > 0) voiceFrames.toFloat() / totalFrames else 0f
+            val isHumanVoice = voiceRatio >= 0.05f || maxProb >= 0.1f // 极低阈值
+            
+            // 只在有人声时或调试需要时输出日志
+            if (isHumanVoice) {
+                println("[DEBUG] RNNoise VAD结果: 语音帧比例=$voiceRatio, 最高概率=$maxProb, 是人声=$isHumanVoice")
+            }
+            
+            // 存储最后的VAD概率，以便其他方法使用
+            lastVadProbability = maxProb
+            
+            return isHumanVoice
+        } catch (e: Exception) {
+            println("[ERROR] RNNoise处理异常: ${e.message}")
+            return true // 出错时默认接受
+        }
+    }
+    
+    /**
+     * 应用噪声门限，去除无用噪音
+     * 使用RNNoise进行降噪处理
+     */
+    override fun applyNoiseGate(audioData: ShortArray): ShortArray {
+        // 检查是否在回声抑制时间内
+        val currentTime = Clock.System.now().toEpochMilliseconds()
+        if (currentTime - lastPlaybackTime < echoSuppressionTimeMs) {
+            // 在回声抑制期间，应用更强的噪声门限
+            return applyStrongerNoiseGate(audioData)
+        }
+        
+        // 如果不使用RNNoise，使用传统噪声门限方法
+        if (!useRNNoise) {
+            return applyTraditionalNoiseGate(audioData)
+        }
+        
+        try {
+            // 创建输入和输出缓冲区
+            val frameCount = audioData.size
+            val inputBuffer = nativeHeap.allocArray<ShortVar>(frameCount)
+            val outputBuffer = nativeHeap.allocArray<ShortVar>(frameCount)
+            
+            // 复制音频数据到输入缓冲区
+            for (i in 0 until frameCount) {
+                inputBuffer[i] = audioData[i]
+            }
+            
+            // 使用缓存的RNNoise包装器
+            val rnnWrapper = getRNNoiseWrapper()
+            if (rnnWrapper == null) {
+                nativeHeap.free(inputBuffer.rawValue)
+                nativeHeap.free(outputBuffer.rawValue)
+                return audioData // 出错时返回原始音频
+            }
+            
+            // 配置RNNoise - 根据是否在连续语音中调整阈值
+            val vadThreshold = if (isInContinuousSpeech) 0.1f else 0.2f
+            rnnoise_wrapper_set_vad_threshold(rnnWrapper, vadThreshold)
+            rnnoise_wrapper_set_gain(rnnWrapper, 2.0f) // 适中增益
+            
+            // 处理音频数据
+            val processResult = rnnoise_wrapper_process(
+                rnnWrapper,
+                inputBuffer,
+                outputBuffer,
+                frameCount,
+                null, // 不需要VAD概率
+                0
+            )
+            
+            // 检查处理结果
+            if (processResult <= 0) {
+                nativeHeap.free(inputBuffer.rawValue)
+                nativeHeap.free(outputBuffer.rawValue)
+                return audioData // 出错时返回原始音频
+            }
+            
+            // 创建输出数组
+            val result = ShortArray(frameCount)
+            
+            // 复制降噪后的音频数据
+            for (i in 0 until frameCount) {
+                result[i] = outputBuffer[i]
+            }
+            
+            // 释放资源
+            nativeHeap.free(inputBuffer.rawValue)
+            nativeHeap.free(outputBuffer.rawValue)
+            
+            return result
+        } catch (e: Exception) {
+            println("[ERROR] RNNoise降噪处理异常: ${e.message}")
+            return audioData // 出错时返回原始音频
+        }
+    }
+    
+    /**
+     * 在回声抑制期间应用更强的噪声门限
+     */
+    private fun applyStrongerNoiseGate(audioData: ShortArray): ShortArray {
+        val result = ShortArray(audioData.size)
+        
+        // 计算平均能量
+        var sumSquares = 0.0
+        for (sample in audioData) {
+            sumSquares += (sample * sample)
+        }
+        val avgEnergy = sqrt(sumSquares / audioData.size)
+        
+        // 在回声期间使用更高的噪声门限
+        val echoNoiseGateThreshold = noiseGateThreshold * 2.0
+        
+        // 如果平均能量低于噪声门限，则静音
+        if (avgEnergy < echoNoiseGateThreshold) {
+            return result // 返回全零数组
+        }
+        
+        // 否则应用强噪声门限
+        for (i in audioData.indices) {
+            val sampleEnergy = abs(audioData[i].toDouble())
+            if (sampleEnergy < echoNoiseGateThreshold) {
+                // 低于门限的样本衰减更强
+                val attenuationFactor = (sampleEnergy / echoNoiseGateThreshold).pow(3)
+                result[i] = (audioData[i] * attenuationFactor).toInt().toShort()
+            } else {
+                // 高于门限的样本保持不变
+                result[i] = audioData[i]
+            }
+        }
+        
+        return result
+    }
+    
+    /**
+     * 传统噪声门限方法
+     */
+    private fun applyTraditionalNoiseGate(audioData: ShortArray): ShortArray {
         val result = ShortArray(audioData.size)
 
-        // 先计算平均背景噪声水平（如果尚未初始化）
-        if (backgroundNoiseLevel == 0.0) {
-            var sum = 0.0
-            for (sample in audioData) {
-                sum += abs(sample.toDouble())
-            }
-            backgroundNoiseLevel = sum / audioData.size * 0.8 // 使用80%作为保守估计
+        // 计算平均能量
+        var sumSquares = 0.0
+        for (sample in audioData) {
+            sumSquares += (sample * sample)
         }
-
-        // 应用噪声门限 - 使用更严格的阈值
-        val effectiveThreshold = max(noiseGateThreshold, backgroundNoiseLevel * 1.5)
+        val avgEnergy = sqrt(sumSquares / audioData.size)
+        
+        // 如果平均能量低于噪声门限，则静音
+        if (avgEnergy < noiseGateThreshold) {
+            return result // 返回全零数组
+        }
+        
+        // 否则应用软噪声门限
         for (i in audioData.indices) {
-            val sample = audioData[i]
-            if (abs(sample.toDouble()) > effectiveThreshold) {
-                result[i] = sample
+            val sampleEnergy = abs(audioData[i].toDouble())
+            if (sampleEnergy < noiseGateThreshold) {
+                // 低于门限的样本衰减
+                val attenuationFactor = (sampleEnergy / noiseGateThreshold).pow(2)
+                result[i] = (audioData[i] * attenuationFactor).toInt().toShort()
             } else {
-                result[i] = 0 // 低于阈值的信号设为0
+                // 高于门限的样本保持不变
+                result[i] = audioData[i]
             }
         }
 
         return result
     }
 
-    override fun containsValidVoice(audioData: ShortArray): Boolean {
-        // 简化版本，暂时返回true以便调试
-//        println("[DEBUG] 检查有效语音 - 暂时返回true以便调试")
-//        return true
+    /**
+     * 通知分析器刚刚播放了音频，需要暂时抑制回声
+     */
+    override fun notifyAudioPlayback(audioData: ShortArray) {
+        // 记录播放时间
+        lastPlaybackTime = Clock.System.now().toEpochMilliseconds()
         
-        // 计算RMS
+        // 提取并保存音频特征签名
+        val signature = extractAudioSignature(audioData)
+        lastPlaybackSignatures[signatureIndex] = signature
+        signatureIndex = (signatureIndex + 1) % lastPlaybackSignatures.size
+        hasPlaybackSignature = true
+        
+        // 重置连续语音检测，避免播放的声音被误认为是人声
+        consecutiveVoiceFrames = 0
+        isInContinuousSpeech = false
+    }
+
+    /**
+     * 重置分析器状态
+     */
+    override fun reset() {
+        backgroundNoiseLevel = 0.0
+        adaptiveRmsThreshold = validVoiceRmsThreshold * 0.5
+        silenceCounter = 0
+        noiseBaseline = 0.0
+        hasEstablishedNoise = false
+        
+        // 重置能量和ZCR历史
+        for (i in 0 until featureHistorySize) {
+            energyHistory[i] = 0.0
+            zcrHistory[i] = 0.0
+        }
+        featureHistoryIndex = 0
+        
+        // 重置噪声历史
+        for (i in 0 until noiseHistorySize) {
+            noiseHistory[i] = 0.0
+        }
+        noiseHistoryIndex = 0
+        
+        // 重置语音检测计数器
+        consecutiveVoiceFrames = 0
+        
+        // 重置能量模式分析
+        for (i in 0 until energyPatternSize) {
+            recentEnergies[i] = 0.0
+        }
+        energyPatternIndex = 0
+        
+        // 重置回声消除相关状态
+        hasPlaybackSignature = false
+        for (i in lastPlaybackSignatures.indices) {
+            for (j in 0 until echoSignatureSize) {
+                lastPlaybackSignatures[i][j] = 0.0
+            }
+        }
+        
+        // 重置RNNoise相关状态
+        lastVadProbability = 0.0f
+        
+        // 不重置RNNoise包装器缓存，保留以供继续使用
+        
+        println("[DEBUG] 音频分析器状态已重置")
+    }
+    
+    /**
+     * 释放所有资源
+     */
+    fun dispose() {
+        // 释放RNNoise包装器
+        if (cachedRNNoiseWrapper != null) {
+            rnnoise_wrapper_destroy(cachedRNNoiseWrapper)
+            cachedRNNoiseWrapper = null
+        }
+    }
+
+    /**
+     * 检查当前音频是否是连续语音的一部分
+     */
+    private fun updateContinuousSpeechState(buffer: ShortArray) {
+        // 计算音频能量
+        var sumSquares = 0.0
+        for (sample in buffer) {
+            val sampleValue = sample.toDouble()
+            sumSquares += (sampleValue * sampleValue)
+        }
+        val rms = sqrt(sumSquares / buffer.size)
+        
+        // 获取当前时间
+        val currentTime = Clock.System.now().toEpochMilliseconds()
+        
+        // 有声音活动时，更新时间戳
+        if (rms >= minEnergyThreshold) {
+            // 如果时间足够近，判定为连续语音
+            if (currentTime - lastVoiceActivityTime < voiceContinuityThreshold) {
+                isInContinuousSpeech = true
+            } else if (currentTime - lastVoiceActivityTime > silencePauseThreshold) {
+                // 如果间隔过长，认为是新的语音开始
+                isInContinuousSpeech = false
+            }
+            
+            lastVoiceActivityTime = currentTime
+        } else if (currentTime - lastVoiceActivityTime > silencePauseThreshold) {
+            // 长时间无声，重置连续语音状态
+            isInContinuousSpeech = false
+        }
+    }
+
+    // 提取音频特征签名
+    private fun extractAudioSignature(audioData: ShortArray): DoubleArray {
+        val signature = DoubleArray(echoSignatureSize)
+        
+        // 计算RMS能量
         var sumSquares = 0.0
         for (sample in audioData) {
             sumSquares += (sample * sample)
         }
-        val rms = sqrt(sumSquares / audioData.size)
-
+        signature[0] = sqrt(sumSquares / audioData.size)
+        
         // 计算ZCR
         var zeroCrossings = 0
         for (i in 1 until audioData.size) {
@@ -187,92 +583,57 @@ class BasicAudioAnalyzer(
                 zeroCrossings++
             }
         }
-        val zcr = zeroCrossings.toDouble() / audioData.size
+        signature[1] = zeroCrossings.toDouble() / audioData.size
         
-        // 计算能量的方差 - 人声通常有明显的能量波动
-        var meanEnergy = 0.0
-        val frameSize = 160 // 约10ms
-        val frames = audioData.size / frameSize
-        val frameEnergies = DoubleArray(frames) { 0.0 }
-        
-        // 计算每一帧的能量
-        for (f in 0 until frames) {
-            var frameEnergy = 0.0
-            val startIdx = f * frameSize
-            val endIdx = minOf((f + 1) * frameSize, audioData.size)
+        // 计算能量分布 - 分3段
+        val segmentSize = audioData.size / 3
+        for (i in 0 until 3) {
+            var segEnergy = 0.0
+            val start = i * segmentSize
+            val end = min((i + 1) * segmentSize, audioData.size)
             
-            for (i in startIdx until endIdx) {
-                frameEnergy += audioData[i] * audioData[i]
+            for (j in start until end) {
+                segEnergy += audioData[j] * audioData[j]
             }
-            frameEnergy /= (endIdx - startIdx)
-            frameEnergies[f] = frameEnergy
-            meanEnergy += frameEnergy
+            signature[i + 2] = sqrt(segEnergy / (end - start))
         }
-        meanEnergy /= frames
         
-        // 计算能量方差
-        var energyVariance = 0.0
-        for (f in 0 until frames) {
-            energyVariance += (frameEnergies[f] - meanEnergy).pow(2)
-        }
-        energyVariance /= frames
-        
-        // 计算归一化能量方差
-        val normalizedEnergyVariance = if (meanEnergy > 0) sqrt(energyVariance) / meanEnergy else 0.0
-        
-        // 动态调整RMS阈值 - 但设置更严格的下限
-        if (rms < adaptiveRmsThreshold) {
-            silenceCounter++
-            if (silenceCounter > maxSilenceBeforeAdapt) {
-                // 连续检测到多次"无声"，降低阈值，但保持合理下限
-                adaptiveRmsThreshold *= adaptationFactor
-                adaptiveRmsThreshold = max(adaptiveRmsThreshold, validVoiceRmsThreshold * 0.7) // 提高下限
-                silenceCounter = 0
-                println("[DEBUG] 调整RMS阈值到: $adaptiveRmsThreshold")
-            }
-        } else {
-            silenceCounter = 0
-            // 检测到"有声"，快速恢复阈值
-            adaptiveRmsThreshold = (adaptiveRmsThreshold * 0.8) + (validVoiceRmsThreshold * 0.2)
-        }
-
-        // 使用更严格的条件判断是否为有效语音:
-        // 1. RMS必须高于阈值
-        // 2. ZCR必须在人声范围内
-        // 3. 能量方差必须够大（人声有明显波动）
-
-        val hasVoice = rms > adaptiveRmsThreshold && 
-                       zcr >= 0.1 && zcr <= 0.3 && 
-                       normalizedEnergyVariance > 0.1 //能量方差阈值
-                       
-        if (hasVoice) {
-            println("[DEBUG] 音频分析 - RMS: $rms, ZCR: $zcr, 能量方差: $normalizedEnergyVariance")
-        }
-        return hasVoice
+        return signature
     }
-
-    /**
-     * 重置分析器状态
-     */
-    fun reset() {
-        backgroundNoiseLevel = 0.0
-        noiseBaseline = 0.0
-        hasEstablishedNoise = false
-        consecutiveVoiceFrames = 0
-        adaptiveRmsThreshold = validVoiceRmsThreshold
-        silenceCounter = 0
-        
-        // 清空噪声历史
-        for (i in noiseHistory.indices) {
-            noiseHistory[i] = 0.0
+    
+    // 比较当前音频是否与保存的回声特征相似
+    private fun isEchoSignature(currentSignature: DoubleArray): Boolean {
+        if (!hasPlaybackSignature) {
+            return false
         }
-        noiseHistoryIndex = 0
         
-        // 清空特征历史
-        for (i in energyHistory.indices) {
-            energyHistory[i] = 0.0
-            zcrHistory[i] = 0.0
+        for (savedSignature in lastPlaybackSignatures) {
+            var similarity = 0.0
+            var totalWeight = 0.0
+            
+            // 能量特征权重更高
+            similarity += (1.0 - abs(currentSignature[0] - savedSignature[0]) / max(currentSignature[0], 1.0)) * 3.0
+            totalWeight += 3.0
+            
+            // ZCR特征
+            similarity += (1.0 - abs(currentSignature[1] - savedSignature[1]) / max(currentSignature[1], 0.1)) * 2.0
+            totalWeight += 2.0
+            
+            // 能量分布特征
+            for (i in 2 until echoSignatureSize) {
+                similarity += (1.0 - abs(currentSignature[i] - savedSignature[i]) / max(currentSignature[i], 1.0))
+                totalWeight += 1.0
+            }
+            
+            // 归一化相似度
+            val normalizedSimilarity = similarity / totalWeight
+            
+            // 如果相似度超过阈值，认为是回声
+            if (normalizedSimilarity > echoSimilarityThreshold) {
+                return true
+            }
         }
-        featureHistoryIndex = 0
+        
+        return false
     }
 }

@@ -1,6 +1,6 @@
 language: C++
-headers:  piper_wrapper.h soxr.h yanshee.h
-headerFilter =  piper_wrapper.h  soxr.h yanshee.h
+headers:  piper_wrapper.h
+headerFilter =  piper_wrapper.h
 linkerOpts:  -Lpiper -l:libpiper.a -lstdc++ -lc -lm -lpthread
 # 下面是不透明指针的映射
 ---

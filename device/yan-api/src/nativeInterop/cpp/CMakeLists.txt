@@ -16,6 +16,7 @@ set(ALSA_LIBRARY "${CMAKE_SOURCE_DIR}/libs/libasound.so")
 
 set(SNOWBOY_LIBRARY "${CMAKE_SOURCE_DIR}/libs/libsnowboy.a")
 set(PIPER_LIBRARY "${CMAKE_SOURCE_DIR}/libs/libpiper.a")
+set(RNNOISE_LIBRARY "${CMAKE_SOURCE_DIR}/libs/librnnoise.a")
 
 set(HACK_THING_INCLUDE
         "${CMAKE_SOURCE_DIR}/include/"
@@ -23,6 +24,7 @@ set(HACK_THING_INCLUDE
         "${CMAKE_SOURCE_DIR}/include/vosk/"
         "${CMAKE_SOURCE_DIR}/include/vosk/hack"
         "${CMAKE_SOURCE_DIR}/include/piper"
+        "${CMAKE_SOURCE_DIR}/include/rnnoise"
         "${CMAKE_SOURCE_DIR}/include/piper/onnxruntime"
 #        "${CMAKE_SOURCE_DIR}/include/piper/hack"
 #        "${CMAKE_SOURCE_DIR}/include/whisper"
@@ -57,4 +59,4 @@ target_include_directories(yanapi PRIVATE
 #MESSAGE("CMAKE_STATIC_LINKER_FLAGS::${CMAKE_STATIC_LINKER_FLAGS}")
 #MESSAGE("CMAKE_SHARED_LINKER_FLAGS::${CMAKE_SHARED_LINKER_FLAGS}")
 
-target_link_libraries(yanapi PRIVATE ${PYTHON_LIBRARY} ${Z_LIBRARY}  ${ALSA_LIBRARY} ${EXPAT_LIBRARY} ${SNOWBOY_LIBRARY}  ${PIPER_LIBRARY} )
+target_link_libraries(yanapi PRIVATE ${PYTHON_LIBRARY} ${Z_LIBRARY}  ${ALSA_LIBRARY} ${EXPAT_LIBRARY} ${SNOWBOY_LIBRARY}  ${RNNOISE_LIBRARY}   ${PIPER_LIBRARY} )

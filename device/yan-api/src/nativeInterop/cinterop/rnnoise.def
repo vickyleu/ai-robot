@@ -1,0 +1,8 @@
+language: C++
+headers:  rnnoise.h yanshee.h
+linkerOpts: -L../cpp/libs/ -lrnnoise
+headerFilter: yanshee.h
+# 下面是不透明指针的映射
+---
+struct DenoiseState {};
+ struct RNNModel {};
