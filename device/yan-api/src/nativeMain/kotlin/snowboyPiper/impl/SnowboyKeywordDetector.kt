@@ -10,18 +10,6 @@ import com.airobot.device.yanapi.snowboyPiper.interfaces.AudioAnalyzer
 import com.airobot.device.yanapi.snowboyPiper.interfaces.VoiceStateManager
 import com.airobot.rnnoiseinterop.RNNoiseWrapper
 import com.airobot.rnnoiseinterop.SOXR_FLOAT32_I
-import com.airobot.rnnoiseinterop.rnnoise_wrapper_create
-import com.airobot.rnnoiseinterop.rnnoise_wrapper_destroy
-import com.airobot.rnnoiseinterop.rnnoise_wrapper_process
-import com.airobot.rnnoiseinterop.rnnoise_wrapper_process_batch
-import com.airobot.rnnoiseinterop.rnnoise_wrapper_set_gain
-import com.airobot.rnnoiseinterop.rnnoise_wrapper_set_vad_threshold
-import com.airobot.rnnoiseinterop.soxr_io_spec_create
-import com.airobot.rnnoiseinterop.soxr_quality_spec_create
-import com.airobot.rnnoiseinterop.soxr_wrapper_create
-import com.airobot.rnnoiseinterop.soxr_wrapper_create_resampler
-import com.airobot.rnnoiseinterop.soxr_wrapper_destroy
-import com.airobot.rnnoiseinterop.soxr_wrapper_process
 import com.airobot.snowboyinterop.SnowboyDetectWrapper
 import com.airobot.snowboyinterop.snowboy_apply_frontend
 import com.airobot.snowboyinterop.snowboy_bits_per_sample
@@ -59,6 +47,9 @@ import snowboyPiper.interfaces.KeywordDetector.DetectorState
 import snowboyPiper.interfaces.KeywordDetector.DetectorState.ERROR
 import snowboyPiper.interfaces.KeywordDetector.DetectorState.NoEvent
 import snowboyPiper.interfaces.KeywordDetector.DetectorState.Silence
+import snowboyPiper.interop.RNNoiseSingleton
+import snowboyPiper.interop.SoxrSingleton
+import snowboyPiper.interop.AudioProcessingResourceManager
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
@@ -113,10 +104,10 @@ class SnowboyKeywordDetector(
     private var lastModelPath = ""
     private var lastSensitivity = VoiceAssistantConfig.snowboySensitivity
 
-    // 缓存的RNNoise包装器
-    private var cachedRNNoiseWrapper: CPointer<RNNoiseWrapper>? = null
-    private var lastRNNoiseUseTime = 0L
-    private val rnnoiseCacheTimeout = 30000L // 30秒超时，避免长时间占用资源
+    init {
+        // 初始化时注册资源释放钩子
+        AudioProcessingResourceManager.registerShutdownHook()
+    }
 
     /**
      * 初始化检测器
@@ -514,41 +505,14 @@ class SnowboyKeywordDetector(
         // 创建输出缓冲区
         val floatOutput = nativeHeap.allocArray<FloatVar>(outputSize)
         
-        // 创建soxr实例
-        val wrapper = soxr_wrapper_create()
-        if (wrapper == null) {
-            if (denoisedBufferPtr != bufferPtr) {
-                nativeHeap.free(denoisedBufferPtr.rawValue)
-            }
-            nativeHeap.free(floatOutput.rawValue)
-            return null
-        }
-        
-        // 配置输入输出格式
-        soxr_io_spec_create(SOXR_FLOAT32_I, SOXR_FLOAT32_I, wrapper)
-        soxr_quality_spec_create(SOXR_FLOAT32_I, wrapper)
-        
-        // 创建重采样器
-        soxr_wrapper_create_resampler(
-            wrapper, sampleRate.toDouble(), requiredSampleRate.toDouble()
-        )
-        
-        if (wrapper.pointed.soxr == null) {
-            if (denoisedBufferPtr != bufferPtr) {
-                nativeHeap.free(denoisedBufferPtr.rawValue)
-            }
-            nativeHeap.free(floatOutput.rawValue)
-            soxr_wrapper_destroy(wrapper)
-            return null
-        }
-        
-        // 执行重采样
-        val processResult = soxr_wrapper_process(
-            wrapper,
-            in_data = denoisedBufferPtr,
-            in_size = frameCount.toUInt(),
-            out_data = floatOutput,
-            out_size = outputSize.toUInt(),
+        // 使用单例模式处理重采样
+        val result = SoxrSingleton.process(
+            sampleRate.toDouble(), 
+            requiredSampleRate.toDouble(),
+            denoisedBufferPtr,
+            frameCount.toUInt(),
+            floatOutput,
+            outputSize.toUInt()
         )
         
         // 如果降噪后的缓冲区不是原始缓冲区，释放它
@@ -557,10 +521,9 @@ class SnowboyKeywordDetector(
         }
         
         // 获取处理后实际输出的样本数
-        val actualOutputSize = processResult.toInt()
+        val actualOutputSize = result.toInt()
         if (actualOutputSize <= 0) {
             nativeHeap.free(floatOutput.rawValue)
-            soxr_wrapper_destroy(wrapper)
             return null
         }
         
@@ -578,34 +541,8 @@ class SnowboyKeywordDetector(
         
         // 清理资源
         nativeHeap.free(floatOutput.rawValue)
-        soxr_wrapper_destroy(wrapper)
         
         return resampledBuffer to actualOutputSize
-    }
-
-    /**
-     * 获取RNNoise包装器，使用缓存避免频繁创建销毁
-     */
-    private fun getRNNoiseWrapper(): CPointer<RNNoiseWrapper>? {
-        val currentTime = Clock.System.now().toEpochMilliseconds()
-        
-        // 检查缓存是否超时
-        if (cachedRNNoiseWrapper != null && currentTime - lastRNNoiseUseTime > rnnoiseCacheTimeout) {
-            // 超时释放资源
-            rnnoise_wrapper_destroy(cachedRNNoiseWrapper)
-            cachedRNNoiseWrapper = null
-        }
-        
-        if (cachedRNNoiseWrapper == null) {
-            cachedRNNoiseWrapper = rnnoise_wrapper_create()
-        }
-        
-        // 更新最后使用时间
-        if (cachedRNNoiseWrapper != null) {
-            lastRNNoiseUseTime = currentTime
-        }
-        
-        return cachedRNNoiseWrapper
     }
 
     /**
@@ -630,30 +567,19 @@ class SnowboyKeywordDetector(
                 inputBuffer[i] = buffer[i]
             }
             
-            // 使用缓存的RNNoise包装器
-            val rnnWrapper = getRNNoiseWrapper()
-            if (rnnWrapper == null) {
-                nativeHeap.free(inputBuffer.rawValue)
-                nativeHeap.free(outputBuffer.rawValue)
-                return true // 出错时默认接受
-            }
-            
-            // 配置RNNoise - 使用极低的VAD阈值以提高灵敏度
-            rnnoise_wrapper_set_vad_threshold(rnnWrapper, 0.05f) // 极低阈值
-            rnnoise_wrapper_set_gain(rnnWrapper, 3.0f) // 高增益
-            
             // 创建VAD概率数组
             val maxVadValues = frameCount / 480 + 1 // 每480样本一个VAD值
             val vadProbabilitiesPtr = nativeHeap.allocArray<FloatVar>(maxVadValues)
             
-            // 处理音频数据
-            val processResult = rnnoise_wrapper_process(
-                rnnWrapper,
+            // 使用单例处理音频数据
+            val processResult = RNNoiseSingleton.process(
                 inputBuffer,
                 outputBuffer,
                 frameCount,
                 vadProbabilitiesPtr,
-                maxVadValues
+                maxVadValues,
+                0.05f, // 极低阈值
+                3.0f   // 高增益
             )
             
             // 检查处理结果
@@ -766,27 +692,18 @@ class SnowboyKeywordDetector(
             // 创建输出缓冲区
             val outputBuffer = nativeHeap.allocArray<ShortVar>(frameCount)
             
-            // 创建或获取RNNoise包装器
-            val rnnWrapper = getRNNoiseWrapper()
-            if (rnnWrapper == null) {
-                nativeHeap.free(outputBuffer.rawValue)
-                return null
-            }
-            
-            // 配置RNNoise - 极低阈值，高增益
-            rnnoise_wrapper_set_vad_threshold(rnnWrapper, 0.05f) // 极低阈值
-            rnnoise_wrapper_set_gain(rnnWrapper, 3.0f) // 高增益
-            
-            // 处理音频数据
+            // 创建检测到的语音帧数指针
             val voiceFramesDetectedPtr = nativeHeap.alloc<IntVar>()
             voiceFramesDetectedPtr.value = 0
             
-            val processResult = rnnoise_wrapper_process_batch(
-                rnnWrapper,
+            // 使用RNNoise单例处理音频
+            val processResult = RNNoiseSingleton.processBatch(
                 inputBuffer,
                 outputBuffer,
                 frameCount,
-                voiceFramesDetectedPtr.ptr
+                voiceFramesDetectedPtr.ptr,
+                0.05f, // 极低阈值
+                3.0f   // 高增益
             )
             
             // 获取检测到的语音帧数
@@ -812,143 +729,6 @@ class SnowboyKeywordDetector(
     }
 
     /**
-     * 计算音频的能量模式得分，用于判断是否符合唤醒词特征
-     * 唤醒词通常有明显的能量变化模式，如"小度小度"有明显的两段能量峰值
-     */
-    private fun calculateEnergyPattern(audioData: ShortArray): Double {
-        // 将音频分成多个小段，计算每段的能量
-        val segmentCount = 12 // 分12段，可以捕捉"小度小度"的音节变化
-        val segmentSize = audioData.size / segmentCount
-        val segmentEnergies = DoubleArray(segmentCount)
-        
-        // 计算每段的能量
-        for (i in 0 until segmentCount) {
-            var energy = 0.0
-            val start = i * segmentSize
-            val end = minOf((i + 1) * segmentSize, audioData.size)
-            
-            for (j in start until end) {
-                energy += audioData[j] * audioData[j]
-            }
-            segmentEnergies[i] = energy / (end - start)
-        }
-        
-        // 标准化能量值
-        val maxEnergy = segmentEnergies.maxOrNull() ?: 1.0
-        if (maxEnergy > 0) {
-            for (i in segmentEnergies.indices) {
-                segmentEnergies[i] = segmentEnergies[i] / maxEnergy
-            }
-        }
-        
-        // 检查能量模式是否符合唤醒词特征 - "小度小度"通常有两个能量峰值
-        // 计算能量峰值数量和位置
-        var peakCount = 0
-        val peakPositions = mutableListOf<Int>()
-        
-        for (i in 1 until segmentCount - 1) {
-            if (segmentEnergies[i] > 0.6 && // 能量峰值必须足够高
-                segmentEnergies[i] > segmentEnergies[i-1] && 
-                segmentEnergies[i] > segmentEnergies[i+1]) {
-                peakCount++
-                peakPositions.add(i)
-            }
-        }
-        
-        // 计算模式匹配得分
-        var patternScore = 0.0
-        
-        // 理想的"小度小度"应该有2-4个能量峰值，且峰值之间有一定间隔
-        if (peakCount >= 2 && peakCount <= 4) {
-            patternScore += 0.5 // 基础分
-            
-            // 检查峰值间隔是否合理
-            if (peakPositions.size >= 2) {
-                for (i in 0 until peakPositions.size - 1) {
-                    val gap = peakPositions[i+1] - peakPositions[i]
-                    // 合理的间隔应该在1-5段之间
-                    if (gap >= 1 && gap <= 5) {
-                        patternScore += 0.25
-                    }
-                }
-            }
-        }
-        
-        // 记录能量模式信息
-        println("[DEBUG] 能量模式分析: 峰值数=$peakCount, 峰值位置=$peakPositions, 匹配得分=$patternScore")
-        return patternScore
-    }
-    
-    /**
-     * 根据能量模式判断是否符合唤醒词特征
-     */
-    private fun hasWakewordEnergyPattern(audioData: ShortArray): Boolean {
-        val energyPatternScore = calculateEnergyPattern(audioData)
-        // 要求至少达到0.7的匹配度
-        return energyPatternScore >= 0.7
-    }
-
-    /**
-     * 检查音频是否具有人声的频谱特征模式
-     */
-    private fun hasHumanVoicePattern(buffer: ShortArray, frameCount: Int): Boolean {
-        // 暂时放宽检测标准，默认接受所有音频
-        println("[DEBUG] 人声模式检测：暂时放宽标准，接受所有音频")
-        return true;
-        
-        /*
-        // 将音频分为多个子帧
-        val subFrameSize = 1024
-        val subFrameCount = frameCount / subFrameSize
-        
-        if (subFrameCount < 3) {
-            return true // 帧太短，无法进行充分分析
-        }
-        
-        // 计算每个子帧的能量
-        val subFrameEnergies = DoubleArray(subFrameCount)
-        for (i in 0 until subFrameCount) {
-            var energy = 0.0
-            val startIdx = i * subFrameSize
-            val endIdx = minOf((i + 1) * subFrameSize, frameCount)
-            
-            for (j in startIdx until endIdx) {
-                energy += buffer[j] * buffer[j]
-            }
-            subFrameEnergies[i] = energy / (endIdx - startIdx)
-        }
-        
-        // 计算能量变化模式 - 人声通常有明显的能量波动
-        var energyVariations = 0
-        for (i in 1 until subFrameCount) {
-            val ratio = subFrameEnergies[i] / subFrameEnergies[i-1]
-            if (ratio < 0.5 || ratio > 2.0) {
-                energyVariations++
-            }
-        }
-        
-        // 人声通常有足够的能量变化
-        val hasEnoughVariations = energyVariations >= subFrameCount / 5
-        
-        // 人声通常不会有突然的能量峰值
-        var hasSuddenPeaks = false
-        for (i in 1 until subFrameCount - 1) {
-            val peakRatio1 = subFrameEnergies[i] / subFrameEnergies[i-1]
-            val peakRatio2 = subFrameEnergies[i] / subFrameEnergies[i+1]
-            
-            if (peakRatio1 > 10.0 && peakRatio2 > 10.0) {
-                hasSuddenPeaks = true
-                break
-            }
-        }
-        
-        // 键盘敲击通常有突然的能量峰值，然后快速下降
-        // 人声通常有更平滑的能量变化
-        return hasEnoughVariations && !hasSuddenPeaks
-        */
-    }
-
-    /**
      * 释放资源
      */
     override fun release() {
@@ -957,12 +737,6 @@ class SnowboyKeywordDetector(
                 snowboy_free(it)
             }
             snowboyDetector = null
-            
-            // 释放RNNoise包装器
-            if (cachedRNNoiseWrapper != null) {
-                rnnoise_wrapper_destroy(cachedRNNoiseWrapper)
-                cachedRNNoiseWrapper = null
-            }
             
             _detectionState.value = KeywordDetector.DetectionState.IDLE
         } catch (e: Exception) {
