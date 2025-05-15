@@ -1,27 +1,20 @@
 package com.airobot.device.yanapi.snowboyPiper.impl
 
 import com.airobot.device.yanapi.snowboyPiper.interfaces.AudioAnalyzer
-import com.airobot.rnnoiseinterop.RNNoiseWrapper
-import com.airobot.rnnoiseinterop.rnnoise_wrapper_create
-import com.airobot.rnnoiseinterop.rnnoise_wrapper_destroy
-import com.airobot.rnnoiseinterop.rnnoise_wrapper_process
-import com.airobot.rnnoiseinterop.rnnoise_wrapper_set_vad_threshold
-import com.airobot.rnnoiseinterop.rnnoise_wrapper_set_gain
 import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.cinterop.FloatVar
 import kotlinx.cinterop.ShortVar
 import kotlinx.cinterop.allocArray
 import kotlinx.cinterop.get
 import kotlinx.cinterop.nativeHeap
-import kotlinx.cinterop.CPointer
 import kotlinx.cinterop.set
 import snowboyPiper.interop.AudioProcessingResourceManager
 import snowboyPiper.interop.RNNoiseSingleton
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
-import kotlin.math.sqrt
 import kotlin.math.pow
+import kotlin.math.sqrt
 import kotlin.time.Clock
 import kotlin.time.ExperimentalTime
 
@@ -142,24 +135,27 @@ class BasicAudioAnalyzer(
             return false
         }
 
+        // 提高能量阈值，减少对背景噪音的敏感度
+        val minEnergyThresholdAdjusted = 150.0 // 提高到150.0
+        
         // 使用RNNoise进行人声检测 - 在连续语音中可以跳过以提高效率
-        val isHumanVoice = if (!isInContinuousSpeech || rms > 100.0) {
+        val isHumanVoice = if (!isInContinuousSpeech || rms > 200.0) { // 提高到200.0
             checkVoiceWithRNNoise(buffer)
         } else {
             true // 连续语音中默认认为是人声
         }
 
-        // 判断是否有语音活动 - 放宽条件
-        val hasEnergy = rms >= minEnergyThreshold
-        val hasValidZcr = zcr >= minZcrThreshold && zcr <= maxZcrThreshold
+        // 判断是否有语音活动 - 提高条件严格性
+        val hasEnergy = rms >= minEnergyThresholdAdjusted
+        val hasValidZcr = zcr >= 0.05 && zcr <= 0.45 // 收紧过零率范围
 
         // 在连续语音中要更宽容
         val result = if (isInContinuousSpeech) {
-            // 在连续语音中，只要有基本的能量就接受
-            rms > minEnergyThreshold * 0.7 || isHumanVoice
+            // 在连续语音中，也要求一定的能量
+            rms > minEnergyThresholdAdjusted * 0.8 || (isHumanVoice && rms > minEnergyThresholdAdjusted * 0.5)
         } else {
             // 首次检测需要更严格
-            (hasEnergy && hasValidZcr) || isHumanVoice
+            (hasEnergy && hasValidZcr) || (isHumanVoice && hasEnergy)
         }
 
         // 更新连续语音帧计数
@@ -169,15 +165,16 @@ class BasicAudioAnalyzer(
             consecutiveVoiceFrames = max(0, consecutiveVoiceFrames - 1)
         }
 
-        return result || consecutiveVoiceFrames >= minConsecutiveFramesForVoice
+        // 要求至少有连续帧才认为是有效语音
+        return result && consecutiveVoiceFrames >= minConsecutiveFramesForVoice
     }
 
-    override fun containsValidVoice(buffer: ShortArray): Boolean {
+    override fun containsValidVoice(audioData: ShortArray): Boolean {
         // 检查是否在回声抑制时间内
         val currentTime = Clock.System.now().toEpochMilliseconds()
         if (currentTime - lastPlaybackTime < echoSuppressionTimeMs) {
             // 检查是否是回声
-            val currentSignature = extractAudioSignature(buffer)
+            val currentSignature = extractAudioSignature(audioData)
             if (isEchoSignature(currentSignature)) {
                 return false // 认为是回声，忽略
             }
@@ -185,20 +182,20 @@ class BasicAudioAnalyzer(
 
         // 计算音频能量和过零率用于键盘声检测
         var sumSquares = 0.0
-        for (sample in buffer) {
+        for (sample in audioData) {
             val sampleValue = sample.toDouble()
             sumSquares += (sampleValue * sampleValue)
         }
-        val rms = sqrt(sumSquares / buffer.size)
+        val rms = sqrt(sumSquares / audioData.size)
 
         var zeroCrossings = 0
-        for (i in 1 until buffer.size) {
-            if ((buffer[i] > 0 && buffer[i-1] <= 0) ||
-                (buffer[i] <= 0 && buffer[i-1] > 0)) {
+        for (i in 1 until audioData.size) {
+            if ((audioData[i] > 0 && audioData[i-1] <= 0) ||
+                (audioData[i] <= 0 && audioData[i-1] > 0)) {
                 zeroCrossings++
             }
         }
-        val zcr = zeroCrossings.toDouble() / buffer.size
+        val zcr = zeroCrossings.toDouble() / audioData.size
 
         // 检查是否为键盘声
         if (isLikelyKeyboardNoise(rms, zcr)) {
@@ -211,7 +208,7 @@ class BasicAudioAnalyzer(
         }
 
         // 使用RNNoise进行人声检测
-        val isHumanVoice = checkVoiceWithRNNoise(buffer)
+        val isHumanVoice = checkVoiceWithRNNoise(audioData)
 
         // 判断是否包含有效人声 - 极大放宽条件
         val hasEnergy = rms >= minEnergyThreshold && rms <= maxEnergyThreshold
@@ -240,15 +237,15 @@ class BasicAudioAnalyzer(
             val maxVadValues = frameCount / 480 + 1 // 每480样本一个VAD值
             val vadProbabilitiesPtr = nativeHeap.allocArray<FloatVar>(maxVadValues)
 
-            // 使用RNNoise单例处理音频数据
+            // 使用RNNoise单例处理音频数据 - 提高VAD阈值
             val processResult = RNNoiseSingleton.process(
                 inputBuffer,
                 outputBuffer,
                 frameCount,
                 vadProbabilitiesPtr,
                 maxVadValues,
-                0.05f, // 极低阈值
-                3.0f   // 高增益
+                0.15f, // 从0.05f提高到0.15f
+                2.5f   // 从3.0f降低到2.5f
             )
 
             // 检查处理结果
@@ -256,7 +253,7 @@ class BasicAudioAnalyzer(
                 nativeHeap.free(inputBuffer.rawValue)
                 nativeHeap.free(outputBuffer.rawValue)
                 nativeHeap.free(vadProbabilitiesPtr.rawValue)
-                return true // 出错时默认接受
+                return false // 出错时默认拒绝，修改为更严格
             }
 
             // 分析VAD概率
@@ -267,7 +264,7 @@ class BasicAudioAnalyzer(
             for (i in 0 until totalFrames) {
                 val prob = vadProbabilitiesPtr[i]
                 maxProb = max(maxProb, prob)
-                if (prob >= 0.05f) { // 极低阈值
+                if (prob >= 0.2f) { // 提高阈值从0.05f到0.2f
                     voiceFrames++
                 }
             }
@@ -277,9 +274,9 @@ class BasicAudioAnalyzer(
             nativeHeap.free(outputBuffer.rawValue)
             nativeHeap.free(vadProbabilitiesPtr.rawValue)
 
-            // 判断是否检测到足够的人声帧 - 极低阈值
+            // 判断是否检测到足够的人声帧 - 提高阈值
             val voiceRatio = if (totalFrames > 0) voiceFrames.toFloat() / totalFrames else 0f
-            val isHumanVoice = voiceRatio >= 0.05f || maxProb >= 0.1f // 极低阈值
+            val isHumanVoice = voiceRatio >= 0.15f || maxProb >= 0.25f // 提高阈值
 
             // 只在有人声时或调试需要时输出日志
             if (isHumanVoice) {
@@ -292,7 +289,7 @@ class BasicAudioAnalyzer(
             return isHumanVoice
         } catch (e: Exception) {
             println("[ERROR] RNNoise处理异常: ${e.message}")
-            return true // 出错时默认接受
+            return false // 出错时默认拒绝，修改为更严格
         }
     }
 

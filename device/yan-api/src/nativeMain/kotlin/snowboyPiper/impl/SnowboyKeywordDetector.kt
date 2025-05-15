@@ -8,11 +8,8 @@ package snowboyPiper.impl
 import com.airobot.device.yanapi.snowboyPiper.config.VoiceAssistantConfig
 import com.airobot.device.yanapi.snowboyPiper.interfaces.AudioAnalyzer
 import com.airobot.device.yanapi.snowboyPiper.interfaces.VoiceStateManager
-import com.airobot.rnnoiseinterop.RNNoiseWrapper
-import com.airobot.rnnoiseinterop.SOXR_FLOAT32_I
 import com.airobot.snowboyinterop.SnowboyDetectWrapper
 import com.airobot.snowboyinterop.snowboy_apply_frontend
-import com.airobot.snowboyinterop.snowboy_bits_per_sample
 import com.airobot.snowboyinterop.snowboy_create
 import com.airobot.snowboyinterop.snowboy_free
 import com.airobot.snowboyinterop.snowboy_num_channels
@@ -30,7 +27,6 @@ import kotlinx.cinterop.alloc
 import kotlinx.cinterop.allocArray
 import kotlinx.cinterop.get
 import kotlinx.cinterop.nativeHeap
-import kotlinx.cinterop.pointed
 import kotlinx.cinterop.ptr
 import kotlinx.cinterop.set
 import kotlinx.cinterop.value
@@ -47,9 +43,9 @@ import snowboyPiper.interfaces.KeywordDetector.DetectorState
 import snowboyPiper.interfaces.KeywordDetector.DetectorState.ERROR
 import snowboyPiper.interfaces.KeywordDetector.DetectorState.NoEvent
 import snowboyPiper.interfaces.KeywordDetector.DetectorState.Silence
+import snowboyPiper.interop.AudioProcessingResourceManager
 import snowboyPiper.interop.RNNoiseSingleton
 import snowboyPiper.interop.SoxrSingleton
-import snowboyPiper.interop.AudioProcessingResourceManager
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
@@ -125,6 +121,8 @@ class SnowboyKeywordDetector(
         _detectionState.value = KeywordDetector.DetectionState.INITIALIZING
 
         try {
+            println("[DEBUG] 开始初始化Snowboy检测器，模型路径: $modelPath")
+            
             snowboyDetector = snowboy_create(resourcePath, modelPath)
             if (snowboyDetector == null) {
                 println("[ERROR] Snowboy检测器创建失败")
@@ -132,14 +130,16 @@ class SnowboyKeywordDetector(
                 return false
             }
             
-            // 使用高灵敏度，确保能捕获唤醒词
-            val actualSensitivity = 0.6f
+            // 提高灵敏度，确保能捕获唤醒词 (进一步提高到0.9f)
+            val actualSensitivity = 0.9f
             
             println("[INFO] 设置灵敏度 ${actualSensitivity}")
             snowboy_set_sensitivity(snowboyDetector, actualSensitivity.toString())
             
-            // 设置适中的音频增益
-            snowboy_set_audio_gain(snowboyDetector, 2.0f)
+            // 增加音频增益，提高检测能力 (进一步提高到3.0f)
+            val audioGain = 3.0f
+            println("[INFO] 设置音频增益 ${audioGain}")
+            snowboy_set_audio_gain(snowboyDetector, audioGain)
             
             // 启用前端处理
             snowboy_apply_frontend(snowboyDetector, 1)
@@ -214,8 +214,11 @@ class SnowboyKeywordDetector(
             }
             val rms = kotlin.math.sqrt(sumSquares / frameCount)
             
-            // 有声音活动时，更新时间戳
-            val hasCurrentVoiceActivity = rms >= 30.0
+            // 输出RMS值帮助调试
+            println("[TRACE] 音频RMS能量: $rms, 最大样本: $maxSample, 帧数: $frameCount")
+            
+            // 能量阈值降低，确保能捕捉到正常音量的人声
+            val hasCurrentVoiceActivity = rms >= 25.0  // 从60.0降低到25.0
             
             // 管理连续语音状态
             if (hasCurrentVoiceActivity) {
@@ -246,12 +249,14 @@ class SnowboyKeywordDetector(
                 lastVoiceActivityTime = currentTime
             }
             
-            // 最低能量阈值检查
-            if (rms < 30.0) { // 极低能量阈值
-                // 长时间静音，重置音频累积，但不要太快重置
+            // 大幅降低能量阈值，以适应大多数正常说话的声音
+            if (rms < 25.0) { // 从60.0降低到25.0，允许更多音频通过
+                println("[INFO] 音频能量太低 (RMS=$rms)，跳过处理")
+                
+                // 长时间静音，重置音频累积
                 val currentTimeCheck = Clock.System.now().toEpochMilliseconds()
                 if (pendingAudio && (currentTimeCheck - lastAudioHighEnergy > silencePauseThreshold)) {
-                    // 在静音期间，保留部分音频以便处理
+                    // 在静音期间，保留部分音频以备后续使用
                     if (audioBufferPosition > 0) {
                         val preserveAmount = min(500, audioBufferPosition)
                         // 使用Kotlin Native兼容的数组复制方法
@@ -279,29 +284,38 @@ class SnowboyKeywordDetector(
             }
             val zcr = zeroCrossings.toDouble() / frameCount
             
-            // 过零率检查 - 仍然过滤极端情况
-            if (zcr > 0.95) {
+            // 过零率检查 - 放宽人声特性的典型值范围
+            if (zcr > 0.5 || zcr < 0.0002) {  // 从0.4扩大到0.5，从0.05降低到0.0002
+                println("[INFO] 过零率不符合人声特征 (ZCR=$zcr)，跳过处理")
                 return NoEvent
             }
             
-            // 使用RNNoise进行初步VAD检测
-            // 只在连续语音停顿或音频能量较高时进行检测，减少不必要的处理
-            val isHumanVoice = if (!isInContinuousSpeech || rms > 100.0) {
-                checkVoiceWithRNNoise(buffer)
-            } else {
-                // 如果是连续语音中，直接假设是人声
-                true
-            }
+            // 执行严格的人声检测
+            val isHumanVoice = checkVoiceWithRNNoise(buffer)
             
-            // 首先进行语音活动检测，确保是人声
-            // 在连续语音中，不要重复检查语音有效性
-            val isVoiceActivity = isHumanVoice || isInContinuousSpeech || audioAnalyzer.hasVoiceActivity(buffer)
-            val containsValidVoice = isHumanVoice || isInContinuousSpeech || audioAnalyzer.containsValidVoice(buffer)
-            
-            // 只有当检测到真实人声或连续语音时才继续处理
-            if (!isVoiceActivity && !containsValidVoice && rms < 80.0 && !isInContinuousSpeech) {
+            // 只有明确是人声，或者已经确认的连续语音才继续处理
+            if (!isHumanVoice && !isInContinuousSpeech) {
+                println("[INFO] RNNoise判定不是人声，跳过处理")
                 return NoEvent
             }
+            
+            // 额外使用audioAnalyzer进行二次验证
+            val isVoiceActivity = audioAnalyzer.hasVoiceActivity(buffer)
+            val containsValidVoice = audioAnalyzer.containsValidVoice(buffer)
+            
+            // 放宽验证要求：只要通过任意一种验证即可
+            val isRealHumanVoice = isHumanVoice ||  // 通过RNNoise检测
+                                  isVoiceActivity || // 或通过活动检测
+                                  containsValidVoice || // 或通过有效声音检测
+                                  isInContinuousSpeech // 或处于连续语音状态
+            
+            if (!isRealHumanVoice) {
+                println("[INFO] 未通过人声验证：RNNoise=$isHumanVoice, 活动=$isVoiceActivity, 有效=$containsValidVoice, 连续=$isInContinuousSpeech")
+                return NoEvent
+            }
+            
+            // 到这里，我们确信输入是真实的人声，继续处理
+            println("[INFO] 确认检测到人声，继续关键词检测流程")
             
             // 累积音频数据到缓冲区 - 保持连续性
             if (frameCount < audioAccumulationWindow) {
@@ -355,8 +369,8 @@ class SnowboyKeywordDetector(
             // 将音频数据转换为C指针
             val bufferPtr = nativeHeap.allocArray<ShortVar>(audioBufferPosition)
             
-            // 复制音频数据，应用轻微增益
-            val gain = 1.5f // 适当增益以增强信号
+            // 复制音频数据，应用更高增益
+            val gain = 2.0f // 从3.0f提高到4.0f，大幅增强信号
             for (i in 0 until audioBufferPosition) {
                 val ampValue = audioBuffer[i].toInt() * gain
                 bufferPtr[i] = kotlin.math.max(-32768, kotlin.math.min(32767, ampValue.toInt())).toShort()
@@ -369,6 +383,9 @@ class SnowboyKeywordDetector(
             // 执行转码（如果需要）- 只在音频停顿时执行降噪操作，减少处理
             val currentSilenceTime = currentTime - lastVoiceActivityTime
             val shouldApplyNoiseReduction = currentSilenceTime > silencePauseThreshold || !isInContinuousSpeech
+            
+            // 输出音频格式信息，帮助调试
+            println("[TRACE] 音频格式: 当前采样率=$sampleRate, 需要采样率=$requiredSampleRate, 声道数=$channels->$requiredChannels")
             
             val (finalBufferPtr, outputSize) = if (sampleRate != requiredSampleRate || channels != requiredChannels) {
                 val bufferTrans = fixedTranscoding(audioBufferPosition, bufferPtr, sampleRate, requiredSampleRate, shouldApplyNoiseReduction)
@@ -392,7 +409,8 @@ class SnowboyKeywordDetector(
                     return ERROR
                 }
                 bufferTrans
-            } else {
+            }
+            else {
                 // 如果格式已匹配但需要降噪，仍然应用降噪处理
                 if (shouldApplyNoiseReduction) {
                     val denoised = applyNoiseReduction(bufferPtr, audioBufferPosition)
@@ -409,12 +427,37 @@ class SnowboyKeywordDetector(
             // 执行关键词检测
             val result = snowboy_run_detection_int16(snowboyDetector, finalBufferPtr, outputSize, 0)
 
+            // 调试输出检测结果
+            println("[DEBUG] Snowboy检测结果: $result, 音频RMS: $rms, 过零率: $zcr, 采样率: $requiredSampleRate, 数据大小: $outputSize, 缓冲区地址: $finalBufferPtr")
+            
+            // 播放原始录制的音频，不做任何处理
+            if (frameCount > 0 && isRealHumanVoice) {  // 只在确认为真实人声时播放
+                println("[INFO] 播放完全未处理的原始录制音频，检测结果: $result, 帧数: $frameCount")
+                
+                // 创建一个临时缓冲区
+                val bufferOriginal = nativeHeap.allocArray<ShortVar>(frameCount)
+                
+                // 直接复制原始录制的数据，不做任何增益或处理
+                for (i in 0 until frameCount) {
+                    bufferOriginal[i] = buffer[i]
+                }
+                
+                // 直接播放原始音频
+                println("[INFO] 播放原始录音数据，长度: $frameCount 帧")
+                val playResult = player.playAudio(bufferOriginal, frameCount)
+                println("[INFO] 原始音频播放结果: $playResult")
+                
+                // 释放临时缓冲区
+                nativeHeap.free(bufferOriginal.rawValue)
+            } else {
+                println("[INFO] 不播放音频 - " + (if(frameCount <= 0) "没有数据" else "不是真实人声"))
+            }
+            
             // 根据检测结果决定是否保留音频数据
             if (result > 0) {
                 // 检测到关键词，通知分析器即将播放音频
                 audioAnalyzer.notifyAudioPlayback(buffer)
-                // 播放音频并记录时间
-                player.playAudio(finalBufferPtr, outputSize)
+
                 lastPlaybackTime = currentTime
                 
                 // 完全重置音频缓冲区
@@ -571,15 +614,15 @@ class SnowboyKeywordDetector(
             val maxVadValues = frameCount / 480 + 1 // 每480样本一个VAD值
             val vadProbabilitiesPtr = nativeHeap.allocArray<FloatVar>(maxVadValues)
             
-            // 使用单例处理音频数据
+            // 使用单例处理音频数据 - 降低阈值以提高检测灵敏度
             val processResult = RNNoiseSingleton.process(
                 inputBuffer,
                 outputBuffer,
                 frameCount,
                 vadProbabilitiesPtr,
                 maxVadValues,
-                0.05f, // 极低阈值
-                3.0f   // 高增益
+                0.1f,  // 从0.25f降低到0.1f，降低过滤强度
+                2.5f   // 保持适中增益
             )
             
             // 检查处理结果
@@ -587,20 +630,26 @@ class SnowboyKeywordDetector(
                 nativeHeap.free(inputBuffer.rawValue)
                 nativeHeap.free(outputBuffer.rawValue)
                 nativeHeap.free(vadProbabilitiesPtr.rawValue)
-                return true // 出错时默认接受
+                return false // 出错时默认拒绝（而不是接受）
             }
             
             // 分析VAD概率
             var voiceFrames = 0
             var totalFrames = minOf(processResult, maxVadValues)
             var maxProb = 0.0f
+            var avgProb = 0.0f
             
             for (i in 0 until totalFrames) {
                 val prob = vadProbabilitiesPtr[i]
                 maxProb = max(maxProb, prob)
-                if (prob >= 0.05f) { // 极低阈值
+                avgProb += prob
+                if (prob >= 0.15f) { // 从0.3f降低到0.15f，降低语音帧门限
                     voiceFrames++
                 }
+            }
+            
+            if (totalFrames > 0) {
+                avgProb /= totalFrames
             }
             
             // 释放资源
@@ -608,19 +657,21 @@ class SnowboyKeywordDetector(
             nativeHeap.free(outputBuffer.rawValue)
             nativeHeap.free(vadProbabilitiesPtr.rawValue)
             
-            // 判断是否检测到足够的人声帧 - 极低阈值
+            // 判断是否检测到足够的人声帧 - 降低阈值
             val voiceRatio = if (totalFrames > 0) voiceFrames.toFloat() / totalFrames else 0f
-            val isHumanVoice = voiceRatio >= 0.05f || maxProb >= 0.1f // 极低阈值
             
-            // 只在检测到人声时输出日志
-            if (isHumanVoice) {
-                println("[DEBUG] RNNoise VAD结果: 语音帧比例=$voiceRatio, 最高概率=$maxProb, 是人声=$isHumanVoice")
-            }
+            // 降低语音判定标准，让更多正常音量的人声通过
+            val isHumanVoice = (voiceRatio >= 0.1f && maxProb >= 0.3f) || // 降低高质量语音标准
+                              (voiceRatio >= 0.15f && maxProb >= 0.25f) || // 降低中等质量语音标准
+                              (voiceRatio >= 0.2f) // 降低持续性语音标准
+            
+            // 输出详细日志，包括所有阈值和判定依据
+            println("[DEBUG] RNNoise VAD详细结果: 语音帧比例=$voiceRatio (阈值>=0.1f), 最高概率=$maxProb (阈值>=0.3f), 平均概率=$avgProb, 是人声=$isHumanVoice")
             
             return isHumanVoice
         } catch (e: Exception) {
             println("[ERROR] RNNoise VAD检测异常: ${e.message}")
-            return true // 出错时默认接受，避免错误地过滤掉语音
+            return false // 出错时默认拒绝
         }
     }
 
@@ -696,14 +747,14 @@ class SnowboyKeywordDetector(
             val voiceFramesDetectedPtr = nativeHeap.alloc<IntVar>()
             voiceFramesDetectedPtr.value = 0
             
-            // 使用RNNoise单例处理音频
+            // 使用RNNoise单例处理音频 - 提高阈值
             val processResult = RNNoiseSingleton.processBatch(
                 inputBuffer,
                 outputBuffer,
                 frameCount,
                 voiceFramesDetectedPtr.ptr,
-                0.05f, // 极低阈值
-                3.0f   // 高增益
+                0.15f, // 从0.05f提高到0.15f
+                2.0f   // 从3.0f降低到2.0f
             )
             
             // 获取检测到的语音帧数

@@ -26,6 +26,8 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import snowboyPiper.impl.KeywordDetectorFactory
+import snowboyPiper.impl.KeywordDetectorFactory.DetectorType
 import snowboyPiper.interfaces.KeywordDetector.DetectorState
 import snowboyPiper.interfaces.VoiceAssistantService
 import kotlin.time.Clock
@@ -50,7 +52,8 @@ class SnowboyPiperVoiceAssistant(
     private val speechSynthesizer = PiperSpeechSynthesizer()
     private val speechRecognizer = VoskSpeechRecognizer()
     private val voiceStateManager: VoiceStateManager = VoiceStateManagerImpl(config)
-    private val keywordDetector = SnowboyKeywordDetector(audioAnalyzer,voiceStateManager)
+    private val keywordDetector = KeywordDetectorFactory.createDetector(DetectorType.VOSK,speechRecognizer,
+        audioAnalyzer,voiceStateManager)
 
     private val audioBufferManager: AudioBufferManager = AudioBufferManagerImpl()
 
@@ -88,13 +91,6 @@ class SnowboyPiperVoiceAssistant(
             _assistantState.value = VoiceAssistantService.AssistantState.ERROR
             return false
         }
-        // 初始化关键词检测器
-        if (!keywordDetector.initialize(config.resourcePath, config.modelPath)) {
-            println("[ERROR] 关键词检测器初始化失败")
-            speechRecognizer.recordDevice().release()
-            _assistantState.value = VoiceAssistantService.AssistantState.ERROR
-            return false
-        }
 
         // 初始化语音合成器
         if (!speechSynthesizer.initialize(config.piperModelPath, config.piperConfigPath, config.piperESpeakDataPath)) {
@@ -110,6 +106,14 @@ class SnowboyPiperVoiceAssistant(
             println("[ERROR] 语音识别器初始化失败")
             speechSynthesizer.release()
             keywordDetector.release()
+            speechRecognizer.recordDevice().release()
+            _assistantState.value = VoiceAssistantService.AssistantState.ERROR
+            return false
+        }
+
+        // 初始化关键词检测器
+        if (!keywordDetector.initialize(config.resourcePath, config.modelPath)) {
+            println("[ERROR] 关键词检测器初始化失败")
             speechRecognizer.recordDevice().release()
             _assistantState.value = VoiceAssistantService.AssistantState.ERROR
             return false

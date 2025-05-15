@@ -8,7 +8,8 @@ data class VoiceAssistantConfig(
 
     // 模型路径
     val resourcePath: String = "/usr/local/share/yanshee-model/snowboy/common.res",
-    val modelPath: String = "/usr/local/share/yanshee-model/snowboy/models/xiaodu.pmdl",
+//    val modelPath: String = "/usr/local/share/yanshee-model/snowboy/models/xiaodu.pmdl",
+    val modelPath: String = "/usr/local/share/yanshee-model/snowboy/models/yiliduo.pmdl",
 //    val modelPath: String = "/usr/local/share/yanshee-model/snowboy/models/snowboy.umdl",
     val piperModelPath: String = "/usr/local/share/yanshee-model/piper/zh_CN-huayan-medium.onnx",
     val piperConfigPath: String = "/usr/local/share/yanshee-model/piper/zh_CN-huayan-medium.onnx.json",
@@ -18,25 +19,25 @@ data class VoiceAssistantConfig(
 
     // 语音处理参数
     val speechRecognitionTimeoutMs: Long = 8000L,
-    val accumulationThreshold: Int = 16000 * 4, // 约4秒的16kHz音频
-    val overlapSize: Int = 16000, // 保留约1秒的音频用于连续检测
+    val accumulationThreshold: Int = 16000 * 2, // 从3秒降低到2秒的16kHz音频，加快响应
+    val overlapSize: Int = 8000, // 从16000降低到8000，减小缓冲区大小
 
-    // VAD参数 - 降低阈值使检测更灵敏
-    val energyThreshold: Double = 400.0,
-    val noiseGateThreshold: Double = 250.0,
-    val validVoiceRmsThreshold: Double = 350.0,
-    val validVoiceZcrThreshold: Double = 0.3,
+    // VAD参数 - 进一步降低阈值提高对语音的敏感性
+    val energyThreshold: Double = 300.0, // 从500.0降低到300.0
+    val noiseGateThreshold: Double = 200.0, // 从300.0降低到200.0
+    val validVoiceRmsThreshold: Double = 250.0, // 从450.0降低到250.0
+    val validVoiceZcrThreshold: Double = 0.2, // 从0.25降低到0.2
 
-    val silenceFramesThreshold: Int = 60,
+    val silenceFramesThreshold: Int = 40, // 从60降低到40
 
     // 时间控制
-    val mainLoopDelayMs: Long = 100L,
-    val keywordDetectionIntervalMs: Long = 2000L, // 降低检测间隔使系统更快响应
-    val commandProcessingIntervalMs: Long = 1000L,
-    val postSilenceWaitTimeMs: Long = 1500L,
+    val mainLoopDelayMs: Long = 50L, // 从100L降低到50L，提高检测频率
+    val keywordDetectionIntervalMs: Long = 1000L, // 从1500L降低到1000L，更快地尝试检测
+    val commandProcessingIntervalMs: Long = 800L, // 从1000L降低到800L
+    val postSilenceWaitTimeMs: Long = 1200L, // 从1500L降低到1200L
     val errorLogIntervalMs: Long = 5000L
 ){
     companion object{
-        val snowboySensitivity: Float = 0.6f // 使用较高灵敏度提高检测率
+        val snowboySensitivity: Float = 0.9f // 进一步提高灵敏度，从0.75f提高到0.9f
     }
 }
