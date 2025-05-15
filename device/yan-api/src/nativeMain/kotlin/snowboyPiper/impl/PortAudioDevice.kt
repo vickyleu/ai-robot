@@ -44,6 +44,13 @@ import snowboyPiper.interfaces.AudioDevice
 import kotlin.experimental.ExperimentalNativeApi
 import kotlin.time.ExperimentalTime
 
+// Added imports
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.delay
+import com.airobot.device.yanapi.snowboyPiper.impl.BasicAudioAnalyzer // Assuming AudioAnalyzer interface is in this path
+import com.airobot.device.yanapi.snowboyPiper.interfaces.AudioAnalyzer // Assuming AudioAnalyzer interface is in this path
+
 /**
  * PortAudio音频设备实现
  * 负责音频设备的初始化、列举、打开和关闭等操作
@@ -80,6 +87,11 @@ class PortAudioDevice(private val speechRecognizer: VoskSpeechRecognizer) : Audi
 
     // 音频读取计数器
     private var audioReadCounter = 0
+
+    // New fields for recognition loop and analyzer
+    private val analyzer: AudioAnalyzer = BasicAudioAnalyzer()
+    private var recognitionJob: Job? = null
+    private val recognitionLoopBufferFrames = 1600 // e.g., 100ms at 16kHz. Tune as needed.
 
     override fun isInitialized(): Boolean {
         return portAudioInitialized
@@ -302,7 +314,7 @@ class PortAudioDevice(private val speechRecognizer: VoskSpeechRecognizer) : Audi
                         if (startResult == paNoError) {
                             println("[INFO] 音频输入流打开并启动成功")
                             success = true
-                            _deviceState.value = AudioDevice.AudioDeviceState.ACTIVE
+                            _deviceState.value = AudioDevice.AudioDeviceState.READY // Ready to start recognition loop
                         } else {
                             println("[ERROR] 无法启动音频输入流: ${Pa_GetErrorText(startResult)?.toKString()}")
                             Pa_CloseStream(inputStreamPtr.value)
@@ -397,8 +409,8 @@ class PortAudioDevice(private val speechRecognizer: VoskSpeechRecognizer) : Audi
                     val startResult = Pa_StartStream(outputStreamPtr.value)
                     if (startResult == paNoError) {
                         println("[INFO] 音频输出流打开并启动成功")
-                        _deviceState.value = AudioDevice.AudioDeviceState.ACTIVE
-                        
+                        // Opening output stream does not make the device globally ACTIVE for recognition.
+                        // It becomes active when recognition loop starts or if it's playing.
                         true
                     } else {
                         println("[ERROR] 无法启动音频输出流: ${Pa_GetErrorText(startResult)?.toKString()}")
@@ -431,47 +443,19 @@ class PortAudioDevice(private val speechRecognizer: VoskSpeechRecognizer) : Audi
             return -1
         }
         
-        return try {
-            val startTime = kotlin.time.TimeSource.Monotonic.markNow()
-            val result = Pa_ReadStream(inputStreamPtr.value, buffer, frameCount.toUInt())
-            val elapsed = startTime.elapsedNow()
-            
-            if (result == paNoError || result == paInputOverflowed) {
-                // 成功读取或输入溢出（可以接受）
-                
-                // 减少调试输出频率，从每100次改为每1000次
-                if (audioReadCounter % 1000 == 0) {
-                    // 简化输出，不打印样本值
-                    println("[DEBUG-READ] 读取音频: 帧数=$frameCount, 耗时=${elapsed.inWholeMilliseconds}ms")
-                    
-                    // 计算RMS能量，但只在能量足够高时才输出
-                    var sumSquares = 0.0
-                    for (i in 0 until frameCount) {
-                        val sample = buffer[i].toDouble()
-                        sumSquares += (sample * sample)
-                    }
-                    val rms = kotlin.math.sqrt(sumSquares / frameCount)
-                    
-                    // 只有当能量足够高时才输出
-                    if (rms > 20.0) {
-                        println("[DEBUG-READ] 音频能量: RMS=$rms")
-                    }
-                }
-                
-                if (result == paInputOverflowed && audioReadCounter % 500 == 0) {
-                    println("[WARN] 音频输入溢出，部分数据可能丢失")
-                }
-                
-                audioReadCounter++
-                frameCount
-            } else {
-                println("[ERROR] 读取音频数据失败: ${Pa_GetErrorText(result)?.toKString()}")
-                -1
+        // 简化计数逻辑
+        val result = Pa_ReadStream(inputStreamPtr.value, buffer, frameCount.toUInt())
+        
+        // 只检查必要的错误状态
+        if (result == paNoError || result == paInputOverflowed) {
+            // 仅在1000个样本时记录
+            if ((++audioReadCounter) % 1000 == 0) {
+                println("[DEBUG] 读取音频: 帧数=$frameCount")
             }
-        } catch (e: Exception) {
-            println("[ERROR] 读取音频数据时出错: ${e.message}")
-            e.printStackTrace()
-            -1
+            return frameCount
+        } else {
+            println("[ERROR] 读取音频失败: ${Pa_GetErrorText(result)?.toKString()}")
+            return -1
         }
     }
     
@@ -487,42 +471,44 @@ class PortAudioDevice(private val speechRecognizer: VoskSpeechRecognizer) : Audi
             return -1
         }
 
-        // 无论帧数大小，都尝试直接播放，确保声音输出
-        println("[DEBUG] 直接尝试播放音频数据，帧数: $frameCount")
+        // 提取播放的音频数据用于回声消除
+        val audioData = ShortArray(frameCount)
+        for (i in 0 until frameCount) {
+            audioData[i] = buffer[i]
+        }
         
-        // 提高音量，增大增益确保声音可听，但不要过度放大导致爆音
+        // 通知语音识别器进行回声处理
+        try {
+            (speechRecognizer as? VoskSpeechRecognizer)?.processPlaybackReference(audioData)
+        } catch (e: Exception) {
+            println("[WARN] 处理播放参考信号失败: ${e.message}")
+        }
+
+        // 应用增益
         val amplifiedBuffer = nativeHeap.allocArray<ShortVar>(frameCount)
-        val gain = 3.0f // 降低增益从10.0f到3.0f，避免爆音
+        val gain = 3.0f
         
         for (i in 0 until frameCount) {
             val amplifiedValue = buffer[i].toInt() * gain
-            // 限制在有效范围内
             amplifiedBuffer[i] = kotlin.math.max(-32768, kotlin.math.min(32767, amplifiedValue.toInt())).toShort()
         }
         
         try {
             val result = Pa_WriteStream(outputStreamPtr.value, amplifiedBuffer, frameCount.toUInt())
+            nativeHeap.free(amplifiedBuffer.rawValue)
+            
             if (result == paNoError) {
-                println("[INFO] 播放放大音频数据成功")
-                nativeHeap.free(amplifiedBuffer.rawValue)
                 return frameCount
             } else if (result == paOutputUnderflowed) {
-                println("[WARN] 播放放大音频数据出现欠载 (underflow)，继续尝试播放")
-                nativeHeap.free(amplifiedBuffer.rawValue)
+                println("[WARN] 播放出现欠载，继续播放")
                 return frameCount
             } else {
-                println("[ERROR] 播放放大音频数据失败: ${Pa_GetErrorText(result)?.toKString()}")
-                nativeHeap.free(amplifiedBuffer.rawValue)
-                
-                // 如果直接播放失败，回退到缓冲策略
+                println("[ERROR] 播放失败: ${Pa_GetErrorText(result)?.toKString()}")
                 return playAudioWithBuffer(buffer, frameCount)
             }
         } catch (e: Exception) {
-            println("[ERROR] 播放放大音频数据时出错: ${e.message}")
-            e.printStackTrace()
+            println("[ERROR] 播放异常: ${e.message}")
             nativeHeap.free(amplifiedBuffer.rawValue)
-            
-            // 如果直接播放出错，回退到缓冲策略
             return playAudioWithBuffer(buffer, frameCount)
         }
     }
@@ -531,95 +517,178 @@ class PortAudioDevice(private val speechRecognizer: VoskSpeechRecognizer) : Audi
      * 使用缓冲策略播放音频
      */
     private fun playAudioWithBuffer(buffer: CPointer<ShortVar>, frameCount: Int): Int {
+        if (outputStreamPtr.value == null) return -1
+        
+        // 创建回声参考信号
+        val audioData = ShortArray(frameCount)
+        for (i in 0 until frameCount) {
+            audioData[i] = buffer[i]
+        }
+        
+        // 通知语音识别器处理回声参考
+        try {
+            (speechRecognizer as? VoskSpeechRecognizer)?.processPlaybackReference(audioData)
+        } catch (e: Exception) {
+            // 仅记录异常，不影响播放流程
+        }
+
         // 如果帧数太小，积累到缓冲区
         if (frameCount < minPlayFrames && audioPlayBufferPos + frameCount < audioPlayBuffer.size) {
-            println("[DEBUG] 帧数较小(${frameCount})，积累到缓冲区，当前缓冲区位置: $audioPlayBufferPos")
-            
-            // 复制数据到缓冲区
             for (i in 0 until frameCount) {
                 audioPlayBuffer[audioPlayBufferPos + i] = buffer[i]
             }
             audioPlayBufferPos += frameCount
-            
-            // 不够播放，继续积累
             return frameCount
         }
         
-        // 如果有缓冲数据并且当前帧不小，先播放缓冲数据
+        // 如果有缓冲数据，先播放缓冲数据
         if (audioPlayBufferPos > 0) {
-            println("[DEBUG] 播放积累的缓冲数据，大小: $audioPlayBufferPos")
+            val totalFramesToPlay = audioPlayBufferPos + frameCount
+            val tempBuffer = nativeHeap.allocArray<ShortVar>(totalFramesToPlay)
             
-            // 复制缓冲数据到临时缓冲区
-            val tempBuffer = nativeHeap.allocArray<ShortVar>(audioPlayBufferPos + frameCount)
-            
-            // 先复制缓冲区数据
             for (i in 0 until audioPlayBufferPos) {
                 tempBuffer[i] = audioPlayBuffer[i]
             }
-            
-            // 再复制当前帧数据
             for (i in 0 until frameCount) {
                 tempBuffer[audioPlayBufferPos + i] = buffer[i]
             }
             
-            // 播放合并后的数据
-            val totalFrames = audioPlayBufferPos + frameCount
-            println("[DEBUG] 播放合并数据，总帧数: $totalFrames")
-            
             val result = try {
-                val writeResult = Pa_WriteStream(outputStreamPtr.value, tempBuffer, totalFrames.toUInt())
-                if (writeResult == paNoError) {
-                    println("[INFO] 播放合并音频数据成功")
-                    totalFrames
-                } else if (writeResult == paOutputUnderflowed) {
-                    println("[WARN] 播放合并音频数据出现欠载 (underflow)，继续尝试播放")
-                    totalFrames
+                val writeResult = Pa_WriteStream(outputStreamPtr.value, tempBuffer, totalFramesToPlay.toUInt())
+                if (writeResult == paNoError || writeResult == paOutputUnderflowed) {
+                    totalFramesToPlay
                 } else {
                     println("[ERROR] 播放合并音频数据失败: ${Pa_GetErrorText(writeResult)?.toKString()}")
                     -1
                 }
             } catch (e: Exception) {
-                println("[ERROR] 播放合并音频数据时出错: ${e.message}")
-                e.printStackTrace()
+                println("[ERROR] 播放合并音频数据异常: ${e.message}")
                 -1
             }
-            
-            // 清空缓冲区
-            audioPlayBufferPos = 0
-            
-            // 释放临时缓冲区
             nativeHeap.free(tempBuffer.rawValue)
-            
+            audioPlayBufferPos = 0
             return result
         }
 
-        println("[DEBUG] 直接播放音频数据，帧数: $frameCount")
+        // 直接播放
         return try {
             val result = Pa_WriteStream(outputStreamPtr.value, buffer, frameCount.toUInt())
-            if (result == paNoError) {
-                println("[INFO] 播放音频数据成功")
-                frameCount
-            } else if (result == paOutputUnderflowed) {
-                println("[WARN] 播放音频数据出现欠载 (underflow)，继续尝试播放")
-                // 即使发生欠载也返回成功，因为这通常是可以恢复的
+            if (result == paNoError || result == paOutputUnderflowed) {
                 frameCount
             } else {
                 println("[ERROR] 播放音频数据失败: ${Pa_GetErrorText(result)?.toKString()}")
                 -1
             }
         } catch (e: Exception) {
-            println("[ERROR] 播放音频数据时出错: ${e.message}")
-            e.printStackTrace()
+            println("[ERROR] 播放音频数据异常: ${e.message}")
             -1
         }
     }
 
+    fun startRecognition() {
+        if (recognitionJob?.isActive == true) {
+            println("[WARN] Recognition loop is already active.")
+            return
+        }
+        val currentInputStream = inputStreamPtr.value
+        if (currentInputStream == null) {
+            println("[ERROR] Input stream not open. Cannot start recognition.")
+            _deviceState.value = AudioDevice.AudioDeviceState.ERROR
+            return
+        }
+        
+        if (_deviceState.value != AudioDevice.AudioDeviceState.READY && _deviceState.value != AudioDevice.AudioDeviceState.ACTIVE) {
+             println("[ERROR] Device not in READY or ACTIVE state to start recognition. Current: ${_deviceState.value}")
+             return
+        }
+
+        _deviceState.value = AudioDevice.AudioDeviceState.ACTIVE
+
+        recognitionJob = scope.launch {
+            println("[INFO] Starting recognition loop...")
+            val paBuffer = nativeHeap.allocArray<ShortVar>(recognitionLoopBufferFrames)
+            var processingBuffer = ShortArray(recognitionLoopBufferFrames)
+
+            // speechRecognizer.startListening() // Example: If your recognizer has such a method
+
+            try {
+                while (isActive && inputStreamPtr.value != null) {
+                    val framesRead = Pa_ReadStream(currentInputStream, paBuffer, recognitionLoopBufferFrames.toUInt())
+
+                    if (!isActive) break
+
+                    if (framesRead < 0) {
+                        println("[ERROR] Pa_ReadStream failed in recognition loop: ${Pa_GetErrorText(framesRead)?.toKString()}")
+                        _deviceState.value = AudioDevice.AudioDeviceState.ERROR
+                        break
+                    }
+                    if (framesRead == 0) {
+                        delay(5)
+                        continue
+                    }
+
+                    val currentAudioChunk = if (framesRead < recognitionLoopBufferFrames) {
+                        if (processingBuffer.size != framesRead) processingBuffer = ShortArray(framesRead)
+                        for (i in 0 until framesRead) processingBuffer[i] = paBuffer[i]
+                        processingBuffer
+                    } else {
+                        for (i in 0 until framesRead) processingBuffer[i] = paBuffer[i]
+                        processingBuffer
+                    }
+
+                    // --- Audio Processing Pipeline ---
+                    // 1. TODO: AEC (Acoustic Echo Cancellation) with SpeexDSP
+                    // val audioForNs = speexDspAec.process(currentAudioChunk, playbackReference)
+                    val audioForNs = currentAudioChunk // Placeholder
+
+                    val nsAudio = analyzer.applyNoiseGate(audioForNs)
+
+                    if (analyzer.hasVoiceActivity(nsAudio)) {
+                        // speechRecognizer.processAudioChunk(nsAudio)
+                        println("[DEBUG] Voice activity detected, ${nsAudio.size} frames. Feeding to recognizer (placeholder).")
+                        // >>> REPLACE THIS with actual call to your speechRecognizer instance <<<
+                        // For example, if your VoskSpeechRecognizer has a method like `recognizePartial(data: ShortArray): String`
+                        // val partialResult = speechRecognizer.recognizePartial(nsAudio)
+                        // if (partialResult.isNotEmpty()) { println("[VOSK PARTIAL]: $partialResult") }
+                    }
+                }
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) {
+                    println("[INFO] Recognition loop cancelled.")
+                } else {
+                    println("[ERROR] Exception in recognition loop: ${e.message}")
+                    e.printStackTrace()
+                    _deviceState.value = AudioDevice.AudioDeviceState.ERROR
+                }
+            } finally {
+                println("[INFO] Exiting recognition loop.")
+                nativeHeap.free(paBuffer.rawValue)
+                // speechRecognizer.stopListening() // Example: If your recognizer has such a method
+                if (_deviceState.value == AudioDevice.AudioDeviceState.ACTIVE) {
+                    _deviceState.value = AudioDevice.AudioDeviceState.READY
+                }
+            }
+        }
+    }
+
+    fun stopRecognition() {
+        if (recognitionJob?.isActive == true) {
+            println("[INFO] Attempting to stop recognition loop...")
+            recognitionJob?.cancel()
+        }
+        recognitionJob = null
+        if (_deviceState.value == AudioDevice.AudioDeviceState.ACTIVE) {
+             _deviceState.value = AudioDevice.AudioDeviceState.READY
+        }
+         println("[INFO] Recognition stop requested. Loop should terminate.")
+    }
 
     /**
      * 关闭音频流
      */
     @OptIn(ExperimentalNativeApi::class)
     override suspend fun closeStreams() {
+        stopRecognition() // Stop recognition loop before closing streams
         try {
             audioMutex.withLock {
                 // 关闭输入流
@@ -670,7 +739,9 @@ class PortAudioDevice(private val speechRecognizer: VoskSpeechRecognizer) : Audi
                     outputStreamPtr.value = null
                 }
                 
-                _deviceState.value = AudioDevice.AudioDeviceState.READY
+                if (_deviceState.value != AudioDevice.AudioDeviceState.ERROR) {
+                     _deviceState.value = AudioDevice.AudioDeviceState.IDLE
+                }
             }
         } catch (e: Exception) {
             println("[ERROR] 关闭音频流时出错: ${e.message}")
@@ -682,9 +753,9 @@ class PortAudioDevice(private val speechRecognizer: VoskSpeechRecognizer) : Audi
      * 释放资源
      */
     override suspend fun release() {
+        stopRecognition() // Stop recognition loop before releasing PortAudio
         try {
-            // 关闭音频流
-            closeStreams()
+            closeStreams() // Ensure streams are closed
             
             // 终止PortAudio
             if (portAudioInitialized) {
@@ -697,7 +768,9 @@ class PortAudioDevice(private val speechRecognizer: VoskSpeechRecognizer) : Audi
             nativeHeap.free(inputStreamPtr.rawPtr)
             nativeHeap.free(outputStreamPtr.rawPtr)
             
-            _deviceState.value = AudioDevice.AudioDeviceState.IDLE
+            if (_deviceState.value != AudioDevice.AudioDeviceState.ERROR) {
+                _deviceState.value = AudioDevice.AudioDeviceState.IDLE
+            }
         } catch (e: Exception) {
             println("[ERROR] 释放资源时出错: ${e.message}")
             e.printStackTrace()

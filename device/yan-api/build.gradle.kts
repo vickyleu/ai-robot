@@ -78,6 +78,7 @@ kotlin {
                     "-lyanapi",
                     "-lvosk",
                     "-lportaudio",
+                    "-lspeexdsp",
                     "-lgomp",
                     "-lrnnoise",
                     "-lpiper",
@@ -90,6 +91,7 @@ kotlin {
                     "-l:libyanapi.a",
                     "-l:libvosk.a",
                     "-l:libportaudio.a",
+                    "-l:libspeexdsp.a",
                     "-l:libopencc.a",
                     "-l:librnnoise.a",
                     "-l:libpiper.a",
@@ -150,6 +152,23 @@ kotlin {
                     // 从上面四个目录中查找所有的头文件,添加到headers.files
                     includeDirs(
                         file("src/nativeInterop/cpp/include/"),
+                    )
+                    compilerOpts(
+                        "-fPIC",
+                        "-nostdinc++",
+                        "-std=c++17",
+                        "-D_GLIBCXX_USE_CXX11_ABI=1",
+                        "-ffunction-sections",
+                        "-fdata-sections",
+                        *armhfToolchain.includedDirs.map { "-I$it" }.toTypedArray()
+                    )
+                }
+                create("speexdsp") {
+                    defFile("src/nativeInterop/cinterop/speexdsp.def")
+                    packageName("com.airobot.speexdspinterop")
+                    // 从上面四个目录中查找所有的头文件,添加到headers.files
+                    includeDirs(
+                        file("src/nativeInterop/cpp/include/speex"),
                     )
                     compilerOpts(
                         "-fPIC",

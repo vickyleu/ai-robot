@@ -26,71 +26,24 @@ class BasicAudioAnalyzer(
     private val validVoiceZcrThreshold: Double
 ) : AudioAnalyzer {
 
-    private var backgroundNoiseLevel = 0.0
-    private var adaptiveRmsThreshold = validVoiceRmsThreshold * 0.5 // 降低初始阈值以提高灵敏度
-    private val adaptationFactor = 0.95 // 适应因子
-    private var silenceCounter = 0
-    private val maxSilenceBeforeAdapt = 10
-
-    // 添加变量以记录环境噪声基线
-    private var noiseBaseline = 0.0
-    private var hasEstablishedNoise = false
-    private val noiseHistorySize = 30 // 增加历史样本数量
-    private val noiseHistory = DoubleArray(noiseHistorySize) { 0.0 }
-    private var noiseHistoryIndex = 0
-
-    // 添加语音特征历史以确认真实语音
-    private val featureHistorySize = 5
-    private val energyHistory = DoubleArray(featureHistorySize) { 0.0 }
-    private val zcrHistory = DoubleArray(featureHistorySize) { 0.0 }
-    private var featureHistoryIndex = 0
-
-    // 添加连续语音检测计数器
+    // 连续语音检测计数器
     private var consecutiveVoiceFrames = 0
-    private val minConsecutiveFramesForVoice = 2 // 降低连续帧要求，提高灵敏度
-
-    // 用于上升和下降模式分析的变量
-    private val energyPatternSize = 8
-    private val recentEnergies = DoubleArray(energyPatternSize) { 0.0 }
-    private var energyPatternIndex = 0
+    private val minConsecutiveFramesForVoice = 1 // 降低连续帧要求到1，提高灵敏度
 
     // 回声消除相关变量
     private var lastPlaybackTime = 0L
-    private val echoSuppressionTimeMs = 1500L // 增加回声抑制时间到1.5秒
-
-    // 音频特征记忆，用于辨别回声
-    private val echoSignatureSize = 5
-    private val lastPlaybackSignatures = Array(5) { DoubleArray(echoSignatureSize) } // 增加到5个签名
-    private var signatureIndex = 0
-    private var hasPlaybackSignature = false
-
-    // 增强回声检测的相似度阈值，降低防止误判
-    private val echoSimilarityThreshold = 0.65f // 从0.7降到0.65
+    private val echoSuppressionTimeMs = 1000L // 缩短回声抑制时间以提高灵敏度
 
     // 记录连续语音状态
     private var lastVoiceActivityTime = 0L
     private var isInContinuousSpeech = false
-    private val voiceContinuityThreshold = 800L // 连续语音阈值800ms
-    private val silencePauseThreshold = 1000L // 静音阈值1000ms
+    private val voiceContinuityThreshold = 600L // 降低连续语音阈值提高灵敏度
+    private val silencePauseThreshold = 800L // 降低静音阈值提高灵敏度
 
-    // RNNoise相关变量
-    private var useRNNoise = true // 默认启用RNNoise
-    private var lastVadProbability = 0.0f
-
-    // 降低人声检测的能量阈值
-    private val minEnergyThreshold = 30.0 // 从150.0降低到30.0
-    private val maxEnergyThreshold = 10000.0
-
-    // 放宽过零率范围
-    private val minZcrThreshold = 0.01 // 从0.03降低到0.01
-    private val maxZcrThreshold = 0.5 // 从0.3提高到0.5
-
-    // 添加键盘声特征检测相关变量
-    private val keyboardPatternHistorySize = 10
-    private val keyboardEnergies = DoubleArray(keyboardPatternHistorySize) { 0.0 }
-    private val keyboardZcrs = DoubleArray(keyboardPatternHistorySize) { 0.0 }
-    private var keyboardPatternIndex = 0
-    private var keyboardPatternCount = 0
+    // RNNoise参数优化
+    // 降低阈值以提高灵敏度
+    private val rnnVadThreshold = 0.08f // 从0.15f降低到0.08f，提高灵敏度
+    private val rnnGracePeriod = 1.8f  // 从2.5f降低到1.8f，加快响应
 
     init {
         // 初始化时注册资源释放钩子
@@ -101,105 +54,40 @@ class BasicAudioAnalyzer(
         // 检查是否在回声抑制时间内
         val currentTime = Clock.System.now().toEpochMilliseconds()
         if (currentTime - lastPlaybackTime < echoSuppressionTimeMs) {
-            // 检查是否是回声
-            val currentSignature = extractAudioSignature(buffer)
-            if (isEchoSignature(currentSignature)) {
-                return false // 认为是回声，忽略
-            }
+            return false // 回声期间直接忽略
         }
 
-        // 更新连续语音状态
-        updateContinuousSpeechState(buffer)
+        // 直接使用RNNoise进行语音检测
+        val isHumanVoice = checkVoiceWithRNNoise(buffer)
 
-        // 计算音频能量
-        var sumSquares = 0.0
-        for (sample in buffer) {
-            val sampleValue = sample.toDouble()
-            sumSquares += (sampleValue * sampleValue)
-        }
-        val rms = sqrt(sumSquares / buffer.size)
-
-        // 计算过零率
-        var zeroCrossings = 0
-        for (i in 1 until buffer.size) {
-            if ((buffer[i] > 0 && buffer[i-1] <= 0) ||
-                (buffer[i] <= 0 && buffer[i-1] > 0)) {
-                zeroCrossings++
-            }
-        }
-        val zcr = zeroCrossings.toDouble() / buffer.size
-
-        // 检测是否符合键盘敲击特征
-        updateKeyboardPatternHistory(rms, zcr)
-        if (isLikelyKeyboardNoise(rms, zcr)) {
-            return false
-        }
-
-        // 提高能量阈值，减少对背景噪音的敏感度
-        val minEnergyThresholdAdjusted = 150.0 // 提高到150.0
-        
-        // 使用RNNoise进行人声检测 - 在连续语音中可以跳过以提高效率
-        val isHumanVoice = if (!isInContinuousSpeech || rms > 200.0) { // 提高到200.0
-            checkVoiceWithRNNoise(buffer)
-        } else {
-            true // 连续语音中默认认为是人声
-        }
-
-        // 判断是否有语音活动 - 提高条件严格性
-        val hasEnergy = rms >= minEnergyThresholdAdjusted
-        val hasValidZcr = zcr >= 0.05 && zcr <= 0.45 // 收紧过零率范围
-
-        // 在连续语音中要更宽容
-        val result = if (isInContinuousSpeech) {
-            // 在连续语音中，也要求一定的能量
-            rms > minEnergyThresholdAdjusted * 0.8 || (isHumanVoice && rms > minEnergyThresholdAdjusted * 0.5)
-        } else {
-            // 首次检测需要更严格
-            (hasEnergy && hasValidZcr) || (isHumanVoice && hasEnergy)
-        }
-
-        // 更新连续语音帧计数
-        if (result) {
+        // 如果RNNoise检测到语音，增加连续帧计数
+        if (isHumanVoice) {
             consecutiveVoiceFrames++
+            lastVoiceActivityTime = currentTime
+            
+            // 如果与上次语音活动时间接近，标记为连续语音
+            if (currentTime - lastVoiceActivityTime < voiceContinuityThreshold) {
+                isInContinuousSpeech = true
+            }
         } else {
+            // 没有检测到语音，减少连续帧计数
             consecutiveVoiceFrames = max(0, consecutiveVoiceFrames - 1)
+            
+            // 如果静音时间过长，重置连续语音状态
+            if (currentTime - lastVoiceActivityTime > silencePauseThreshold) {
+                isInContinuousSpeech = false
+            }
         }
 
-        // 要求至少有连续帧才认为是有效语音
-        return result && consecutiveVoiceFrames >= minConsecutiveFramesForVoice
+        // 要求至少有连续帧才认为是有效语音，连续语音状态下放宽要求
+        return isHumanVoice && (consecutiveVoiceFrames >= minConsecutiveFramesForVoice || isInContinuousSpeech)
     }
 
     override fun containsValidVoice(audioData: ShortArray): Boolean {
         // 检查是否在回声抑制时间内
         val currentTime = Clock.System.now().toEpochMilliseconds()
         if (currentTime - lastPlaybackTime < echoSuppressionTimeMs) {
-            // 检查是否是回声
-            val currentSignature = extractAudioSignature(audioData)
-            if (isEchoSignature(currentSignature)) {
-                return false // 认为是回声，忽略
-            }
-        }
-
-        // 计算音频能量和过零率用于键盘声检测
-        var sumSquares = 0.0
-        for (sample in audioData) {
-            val sampleValue = sample.toDouble()
-            sumSquares += (sampleValue * sampleValue)
-        }
-        val rms = sqrt(sumSquares / audioData.size)
-
-        var zeroCrossings = 0
-        for (i in 1 until audioData.size) {
-            if ((audioData[i] > 0 && audioData[i-1] <= 0) ||
-                (audioData[i] <= 0 && audioData[i-1] > 0)) {
-                zeroCrossings++
-            }
-        }
-        val zcr = zeroCrossings.toDouble() / audioData.size
-
-        // 检查是否为键盘声
-        if (isLikelyKeyboardNoise(rms, zcr)) {
-            return false
+            return false // 回声期间直接忽略
         }
 
         // 在连续语音中更宽容
@@ -207,19 +95,12 @@ class BasicAudioAnalyzer(
             return true
         }
 
-        // 使用RNNoise进行人声检测
-        val isHumanVoice = checkVoiceWithRNNoise(audioData)
-
-        // 判断是否包含有效人声 - 极大放宽条件
-        val hasEnergy = rms >= minEnergyThreshold && rms <= maxEnergyThreshold
-        val hasValidZcr = zcr >= minZcrThreshold && zcr <= maxZcrThreshold
-
-        // 任一条件满足即可
-        return hasEnergy || hasValidZcr || isHumanVoice
+        // 直接使用RNNoise进行人声检测
+        return checkVoiceWithRNNoise(audioData)
     }
 
     /**
-     * 使用RNNoise检测是否为人声
+     * 使用RNNoise检测是否为人声，优化参数提高灵敏度
      */
     private fun checkVoiceWithRNNoise(buffer: ShortArray): Boolean {
         try {
@@ -237,15 +118,15 @@ class BasicAudioAnalyzer(
             val maxVadValues = frameCount / 480 + 1 // 每480样本一个VAD值
             val vadProbabilitiesPtr = nativeHeap.allocArray<FloatVar>(maxVadValues)
 
-            // 使用RNNoise单例处理音频数据 - 提高VAD阈值
+            // 使用RNNoise单例处理音频数据 - 降低VAD阈值提高灵敏度
             val processResult = RNNoiseSingleton.process(
                 inputBuffer,
                 outputBuffer,
                 frameCount,
                 vadProbabilitiesPtr,
                 maxVadValues,
-                0.15f, // 从0.05f提高到0.15f
-                2.5f   // 从3.0f降低到2.5f
+                rnnVadThreshold, // 低阈值提高灵敏度
+                rnnGracePeriod   // 优化grace period加快响应
             )
 
             // 检查处理结果
@@ -253,7 +134,7 @@ class BasicAudioAnalyzer(
                 nativeHeap.free(inputBuffer.rawValue)
                 nativeHeap.free(outputBuffer.rawValue)
                 nativeHeap.free(vadProbabilitiesPtr.rawValue)
-                return false // 出错时默认拒绝，修改为更严格
+                return false
             }
 
             // 分析VAD概率
@@ -264,7 +145,7 @@ class BasicAudioAnalyzer(
             for (i in 0 until totalFrames) {
                 val prob = vadProbabilitiesPtr[i]
                 maxProb = max(maxProb, prob)
-                if (prob >= 0.2f) { // 提高阈值从0.05f到0.2f
+                if (prob >= 0.15f) { // 降低阈值从0.2f到0.15f提高灵敏度
                     voiceFrames++
                 }
             }
@@ -274,42 +155,26 @@ class BasicAudioAnalyzer(
             nativeHeap.free(outputBuffer.rawValue)
             nativeHeap.free(vadProbabilitiesPtr.rawValue)
 
-            // 判断是否检测到足够的人声帧 - 提高阈值
+            // 判断是否检测到足够的人声帧 - 降低阈值提高灵敏度
             val voiceRatio = if (totalFrames > 0) voiceFrames.toFloat() / totalFrames else 0f
-            val isHumanVoice = voiceRatio >= 0.15f || maxProb >= 0.25f // 提高阈值
+            val isHumanVoice = voiceRatio >= 0.12f || maxProb >= 0.2f // 降低阈值提高灵敏度
 
             // 只在有人声时或调试需要时输出日志
             if (isHumanVoice) {
-                println("[DEBUG] RNNoise VAD结果: 语音帧比例=$voiceRatio, 最高概率=$maxProb, 是人声=$isHumanVoice")
+                println("[DEBUG] 检测到人声: 帧比例=$voiceRatio, 最高概率=$maxProb")
             }
-
-            // 存储最后的VAD概率，以便其他方法使用
-            lastVadProbability = maxProb
 
             return isHumanVoice
         } catch (e: Exception) {
             println("[ERROR] RNNoise处理异常: ${e.message}")
-            return false // 出错时默认拒绝，修改为更严格
+            return false 
         }
     }
 
     /**
-     * 应用噪声门限，去除无用噪音
-     * 使用RNNoise进行降噪处理
+     * 应用噪声门限，使用RNNoise进行降噪处理
      */
     override fun applyNoiseGate(audioData: ShortArray): ShortArray {
-        // 检查是否在回声抑制时间内
-        val currentTime = Clock.System.now().toEpochMilliseconds()
-        if (currentTime - lastPlaybackTime < echoSuppressionTimeMs) {
-            // 在回声抑制期间，应用更强的噪声门限
-            return applyStrongerNoiseGate(audioData)
-        }
-
-        // 如果不使用RNNoise，使用传统噪声门限方法
-        if (!useRNNoise) {
-            return applyTraditionalNoiseGate(audioData)
-        }
-
         try {
             // 创建输入和输出缓冲区
             val frameCount = audioData.size
@@ -321,18 +186,15 @@ class BasicAudioAnalyzer(
                 inputBuffer[i] = audioData[i]
             }
 
-            // 配置RNNoise参数
-            val vadThreshold = if (isInContinuousSpeech) 0.1f else 0.2f
-
-            // 使用RNNoise单例处理音频数据
+            // 使用RNNoise单例处理音频数据 - 配置为降噪模式
             val processResult = RNNoiseSingleton.process(
                 inputBuffer,
                 outputBuffer,
                 frameCount,
                 null, // 不需要VAD概率
                 0,
-                vadThreshold,
-                2.0f // 适中增益
+                0.1f, // 较低的VAD阈值以保留更多语音内容
+                1.5f  // 适中增益，提高信噪比
             )
 
             // 检查处理结果
@@ -342,10 +204,8 @@ class BasicAudioAnalyzer(
                 return audioData // 出错时返回原始音频
             }
 
-            // 创建输出数组
+            // 创建输出数组并复制降噪后的音频数据
             val result = ShortArray(frameCount)
-
-            // 复制降噪后的音频数据
             for (i in 0 until frameCount) {
                 result[i] = outputBuffer[i]
             }
@@ -362,90 +222,13 @@ class BasicAudioAnalyzer(
     }
 
     /**
-     * 在回声抑制期间应用更强的噪声门限
-     */
-    private fun applyStrongerNoiseGate(audioData: ShortArray): ShortArray {
-        val result = ShortArray(audioData.size)
-
-        // 计算平均能量
-        var sumSquares = 0.0
-        for (sample in audioData) {
-            sumSquares += (sample * sample)
-        }
-        val avgEnergy = sqrt(sumSquares / audioData.size)
-
-        // 在回声期间使用更高的噪声门限
-        val echoNoiseGateThreshold = noiseGateThreshold * 2.0
-
-        // 如果平均能量低于噪声门限，则静音
-        if (avgEnergy < echoNoiseGateThreshold) {
-            return result // 返回全零数组
-        }
-
-        // 否则应用强噪声门限
-        for (i in audioData.indices) {
-            val sampleEnergy = abs(audioData[i].toDouble())
-            if (sampleEnergy < echoNoiseGateThreshold) {
-                // 低于门限的样本衰减更强
-                val attenuationFactor = (sampleEnergy / echoNoiseGateThreshold).pow(3)
-                result[i] = (audioData[i] * attenuationFactor).toInt().toShort()
-            } else {
-                // 高于门限的样本保持不变
-                result[i] = audioData[i]
-            }
-        }
-
-        return result
-    }
-
-    /**
-     * 传统噪声门限方法
-     */
-    private fun applyTraditionalNoiseGate(audioData: ShortArray): ShortArray {
-        val result = ShortArray(audioData.size)
-
-        // 计算平均能量
-        var sumSquares = 0.0
-        for (sample in audioData) {
-            sumSquares += (sample * sample)
-        }
-        val avgEnergy = sqrt(sumSquares / audioData.size)
-
-        // 如果平均能量低于噪声门限，则静音
-        if (avgEnergy < noiseGateThreshold) {
-            return result // 返回全零数组
-        }
-
-        // 否则应用软噪声门限
-        for (i in audioData.indices) {
-            val sampleEnergy = abs(audioData[i].toDouble())
-            if (sampleEnergy < noiseGateThreshold) {
-                // 低于门限的样本衰减
-                val attenuationFactor = (sampleEnergy / noiseGateThreshold).pow(2)
-                result[i] = (audioData[i] * attenuationFactor).toInt().toShort()
-            } else {
-                // 高于门限的样本保持不变
-                result[i] = audioData[i]
-            }
-        }
-
-        return result
-    }
-
-    /**
-     * 通知分析器刚刚播放了音频，需要暂时抑制回声
+     * 通知分析器播放音频，需要暂时抑制回声
      */
     override fun notifyAudioPlayback(audioData: ShortArray) {
         // 记录播放时间
         lastPlaybackTime = Clock.System.now().toEpochMilliseconds()
 
-        // 提取并保存音频特征签名
-        val signature = extractAudioSignature(audioData)
-        lastPlaybackSignatures[signatureIndex] = signature
-        signatureIndex = (signatureIndex + 1) % lastPlaybackSignatures.size
-        hasPlaybackSignature = true
-
-        // 重置连续语音检测，避免播放的声音被误认为是人声
+        // 重置语音检测状态
         consecutiveVoiceFrames = 0
         isInContinuousSpeech = false
     }
@@ -454,250 +237,10 @@ class BasicAudioAnalyzer(
      * 重置分析器状态
      */
     override fun reset() {
-        backgroundNoiseLevel = 0.0
-        adaptiveRmsThreshold = validVoiceRmsThreshold * 0.5
-        silenceCounter = 0
-        noiseBaseline = 0.0
-        hasEstablishedNoise = false
-
-        // 重置能量和ZCR历史
-        for (i in 0 until featureHistorySize) {
-            energyHistory[i] = 0.0
-            zcrHistory[i] = 0.0
-        }
-        featureHistoryIndex = 0
-
-        // 重置噪声历史
-        for (i in 0 until noiseHistorySize) {
-            noiseHistory[i] = 0.0
-        }
-        noiseHistoryIndex = 0
-
-        // 重置语音检测计数器
         consecutiveVoiceFrames = 0
-
-        // 重置能量模式分析
-        for (i in 0 until energyPatternSize) {
-            recentEnergies[i] = 0.0
-        }
-        energyPatternIndex = 0
-
-        // 重置回声消除相关状态
-        hasPlaybackSignature = false
-        for (i in lastPlaybackSignatures.indices) {
-            for (j in 0 until echoSignatureSize) {
-                lastPlaybackSignatures[i][j] = 0.0
-            }
-        }
-
-        // 重置RNNoise相关状态
-        lastVadProbability = 0.0f
+        isInContinuousSpeech = false
+        lastVoiceActivityTime = 0L
 
         println("[DEBUG] 音频分析器状态已重置")
-    }
-
-    /**
-     * 释放所有资源
-     */
-    fun dispose() {
-        // 不需要释放RNNoise资源，这由单例处理
-    }
-
-    /**
-     * 检查当前音频是否是连续语音的一部分
-     */
-    private fun updateContinuousSpeechState(buffer: ShortArray) {
-        // 计算音频能量
-        var sumSquares = 0.0
-        for (sample in buffer) {
-            val sampleValue = sample.toDouble()
-            sumSquares += (sampleValue * sampleValue)
-        }
-        val rms = sqrt(sumSquares / buffer.size)
-
-        // 获取当前时间
-        val currentTime = Clock.System.now().toEpochMilliseconds()
-
-        // 有声音活动时，更新时间戳
-        if (rms >= minEnergyThreshold) {
-            // 如果时间足够近，判定为连续语音
-            if (currentTime - lastVoiceActivityTime < voiceContinuityThreshold) {
-                isInContinuousSpeech = true
-            } else if (currentTime - lastVoiceActivityTime > silencePauseThreshold) {
-                // 如果间隔过长，认为是新的语音开始
-                isInContinuousSpeech = false
-            }
-
-            lastVoiceActivityTime = currentTime
-        } else if (currentTime - lastVoiceActivityTime > silencePauseThreshold) {
-            // 长时间无声，重置连续语音状态
-            isInContinuousSpeech = false
-        }
-    }
-
-    // 提取音频特征签名
-    private fun extractAudioSignature(audioData: ShortArray): DoubleArray {
-        val signature = DoubleArray(echoSignatureSize)
-
-        // 计算RMS能量
-        var sumSquares = 0.0
-        for (sample in audioData) {
-            sumSquares += (sample * sample)
-        }
-        signature[0] = sqrt(sumSquares / audioData.size)
-
-        // 计算ZCR
-        var zeroCrossings = 0
-        for (i in 1 until audioData.size) {
-            if ((audioData[i] > 0 && audioData[i-1] <= 0) ||
-                (audioData[i] <= 0 && audioData[i-1] > 0)) {
-                zeroCrossings++
-            }
-        }
-        signature[1] = zeroCrossings.toDouble() / audioData.size
-
-        // 计算能量分布 - 分3段
-        val segmentSize = audioData.size / 3
-        for (i in 0 until 3) {
-            var segEnergy = 0.0
-            val start = i * segmentSize
-            val end = min((i + 1) * segmentSize, audioData.size)
-
-            for (j in start until end) {
-                segEnergy += audioData[j] * audioData[j]
-            }
-            signature[i + 2] = sqrt(segEnergy / (end - start))
-        }
-
-        return signature
-    }
-
-    // 比较当前音频是否与保存的回声特征相似
-    private fun isEchoSignature(currentSignature: DoubleArray): Boolean {
-        if (!hasPlaybackSignature) {
-            return false
-        }
-
-        for (savedSignature in lastPlaybackSignatures) {
-            var similarity = 0.0
-            var totalWeight = 0.0
-
-            // 能量特征权重更高
-            similarity += (1.0 - abs(currentSignature[0] - savedSignature[0]) / max(currentSignature[0], 1.0)) * 3.0
-            totalWeight += 3.0
-
-            // ZCR特征
-            similarity += (1.0 - abs(currentSignature[1] - savedSignature[1]) / max(currentSignature[1], 0.1)) * 2.0
-            totalWeight += 2.0
-
-            // 能量分布特征
-            for (i in 2 until echoSignatureSize) {
-                similarity += (1.0 - abs(currentSignature[i] - savedSignature[i]) / max(currentSignature[i], 1.0))
-                totalWeight += 1.0
-            }
-
-            // 归一化相似度
-            val normalizedSimilarity = similarity / totalWeight
-
-            // 如果相似度超过阈值，认为是回声
-            if (normalizedSimilarity > echoSimilarityThreshold) {
-                return true
-            }
-        }
-
-        return false
-    }
-
-    /**
-     * 更新键盘敲击模式历史
-     */
-    private fun updateKeyboardPatternHistory(rms: Double, zcr: Double) {
-        // 只在历史记录达到一定量后才开始分析
-        if (keyboardPatternCount < keyboardPatternHistorySize) {
-            keyboardPatternCount++
-        }
-
-        // 记录能量和过零率
-        keyboardEnergies[keyboardPatternIndex] = rms
-        keyboardZcrs[keyboardPatternIndex] = zcr
-
-        // 更新索引
-        keyboardPatternIndex = (keyboardPatternIndex + 1) % keyboardPatternHistorySize
-    }
-
-    /**
-     * 检测是否可能是键盘敲击声
-     * 键盘敲击声特征：
-     * 1. 能量突然上升又迅速下降
-     * 2. 高过零率
-     * 3. 声音间隔规律
-     */
-    private fun isLikelyKeyboardNoise(currentRms: Double, currentZcr: Double): Boolean {
-        // 需要足够的历史数据才能判断
-        if (keyboardPatternCount < keyboardPatternHistorySize / 2) {
-            return false
-        }
-
-        // 检查是否有能量突然高峰和快速衰减的模式
-        var hasEnergySpikePattern = false
-        var hasRegularInterval = false
-        var hasHighZcr = false
-
-        // 能量是否有突然高峰
-        val lastEnergies = Array(4) { i ->
-            val idx = (keyboardPatternIndex - i - 1 + keyboardPatternHistorySize) % keyboardPatternHistorySize
-            keyboardEnergies[idx]
-        }
-
-        // 计算当前帧与历史平均值的比例
-        val avgEnergy = lastEnergies.sum() / lastEnergies.size
-        val currentToAvgRatio = if (avgEnergy > 0) currentRms / avgEnergy else 1.0
-
-        // 判断能量突然上升又快速下降的模式
-        val recentEnergyPattern = keyboardEnergies
-            .toList()
-            .takeLast(5)
-            .windowed(3, 1)
-            .any { window ->
-                // 中间高，两边低是键盘敲击的特征
-                window[1] > window[0] * 3.0 && window[1] > window[2] * 2.0
-            }
-
-        // 检查是否有规律的间隔模式
-        val energyPeaks = mutableListOf<Int>()
-        for (i in 1 until keyboardPatternHistorySize - 1) {
-            if (keyboardEnergies[i] > keyboardEnergies[i-1] * 1.5 &&
-                keyboardEnergies[i] > keyboardEnergies[i+1] * 1.5 &&
-                keyboardEnergies[i] > 100.0) {
-                energyPeaks.add(i)
-            }
-        }
-
-        // 如果有多个峰值，检查间隔是否规律（键盘敲击通常很规律）
-        if (energyPeaks.size >= 3) {
-            val intervals = mutableListOf<Int>()
-            for (i in 1 until energyPeaks.size) {
-                intervals.add(energyPeaks[i] - energyPeaks[i-1])
-            }
-
-            // 计算间隔的标准差，越小越规律
-            val avgInterval = intervals.average()
-            val stdDev = sqrt(intervals.map { (it - avgInterval).pow(2) }.sum() / intervals.size)
-
-            // 规律的间隔标准差应该小
-            hasRegularInterval = stdDev / avgInterval < 0.3 && intervals.size >= 2
-        }
-
-        // 过零率检查 - 键盘声通常过零率较高
-        hasHighZcr = currentZcr > 0.3
-
-        // 组合判断是否为键盘声
-        val isKeyboard = (recentEnergyPattern || currentToAvgRatio > 3.0 || hasRegularInterval) && hasHighZcr
-
-        if (isKeyboard) {
-            println("[DEBUG] 检测到可能的键盘敲击声: 能量=$currentRms, ZCR=$currentZcr, 能量比=$currentToAvgRatio")
-        }
-
-        return isKeyboard
     }
 }

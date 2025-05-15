@@ -15,7 +15,9 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import snowboyPiper.interfaces.AudioDevice
 import snowboyPiper.interfaces.AudioPlayer
+import snowboyPiper.interfaces.AudioAnalyzer
 import snowboyPiper.interfaces.SpeechRecognizer
+import snowboyPiper.interop.SpeexDspProcessor // 假设SpeexDSP互操作类
 
 /**
  * Vosk语音识别器实现
@@ -47,91 +49,131 @@ class VoskSpeechRecognizer : SpeechRecognizer {
     // 音频处理计数器
     private var audioProcessCounter = 0
 
-    fun recordDevice(): AudioDevice{
+    // SpeexDSP 处理器
+    private val speexDsp = SpeexDspProcessor()
+    
+    // 音频分析器 (RNNoise)
+    val audioAnalyzer: AudioAnalyzer
+
+    init {
+        // 初始化音频分析器 (RNNoise)，调低阈值提高灵敏度
+        audioAnalyzer = BasicAudioAnalyzer(
+            energyThreshold = 25.0,  // 降低能量阈值
+            noiseGateThreshold = 15.0, // 降低噪声门限
+            validVoiceRmsThreshold = 40.0, // 降低有效语音RMS阈值
+            validVoiceZcrThreshold = 0.12  // 降低过零率阈值
+        )
+        
+        // 初始化SpeexDSP - 配置预处理器
+        speexDsp.initialize(
+            sampleRate = 16000,
+            frameSize = 480,  // 30ms @ 16kHz
+            enableDenoise = true,
+            enableAgc = true,  // 自动增益控制
+            enableVad = true,  // 语音活动检测
+            enableEcho = true  // 回声消除
+        )
+        
+        speexDsp.setDenoiseLevel(8) // 更高强度降噪 (0-10)
+        speexDsp.setAgcLevel(24000) // 目标音量电平
+        speexDsp.setAgcMaxGain(30.0f) // 最大增益
+        speexDsp.setEchoSuppress(-40) // 增强回声抑制 (dB)
+        speexDsp.setEchoSuppressActive(-45) // 有语音时的抑制 (dB)
+    }
+
+    fun recordDevice(): AudioDevice {
         return audioRecordDevice
     }
 
-    fun playerDevice(): AudioPlayer{
+    fun playerDevice(): AudioPlayer {
         return audioPlayer
     }
 
-
-    /**
-     * 初始化语音识别器
-     * @param modelPath 模型文件路径
-     * @param deviceName 设备名称
-     * @param sampleRate 采样率
-     * @param micVolume 麦克风音量
-     * @return 初始化是否成功
-     */
-    override fun initialize(audioRecordDevice: AudioDevice, modelPath: String, deviceName: String, sampleRate: Int, micVolume: Int): Boolean {
-        _recognitionState.value = SpeechRecognizer.RecognitionState.INITIALIZING
+    // 核心音频处理方法，集成SpeexDSP和RNNoise
+    fun processAudioForRecognition(audioData: ShortArray): Pair<ShortArray, Boolean> {
+        // 1. SpeexDSP预处理 (AEC, AGC, 预降噪等)
+        val speexProcessedAudio = speexDsp.process(audioData)
         
-        println("[INFO] 初始化Vosk语音识别...")
-        try {
-            // 记录开始时间
-            val startTime = kotlin.time.TimeSource.Monotonic.markNow()
-            
-            println("[DEBUG-INIT] 开始初始化Vosk服务，模型路径: $modelPath, 设备: $deviceName")
-            
-            if (!voskService.initialize(deviceName, modelPath, sampleRate, micVolume)) {
-                println("[ERROR] Vosk语音识别初始化失败")
-                _recognitionState.value = SpeechRecognizer.RecognitionState.ERROR
-                return false
+        // 2. RNNoise精确降噪
+        val denoisedAudio = audioAnalyzer.applyNoiseGate(speexProcessedAudio)
+        
+        // 3. VAD检测语音活动
+        val hasVoice = audioAnalyzer.hasVoiceActivity(denoisedAudio)
+        
+        return Pair(denoisedAudio, hasVoice)
+    }
+    
+    // 为VoskService使用的完整处理函数
+    fun recognizeAudio(audioData: ShortArray): String {
+        // 跟踪连续有语音的帧数，避免短暂停顿造成识别断断续续
+        val (processedAudio, hasVoice) = processAudioForRecognition(audioData)
+        
+        // 如果没有检测到语音活动，短帧直接跳过
+        if (!hasVoice && audioData.size < 1600) {
+            return ""
+        }
+        
+        // 即使没有检测到语音，也将处理后的音频发送给Vosk
+        // 这样可以让Vosk处理那些VAD可能错过的弱语音
+        // 但会通过日志输出识别状态
+        if (!hasVoice) {
+            // 只处理不记录
+            voskService.processAudio(processedAudio)
+            return ""
+        }
+        
+        // 有语音活动，进行实际识别
+        return if (voskService.processAudio(processedAudio)) {
+            val result = voskService.recognitionText.value ?: ""
+            if (result.isNotEmpty()) {
+                println("[INFO] 高置信度识别: $result")
             }
-            
-            val voskInitTime = startTime.elapsedNow()
-            println("[INFO] Vosk语音识别初始化成功, 耗时: ${voskInitTime.inWholeMilliseconds}ms")
-            
-            // 初始化音频播放器
-            println("[DEBUG-INIT] 开始初始化音频播放器")
-            if (!audioPlayer.initialize(audioRecordDevice, deviceName, 48000)) {
-                println("[ERROR] 音频播放器初始化失败")
-                _recognitionState.value = SpeechRecognizer.RecognitionState.ERROR
-                return false
-            }
-            
-            val totalInitTime = startTime.elapsedNow()
-            println("[INFO] 音频播放器初始化成功, 总耗时: ${totalInitTime.inWholeMilliseconds}ms")
-            
-            // 监听语音服务的状态变化
-            scope.launch {
-                voskService.recognitionState.collectLatest { state ->
-                    // 将SpeechService的状态映射到SpeechRecognizer的状态
-                    _recognitionState.value = when(state) {
-                        snowboyPiper.interfaces.SpeechService.RecognitionState.IDLE -> SpeechRecognizer.RecognitionState.IDLE
-                        snowboyPiper.interfaces.SpeechService.RecognitionState.INITIALIZING -> SpeechRecognizer.RecognitionState.INITIALIZING
-                        snowboyPiper.interfaces.SpeechService.RecognitionState.LISTENING -> SpeechRecognizer.RecognitionState.LISTENING
-                        snowboyPiper.interfaces.SpeechService.RecognitionState.PROCESSING -> SpeechRecognizer.RecognitionState.PROCESSING
-                        snowboyPiper.interfaces.SpeechService.RecognitionState.ERROR -> SpeechRecognizer.RecognitionState.ERROR
-                    }
-                }
-            }
-            
-            // 监听语音服务的识别结果
-            scope.launch {
-                voskService.recognitionText.collectLatest { text ->
-                    _recognitionText.value = text
-                    if (!text.isNullOrEmpty()) {
-                        println("[DEBUG-RESULT] 收到Vosk识别文本: $text")
-                    }
-                }
-            }
-            
-            _recognitionState.value = SpeechRecognizer.RecognitionState.IDLE
-            
-            println("[DEBUG-INIT] 初始化设备信息: $deviceName, 采样率: $sampleRate")
-            println("[DEBUG-INIT] 音频设备状态: ${audioRecordDevice.deviceState.value}")
-            
-            return true
-        } catch (e: Exception) {
-            println("[ERROR] Vosk初始化异常: ${e.message}")
-            e.printStackTrace()
-            _recognitionState.value = SpeechRecognizer.RecognitionState.ERROR
-            return false
+            result
+        } else {
+            ""
         }
     }
     
+    // 添加对回声参考信号的处理，这个方法应该在音频播放时调用
+    fun processPlaybackReference(playbackData: ShortArray) {
+        // 将播放音频传递给SpeexDSP作为回声参考
+        speexDsp.setPlaybackReference(playbackData)
+        
+        // 同时通知RNNoise分析器有播放正在进行
+        audioAnalyzer.notifyAudioPlayback(playbackData)
+    }
+
+    // 优化现有的processAudio方法，集成VAD和降噪
+    override fun processAudio(audioData: ShortArray): Boolean {
+        if (_recognitionState.value != SpeechRecognizer.RecognitionState.LISTENING) {
+            return false
+        }
+        
+        try {
+            // 检查音频数据是否有效
+            if (audioData.isEmpty()) {
+                return false
+            }
+            
+            // 使用优化的音频处理链
+            val (processedAudio, hasVoice) = processAudioForRecognition(audioData)
+            
+            // 增加计数器
+            audioProcessCounter++
+            
+            // 只有在有语音活动时才进行识别
+            if (hasVoice) {
+                return voskService.processAudio(processedAudio)
+            }
+            
+            // 仍然返回true表示处理成功，但跳过实际识别
+            return true
+        } catch (e: Exception) {
+            println("[ERROR] 处理音频数据异常: ${e.message}")
+            return false
+        }
+    }
+
     /**
      * 开始识别
      * @param timeoutMs 超时时间（毫秒）
@@ -146,6 +188,10 @@ class VoskSpeechRecognizer : SpeechRecognizer {
         try {
             // 重置识别结果
             _recognitionText.value = null
+            
+            // 重置音频处理器状态
+            audioAnalyzer.reset()
+            speexDsp.reset()
             
             // 启动识别任务
             recognitionJob?.cancel()
@@ -162,11 +208,10 @@ class VoskSpeechRecognizer : SpeechRecognizer {
                         val text = voskService.recognitionText.value
                         if (!text.isNullOrBlank()) {
                             _recognitionText.value = text
-                            // 只在有实际结果时输出日志
                             println("[INFO] 识别结果: $text")
                             break
                         }
-                        kotlinx.coroutines.delay(100) // 短暂延迟，避免CPU占用过高
+                        kotlinx.coroutines.delay(100)
                     }
                     true
                 }
@@ -179,7 +224,6 @@ class VoskSpeechRecognizer : SpeechRecognizer {
                     _recognitionState.value = SpeechRecognizer.RecognitionState.IDLE
                 } else {
                     _recognitionState.value = SpeechRecognizer.RecognitionState.PROCESSING
-                    // 处理完成后回到空闲状态
                     _recognitionState.value = SpeechRecognizer.RecognitionState.IDLE
                 }
             }
@@ -226,54 +270,6 @@ class VoskSpeechRecognizer : SpeechRecognizer {
     }
     
     /**
-     * 处理音频数据
-     * @param audioData 音频数据
-     * @return 是否成功处理
-     */
-    override fun processAudio(audioData: ShortArray): Boolean {
-        if (_recognitionState.value != SpeechRecognizer.RecognitionState.LISTENING) {
-            return false
-        }
-        
-        try {
-            // 检查音频数据质量
-            if (audioData.isEmpty()) {
-                // 降低警告频率，防止日志太多
-                if (audioProcessCounter % 1000 == 0) {
-                    println("[WARN] 收到空的音频数据")
-                }
-                return false
-            }
-            
-            // 计算音频能量
-            var sumSquares = 0.0
-            for (sample in audioData) {
-                sumSquares += (sample.toDouble() * sample.toDouble())
-            }
-            val rms = kotlin.math.sqrt(sumSquares / audioData.size)
-            
-            // 减少日志输出频率，从500帧一次改为2000帧一次
-            if (audioProcessCounter % 2000 == 0) {
-                // 简化输出，不显示样本
-                println("[DEBUG-VOSK] 处理音频帧 #$audioProcessCounter, 大小=${audioData.size}")
-            }
-            
-            // 能量过滤 - 不再输出低能量跳过的日志
-            if (rms < 10.0) {
-                audioProcessCounter++
-                return true
-            }
-            
-            audioProcessCounter++
-            return voskService.processAudio(audioData)
-        } catch (e: Exception) {
-            println("[ERROR] 处理音频数据异常: ${e.message}")
-            e.printStackTrace()
-            return false
-        }
-    }
-    
-    /**
      * 释放资源
      */
     private var isReleasing = false
@@ -290,6 +286,9 @@ class VoskSpeechRecognizer : SpeechRecognizer {
             // 直接取消任务，不调用stopRecognition避免潜在的递归
             recognitionJob?.cancel()
             recognitionJob = null
+            
+            // 释放SpeexDSP资源
+            speexDsp.release()
             
             // 释放其他资源
             audioPlayer.release()
