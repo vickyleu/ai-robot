@@ -49,6 +49,7 @@ import snowboyPiper.interfaces.AudioDevice
 import snowboyPiper.interfaces.AudioPlayer
 import kotlin.experimental.ExperimentalNativeApi
 import kotlin.time.ExperimentalTime
+import snowboyPiper.impl.EnhancedAudioAnalyzer
 
 /**
  * PortAudio音频设备实现
@@ -89,11 +90,11 @@ class PortAudioDevice(private val speechRecognizer: VoskSpeechRecognizer) : Audi
     private var audioReadCounter = 0
 
     // New fields for recognition loop and analyzer
-    private val analyzer: AudioAnalyzer = BasicAudioAnalyzer(
-        energyThreshold = 300.0, // Default sensible value
-        noiseGateThreshold = 150.0, // Default sensible value
-        validVoiceRmsThreshold = 500.0, // Default sensible value
-        validVoiceZcrThreshold = 0.1 // Default sensible value
+    private val analyzer: AudioAnalyzer = EnhancedAudioAnalyzer(
+        energyThreshold = 280.0, // 提高能量阈值以减少误触发
+        noiseGateThreshold = 130.0, // 噪声门限
+        validVoiceRmsThreshold = 450.0, // 有效语音RMS阈值
+        validVoiceZcrThreshold = 0.1 // 过零率阈值
     )
     private var recognitionJob: Job? = null
     private val recognitionLoopBufferFrames = 1600 // e.g., 100ms at 16kHz. Tune as needed.
@@ -632,11 +633,9 @@ class PortAudioDevice(private val speechRecognizer: VoskSpeechRecognizer) : Audi
             val paBuffer = nativeHeap.allocArray<ShortVar>(recognitionLoopBufferFrames)
             var processingBuffer = ShortArray(recognitionLoopBufferFrames)
 
-            // speechRecognizer.startListening() // Example: If your recognizer has such a method
-
             try {
                 while (isActive && inputStreamPtr.value != null) {
-                    val framesRead = Pa_ReadStream(
+                    val readResult = Pa_ReadStream(
                         currentInputStream,
                         paBuffer,
                         recognitionLoopBufferFrames.toUInt()
@@ -644,47 +643,48 @@ class PortAudioDevice(private val speechRecognizer: VoskSpeechRecognizer) : Audi
 
                     if (!isActive) break
 
-                    if (framesRead < 0) {
+                    if (readResult != paNoError && readResult != paInputOverflowed) {
                         println(
                             "[ERROR] Pa_ReadStream failed in recognition loop: ${
-                                Pa_GetErrorText(
-                                    framesRead
-                                )?.toKString()
+                                Pa_GetErrorText(readResult)?.toKString()
                             }"
                         )
-                        _deviceState.value = AudioDevice.AudioDeviceState.ERROR
-                        break
-                    }
-                    if (framesRead == 0) {
-                        delay(5)
+                        
+                        // 不要在错误情况下立即中断循环，尝试继续
+                        delay(10)
                         continue
                     }
 
-                    val currentAudioChunk = if (framesRead < recognitionLoopBufferFrames) {
-                        if (processingBuffer.size != framesRead) processingBuffer =
-                            ShortArray(framesRead)
-                        for (i in 0 until framesRead) processingBuffer[i] = paBuffer[i]
-                        processingBuffer
+                    // 将音频数据复制到处理缓冲区
+                    for (i in 0 until recognitionLoopBufferFrames) {
+                        processingBuffer[i] = paBuffer[i]
+                    }
+
+                    // 音频处理管道
+                    // 1. 使用SpeexDSP和RNNoise预处理音频
+                    val processedPair = speechRecognizer.processAudioForRecognition(processingBuffer)
+                    val processedAudio = processedPair.first
+                    val hasVoice = processedPair.second
+
+                    // 2. 将处理后的音频发送给Vosk识别器
+                    if (hasVoice) {
+                        val recognitionResult = speechRecognizer.recognizeAudio(processedAudio)
+                        if (recognitionResult.isNotEmpty()) {
+                            println("[DEBUG] 识别结果: $recognitionResult")
+                        }
                     } else {
-                        for (i in 0 until framesRead) processingBuffer[i] = paBuffer[i]
-                        processingBuffer
+                        // 即使没有检测到语音，也可以选择发送部分帧给Vosk
+                        // 这有助于Vosk保持连续的上下文
+                        if (audioReadCounter % 10 == 0) { // 每10帧发送一次
+                            speechRecognizer.processAudio(processedAudio)
+                        }
                     }
 
-                    // --- Audio Processing Pipeline ---
-                    // 1. TODO: AEC (Acoustic Echo Cancellation) with SpeexDSP
-                    // val audioForNs = speexDspAec.process(currentAudioChunk, playbackReference)
-                    val audioForNs = currentAudioChunk // Placeholder
-
-                    val nsAudio = analyzer.applyNoiseGate(audioForNs)
-
-                    if (analyzer.hasVoiceActivity(nsAudio)) {
-                        // speechRecognizer.processAudioChunk(nsAudio)
-                        println("[DEBUG] Voice activity detected, ${nsAudio.size} frames. Feeding to recognizer (placeholder).")
-                        // >>> REPLACE THIS with actual call to your speechRecognizer instance <<<
-                        // For example, if your VoskSpeechRecognizer has a method like `recognizePartial(data: ShortArray): String`
-                        // val partialResult = speechRecognizer.recognizePartial(nsAudio)
-                        // if (partialResult.isNotEmpty()) { println("[VOSK PARTIAL]: $partialResult") }
-                    }
+                    // 更新计数器
+                    audioReadCounter++
+                    
+                    // 添加小延迟以避免CPU占用过高
+                    delay(5)
                 }
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) {
@@ -697,7 +697,6 @@ class PortAudioDevice(private val speechRecognizer: VoskSpeechRecognizer) : Audi
             } finally {
                 println("[INFO] Exiting recognition loop.")
                 nativeHeap.free(paBuffer.rawValue)
-                // speechRecognizer.stopListening() // Example: If your recognizer has such a method
                 if (_deviceState.value == AudioDevice.AudioDeviceState.ACTIVE) {
                     _deviceState.value = AudioDevice.AudioDeviceState.READY
                 }

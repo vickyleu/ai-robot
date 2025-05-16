@@ -59,7 +59,6 @@ class VoskKeywordDetector(
     private val voiceContinuityThreshold = 800L // 800毫秒内的声音视为连续语音
     private val silencePauseThreshold = 1000L // 1秒无声视为停顿
 
-
     // 关键词列表
     private val keywords = mutableListOf<String>()
 
@@ -77,6 +76,9 @@ class VoskKeywordDetector(
 
     // 指示是否已初始化
     private var isInitialized = false
+    
+    // 指示关键词是否已更新
+    private var keywordsUpdated = false
 
     // 调试计数器
     private var totalFramesProcessed = 0
@@ -245,6 +247,11 @@ class VoskKeywordDetector(
         if (_detectionState.value != KeywordDetector.DetectionState.LISTENING) {
             _detectionState.value = KeywordDetector.DetectionState.LISTENING
         }
+        
+        // 确保关键词列表已设置到Vosk
+        if (keywords.isNotEmpty() && !keywordsUpdated) {
+            updateKeywordsToVosk()
+        }
 
         try {
             // 更详细的输入数据日志 - 仅在详细模式下输出
@@ -367,6 +374,10 @@ class VoskKeywordDetector(
                             val success = reinitializeVosk()
                             if (success) {
                                 println("[INFO] 语音识别器重新初始化成功")
+                                // 重新设置关键词
+                                if (keywords.isNotEmpty()) {
+                                    updateKeywordsToVosk()
+                                }
                             } else {
                                 println("[ERROR] 语音识别器重新初始化失败")
                             }
@@ -410,6 +421,8 @@ class VoskKeywordDetector(
 
     /**
      * 处理识别文本，检查是否包含关键词
+     * 注意: 此处不需要手动检测关键词，因为我们已经使用Vosk的SetWords API设置了关键词
+     * Vosk会只返回符合关键词的识别结果
      */
     private fun processRecognizedText(text: String) {
         if (text.isEmpty() || text == lastRecognizedText) {
@@ -419,17 +432,10 @@ class VoskKeywordDetector(
         lastRecognizedText = text
         println("[INFO] Vosk识别文本: $text")
 
-        // 转换为小写进行匹配
-        val lowerText = text.lowercase()
-
-        // 检查是否包含任何关键词
-        val detectedKeyword = keywords.firstOrNull { keyword ->
-            lowerText.contains(keyword.lowercase())
-        }
-
-        if (detectedKeyword != null) {
+        // 如果识别到任何文本，说明已经匹配了关键词
+        if (text.isNotEmpty() && text != "[unk]") {
             keywordDetections++
-            println("[INFO] 检测到关键词: $detectedKeyword")
+            println("[INFO] 检测到关键词: $text")
 
             // 去抖动
             val currentTime = Clock.System.now().toEpochMilliseconds()
@@ -455,14 +461,40 @@ class VoskKeywordDetector(
             }
         }
     }
+    
+    /**
+     * 将当前关键词列表更新到Vosk引擎
+     */
+    private fun updateKeywordsToVosk() {
+        if (keywords.isEmpty()) {
+            println("[WARN] 关键词列表为空，无法设置到Vosk")
+            return
+        }
+        
+        val success = voskRecognizer.setKeywords(keywords)
+        if (success) {
+            keywordsUpdated = true
+            println("[INFO] 成功将${keywords.size}个关键词设置到Vosk引擎")
+        } else {
+            println("[ERROR] 设置关键词到Vosk引擎失败")
+        }
+    }
 
     /**
      * 添加关键词
      * @param keyword 关键词
      */
     fun addKeyword(keyword: String) {
+        if (keywords.contains(keyword)) {
+            println("[INFO] 关键词'$keyword'已存在，无需重复添加")
+            return
+        }
+        
         keywords.add(keyword)
         println("[DEBUG] 添加关键词: $keyword, 当前关键词列表: ${keywords.joinToString(", ")}")
+        
+        // 立即更新到Vosk
+        updateKeywordsToVosk()
     }
 
     /**
@@ -470,8 +502,13 @@ class VoskKeywordDetector(
      * @param keyword 关键词
      */
     fun removeKeyword(keyword: String) {
-        keywords.remove(keyword)
-        println("[DEBUG] 移除关键词: $keyword, 当前关键词列表: ${keywords.joinToString(", ")}")
+        if (keywords.remove(keyword)) {
+            println("[DEBUG] 移除关键词: $keyword, 当前关键词列表: ${keywords.joinToString(", ")}")
+            // 立即更新到Vosk
+            updateKeywordsToVosk()
+        } else {
+            println("[INFO] 关键词'$keyword'不存在，无法移除")
+        }
     }
 
     /**
@@ -480,6 +517,10 @@ class VoskKeywordDetector(
     fun clearKeywords() {
         println("[DEBUG] 清空所有关键词")
         keywords.clear()
+        // 如果关键词列表为空，我们仍需要通知Vosk，但这可能会导致识别器返回任何文本
+        // 因此我们至少添加一个[unk]作为占位符
+        keywords.add("[unk]")
+        updateKeywordsToVosk()
     }
 
     /**

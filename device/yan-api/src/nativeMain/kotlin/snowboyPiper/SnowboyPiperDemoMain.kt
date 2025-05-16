@@ -13,13 +13,13 @@ import snowboyPiper.impl.SnowboyPiperVoiceAssistant
 import kotlin.time.ExperimentalTime
 
 /**
- * Snowboy关键词检测与Piper语音合成Demo主程序
+ * Vosk关键词检测与Piper语音合成Demo主程序
  * 使用重构后的模块化架构
  */
 private lateinit var globalVoiceAssistant: SnowboyPiperVoiceAssistant
 
 fun snowboyPiper() = runBlocking {
-    println("启动Snowboy关键词检测与Piper语音合成Demo")
+    println("启动Vosk关键词检测与Piper语音合成Demo")
     println("该Demo将使用麦克风监听关键词，检测到关键词后会播放\"你好\"")
     println("按Ctrl+C终止程序")
     val config = VoiceAssistantConfig()
@@ -59,9 +59,6 @@ fun snowboyPiper() = runBlocking {
             println("启动语音助手失败")
         }
     } else {
-        println("初始化失败")
+        println("初始化检测器失败")
     }
-
-    // 释放资源
-    voiceAssistant.release()
 }

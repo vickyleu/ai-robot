@@ -26,7 +26,7 @@ import snowboyPiper.interfaces.VoiceStateManager
 import kotlin.time.ExperimentalTime
 
 /**
- * Snowboy和Piper集成的语音助手
+ * Vosk和Piper集成的语音助手
  */
 class SnowboyPiperVoiceAssistant(
     private val config: VoiceAssistantConfig,
@@ -44,10 +44,10 @@ class SnowboyPiperVoiceAssistant(
     private val speechRecognizer = VoskSpeechRecognizer()
     private val audioDevice = PortAudioDevice(speechRecognizer)
     private val audioPlayer = audioDevice
-    private val keywordDetector = SnowboyKeywordDetector(
+    private val keywordDetector = VoskKeywordDetector(
+        speechRecognizer,
         audioAnalyzer,
-        voiceStateManager,
-        bufferManager
+        voiceStateManager
     )
 
     // 状态管理
@@ -88,6 +88,17 @@ class SnowboyPiperVoiceAssistant(
                 println("[WARN] 初始化语音合成器失败，语音助手将不能语音应答")
                 // 继续初始化，因为语音合成不是必需的
             }
+            
+            // 添加关键词
+            (keywordDetector as VoskKeywordDetector).apply {
+                addKeyword("你好")
+                addKeyword("嗨")
+                addKeyword("哈喽")
+                addKeyword("在吗")
+                addKeyword("小度")
+                addKeyword("小杜")
+            }
+            
             println("[INFO] 语音助手初始化成功")
             _assistantState.value = VoiceAssistantService.AssistantState.IDLE
             return true
@@ -103,10 +114,11 @@ class SnowboyPiperVoiceAssistant(
      * 初始化关键词检测器
      */
     private fun initKeywordDetector(): Boolean {
+        // 对于VoskKeywordDetector，我们使用voskModelPath
         return keywordDetector.initialize(
-            config.resourcePath,
-            config.modelPath,
-            config.snowboySensitivity
+            "", // resourcePath不再需要
+            config.voskModelPath, // 使用Vosk模型路径
+            config.snowboySensitivity // 灵敏度参数仍然保留
         )
     }
 

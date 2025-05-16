@@ -17,6 +17,7 @@ import snowboyPiper.interfaces.AudioDevice
 import snowboyPiper.interfaces.AudioPlayer
 import snowboyPiper.interfaces.SpeechRecognizer
 import snowboyPiper.interop.SpeexDspProcessor
+import snowboyPiper.impl.EnhancedAudioAnalyzer
 
 /**
  * Vosk语音识别器实现
@@ -56,11 +57,11 @@ class VoskSpeechRecognizer : SpeechRecognizer {
 
     // 音频分析器 (RNNoise)
     // 初始化音频分析器 (RNNoise)，调低阈值提高灵敏度
-    val audioAnalyzer: AudioAnalyzer = BasicAudioAnalyzer(
-        energyThreshold = 25.0,  // 降低能量阈值
-        noiseGateThreshold = 15.0, // 降低噪声门限
-        validVoiceRmsThreshold = 40.0, // 降低有效语音RMS阈值
-        validVoiceZcrThreshold = 0.12  // 降低过零率阈值
+    val audioAnalyzer: AudioAnalyzer = EnhancedAudioAnalyzer(
+        energyThreshold = 250.0,  // 能量阈值
+        noiseGateThreshold = 120.0, // 噪声门限
+        validVoiceRmsThreshold = 400.0, // 有效语音RMS阈值
+        validVoiceZcrThreshold = 0.1  // 过零率阈值
     )
 
     init {
@@ -102,6 +103,9 @@ class VoskSpeechRecognizer : SpeechRecognizer {
                 println("[ERROR] Vosk语音服务初始化失败")
                 return false
             }
+            
+            // 启用词级别识别
+            enableWordRecognition()
 
             // 重置音频处理组件
             audioAnalyzer.reset()
@@ -114,6 +118,23 @@ class VoskSpeechRecognizer : SpeechRecognizer {
             e.printStackTrace()
             return false
         }
+    }
+    
+    /**
+     * 启用词级别识别
+     * 让Vosk识别器可以返回词级别的信息
+     */
+    private fun enableWordRecognition() {
+        voskService.enableWordRecognition()
+    }
+    
+    /**
+     * 设置关键词检测模式
+     * @param keywords 要检测的关键词列表
+     * @return 是否成功设置
+     */
+    fun setKeywords(keywords: List<String>): Boolean {
+        return voskService.setKeywords(keywords)
     }
 
     fun recordDevice(): AudioDevice {
