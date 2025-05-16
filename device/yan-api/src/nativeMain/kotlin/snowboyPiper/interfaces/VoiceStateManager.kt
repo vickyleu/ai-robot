@@ -1,4 +1,4 @@
-package com.airobot.device.yanapi.snowboyPiper.interfaces
+package snowboyPiper.interfaces
 
 
 interface VoiceStateManager {

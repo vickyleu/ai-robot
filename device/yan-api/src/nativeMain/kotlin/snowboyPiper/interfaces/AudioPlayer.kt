@@ -57,5 +57,5 @@ interface AudioPlayer {
     /**
      * 释放资源
      */
-    fun release()
+    fun releasePlayer()
 }

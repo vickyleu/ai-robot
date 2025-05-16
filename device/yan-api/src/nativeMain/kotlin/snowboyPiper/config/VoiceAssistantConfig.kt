@@ -1,4 +1,4 @@
-package com.airobot.device.yanapi.snowboyPiper.config
+package snowboyPiper.config
 
 data class VoiceAssistantConfig(
     // 音频设置
@@ -21,7 +21,7 @@ data class VoiceAssistantConfig(
     val speechRecognitionTimeoutMs: Long = 8000L,
     val accumulationThreshold: Int = 16000 * 2, // 从3秒降低到2秒的16kHz音频，加快响应
     val overlapSize: Int = 8000, // 从16000降低到8000，减小缓冲区大小
-
+    val snowboySensitivity: Float = 0.9f, // 进一步提高灵敏度，从0.75f提高到0.9f
     // VAD参数 - 进一步降低阈值提高对语音的敏感性
     val energyThreshold: Double = 300.0, // 从500.0降低到300.0
     val noiseGateThreshold: Double = 200.0, // 从300.0降低到200.0
@@ -38,6 +38,7 @@ data class VoiceAssistantConfig(
     val errorLogIntervalMs: Long = 5000L
 ){
     companion object{
-        val snowboySensitivity: Float = 0.9f // 进一步提高灵敏度，从0.75f提高到0.9f
+        // 默认配置
+        val DEFAULT = VoiceAssistantConfig()
     }
 }

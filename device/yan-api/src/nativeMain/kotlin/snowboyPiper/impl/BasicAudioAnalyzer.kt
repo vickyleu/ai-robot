@@ -1,6 +1,5 @@
-package com.airobot.device.yanapi.snowboyPiper.impl
+package snowboyPiper.impl
 
-import com.airobot.device.yanapi.snowboyPiper.interfaces.AudioAnalyzer
 import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.cinterop.FloatVar
 import kotlinx.cinterop.ShortVar
@@ -8,13 +7,10 @@ import kotlinx.cinterop.allocArray
 import kotlinx.cinterop.get
 import kotlinx.cinterop.nativeHeap
 import kotlinx.cinterop.set
+import snowboyPiper.interfaces.AudioAnalyzer
 import snowboyPiper.interop.AudioProcessingResourceManager
 import snowboyPiper.interop.RNNoiseSingleton
-import kotlin.math.abs
 import kotlin.math.max
-import kotlin.math.min
-import kotlin.math.pow
-import kotlin.math.sqrt
 import kotlin.time.Clock
 import kotlin.time.ExperimentalTime
 
@@ -64,7 +60,7 @@ class BasicAudioAnalyzer(
         if (isHumanVoice) {
             consecutiveVoiceFrames++
             lastVoiceActivityTime = currentTime
-            
+
             // 如果与上次语音活动时间接近，标记为连续语音
             if (currentTime - lastVoiceActivityTime < voiceContinuityThreshold) {
                 isInContinuousSpeech = true
@@ -72,7 +68,7 @@ class BasicAudioAnalyzer(
         } else {
             // 没有检测到语音，减少连续帧计数
             consecutiveVoiceFrames = max(0, consecutiveVoiceFrames - 1)
-            
+
             // 如果静音时间过长，重置连续语音状态
             if (currentTime - lastVoiceActivityTime > silencePauseThreshold) {
                 isInContinuousSpeech = false
@@ -167,7 +163,7 @@ class BasicAudioAnalyzer(
             return isHumanVoice
         } catch (e: Exception) {
             println("[ERROR] RNNoise处理异常: ${e.message}")
-            return false 
+            return false
         }
     }
 

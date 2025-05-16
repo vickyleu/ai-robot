@@ -12,7 +12,6 @@ import kotlinx.cinterop.toKString
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.async
@@ -44,7 +43,7 @@ import kotlin.native.runtime.NativeRuntimeApi
  * 2. 麦克风状态诊断
  * 3. 详细的调试信息输出
  */
-class VoskSpeechService(private val recognizer:VoskSpeechRecognizer) : SpeechService {
+class VoskSpeechService(private val recognizer: VoskSpeechRecognizer) : SpeechService {
     companion object {
         // 语音识别器的默认模型路径
 
@@ -64,10 +63,10 @@ class VoskSpeechService(private val recognizer:VoskSpeechRecognizer) : SpeechSer
          * @param maxOutputSize 最大输出大小，防止内存溢出，默认4096字节
          * @return 命令执行的输出结果
          */
-         suspend fun executeCommand(
+        suspend fun executeCommand(
             command: String,
-            timeoutMs: Long= 1000L,
-            maxOutputSize: Int= 4096
+            timeoutMs: Long = 1000L,
+            maxOutputSize: Int = 4096
         ): String {
             val completableDeferred = CompletableDeferred<String>()
             // 启动一个线程执行命令，以便实现超时控制
@@ -140,14 +139,15 @@ class VoskSpeechService(private val recognizer:VoskSpeechRecognizer) : SpeechSer
 
     // 识别状态流映射
     private val _recognitionState = MutableStateFlow(SpeechService.RecognitionState.IDLE)
-    override val recognitionState: StateFlow<SpeechService.RecognitionState> = _recognitionState.asStateFlow()
+    override val recognitionState: StateFlow<SpeechService.RecognitionState> =
+        _recognitionState.asStateFlow()
 
     // 记录音频帧计数
     private var audioFrameCounter = 0
-    
+
     // 标记Vosk模型是否已加载
     private var voskModelLoaded = false
-    
+
     // 标记服务是否已初始化
     private var initialized = false
 
@@ -187,10 +187,10 @@ class VoskSpeechService(private val recognizer:VoskSpeechRecognizer) : SpeechSer
                     _recognitionState.value = mapRecognizerState(state)
                 }
             }
-            
+
             // 构建完整的模型路径
             println("[INFO] 使用模型: $modelPath")
-            
+
 //            // 检查模型路径是否存在
 //            val modelExists = checkModelExists(modelPath)
 //            if (!modelExists) {
@@ -198,7 +198,7 @@ class VoskSpeechService(private val recognizer:VoskSpeechRecognizer) : SpeechSer
 //                _recognitionState.value = SpeechService.RecognitionState.ERROR
 //                return false
 //            }
-            
+
             // 尝试加载Vosk模型
             try {
                 voskModelLoaded = loadVoskModel(modelPath)
@@ -226,7 +226,7 @@ class VoskSpeechService(private val recognizer:VoskSpeechRecognizer) : SpeechSer
             return false
         }
     }
-    
+
 //    /**
 //     * 检查模型路径是否存在
 //     */
@@ -242,31 +242,32 @@ class VoskSpeechService(private val recognizer:VoskSpeechRecognizer) : SpeechSer
 //            return false
 //        }
 //    }
-    
+
     /**
      * 加载Vosk模型
      */
     private fun loadVoskModel(modelPath: String): Boolean {
         try {
             println("[INFO] 正在加载Vosk模型: $modelPath")
-            
+
             // 检查模型路径是否存在
             serviceScope.launch {
-                val pathExists = executeCommand("test -d \"$modelPath\" && echo \"exists\" || echo \"not exists\"").trim()
+                val pathExists =
+                    executeCommand("test -d \"$modelPath\" && echo \"exists\" || echo \"not exists\"").trim()
                 if (pathExists != "exists") {
                     println("[WARN] Vosk模型路径可能不存在: $modelPath (结果: $pathExists)")
                 } else {
                     println("[INFO] Vosk模型路径有效: $modelPath")
                 }
             }
-            
+
             // 尝试加载模型
             val model = vosk_model_new(modelPath)
             if (model == null) {
                 println("[ERROR] Vosk模型加载失败: 无效的模型指针")
                 return false
             }
-            
+
             // 创建识别器
             // 注意：这里仅展示关键步骤，实际可能需要更多逻辑
             try {
@@ -279,7 +280,7 @@ class VoskSpeechService(private val recognizer:VoskSpeechRecognizer) : SpeechSer
                 // 例如: vosk_model_free(model)
                 return false
             }
-            
+
             // 如果一切正常，设置模型加载状态为true
             voskModelLoaded = true
             println("[INFO] Vosk模型加载和初始化完成")
@@ -298,14 +299,14 @@ class VoskSpeechService(private val recognizer:VoskSpeechRecognizer) : SpeechSer
      */
     // 添加标志位防止重复启动
     private var isStartingRecognition = false
-    
+
     override fun startRecognition(): Boolean {
         // 如果已经在启动过程中，直接返回，防止重复调用
         if (isStartingRecognition) {
             // 移除调试日志，减少输出
             return true
         }
-        
+
         // 如果已经在监听状态，先停止当前会话再重新启动
         if (_recognitionState.value == SpeechService.RecognitionState.LISTENING) {
             // 简化日志输出
@@ -316,7 +317,7 @@ class VoskSpeechService(private val recognizer:VoskSpeechRecognizer) : SpeechSer
 
         try {
             isStartingRecognition = true
-            
+
             // 重置识别结果
             _recognitionText.value = null
 
@@ -351,14 +352,14 @@ class VoskSpeechService(private val recognizer:VoskSpeechRecognizer) : SpeechSer
      */
     // 添加标志位防止递归调用
     private var isStoppingRecognition = false
-    
+
     override fun stopRecognition() {
         // 如果已经在停止过程中，直接返回，防止递归调用
         if (isStoppingRecognition) {
             println("[DEBUG] 已经在停止语音识别过程中，避免递归调用")
             return
         }
-        
+
         try {
             isStoppingRecognition = true
             recognitionJob?.cancel()
@@ -382,31 +383,31 @@ class VoskSpeechService(private val recognizer:VoskSpeechRecognizer) : SpeechSer
         if (_recognitionState.value != SpeechService.RecognitionState.LISTENING) {
             return false
         }
-        
+
         try {
             // 检查音频数据有效性
             if (audioData.isEmpty()) {
                 return false
             }
-            
+
             // 检查Vosk模型是否已加载
             if (!voskModelLoaded) {
                 println("[ERROR] Vosk模型未加载，无法处理音频")
                 tryLoadVoskModel()
                 return false
             }
-            
+
             // 确保已正确初始化
             if (!initialized) {
                 println("[ERROR] Vosk语音服务未初始化")
                 return false
             }
-            
+
             // 调试输出Vosk状态
             if (audioFrameCounter % 200 == 0) {
                 println("[DEBUG-VOSK-SERVICE] 处理音频帧: #$audioFrameCounter, 大小: ${audioData.size}")
             }
-            
+
             try {
                 // 尝试使用实际的Vosk方法处理音频
                 // 这里添加了详细的错误检查
@@ -418,7 +419,7 @@ class VoskSpeechService(private val recognizer:VoskSpeechRecognizer) : SpeechSer
                 }
                 audioFrameCounter++
                 return result
-                
+
             } catch (e: Exception) {
                 if (audioFrameCounter % 20 == 0) {
                     println("[ERROR] Vosk处理音频异常: ${e.message}")
@@ -434,7 +435,7 @@ class VoskSpeechService(private val recognizer:VoskSpeechRecognizer) : SpeechSer
             return false
         }
     }
-    
+
     // 内部音频处理实现，调用实际的Vosk API
     private fun processAudioInternal(audioData: ShortArray): Boolean {
         try {
@@ -442,7 +443,7 @@ class VoskSpeechService(private val recognizer:VoskSpeechRecognizer) : SpeechSer
             if (audioData.isEmpty()) {
                 return true // 跳过空数据
             }
-            
+
             // 检查音频数据是否全为零
             if (audioData.all { it == 0.toShort() }) {
                 if (audioFrameCounter % 200 == 0) {
@@ -450,34 +451,34 @@ class VoskSpeechService(private val recognizer:VoskSpeechRecognizer) : SpeechSer
                 }
                 return true // 返回true避免上层警告
             }
-            
+
             // 计算音频能量，确保有有效信号
             var sumSquares = 0.0
             for (sample in audioData) {
                 sumSquares += (sample.toDouble() * sample.toDouble())
             }
             val rms = kotlin.math.sqrt(sumSquares / audioData.size)
-            
+
             // 如果音频能量太低，直接跳过处理
             if (rms < 10.0) {
                 return true // 返回true避免上层警告
             }
-            
+
             // 这里是实际Vosk音频处理代码
             // 1. 转换为Vosk可接受的格式 (通常是16位有符号整数)
             // 2. 将数据传递给Vosk识别器处理
-            
+
             try {
                 // 获取Vosk识别器实例 (假设在初始化时已创建)
                 // val recognizer = getVoskRecognizer()
-                
+
                 // 处理音频数据
                 // 例如: vosk_recognizer_accept_waveform(recognizer, audioBuffer, bufferSize)
                 // 或者: recognizer.acceptWaveform(audioData)
-                
+
                 // 每帧音频处理后，获取部分结果
                 updatePartialResult()
-                
+
                 return true
             } catch (e: Exception) {
                 if (audioFrameCounter % 50 == 0) {
@@ -491,16 +492,16 @@ class VoskSpeechService(private val recognizer:VoskSpeechRecognizer) : SpeechSer
             return false
         }
     }
-    
+
     // 更新部分识别结果
     private fun updatePartialResult() {
         try {
             // 获取部分识别结果
             // 例如: val partial = vosk_recognizer_partial_result(recognizer)
-            
+
             // 更新识别文本 (如果有新内容)
             // 解析JSON并更新文本
-            
+
             // 仅模拟测试用途
             if (audioFrameCounter % 500 == 0) {
                 _recognitionText.value = "临时识别结果 #${audioFrameCounter}"
@@ -511,7 +512,7 @@ class VoskSpeechService(private val recognizer:VoskSpeechRecognizer) : SpeechSer
             }
         }
     }
-    
+
     // 尝试重新加载Vosk模型
     private fun tryLoadVoskModel() {
         try {
@@ -523,14 +524,14 @@ class VoskSpeechService(private val recognizer:VoskSpeechRecognizer) : SpeechSer
             println("[ERROR] 重载Vosk模型失败: ${e.message}")
         }
     }
-    
+
     // 从Vosk引擎获取识别结果
     private fun updateRecognitionFromVosk() {
         try {
             // 这里是获取识别结果的代码
             // 通常会调用Vosk的获取最终结果或部分结果的API
             // ...
-            
+
             // 如果有新的识别结果，更新状态流
             if (audioFrameCounter % 300 == 0) {
                 val fakeResult = "测试识别结果 #${audioFrameCounter}"
@@ -552,13 +553,13 @@ class VoskSpeechService(private val recognizer:VoskSpeechRecognizer) : SpeechSer
             println("[DEBUG] 已经在释放资源过程中，避免递归调用")
             return
         }
-        
+
         try {
             isReleasing = true
             // 直接取消任务，不调用stopRecognition避免潜在的递归
             recognitionJob?.cancel()
             recognitionJob = null
-            
+
             // 设置状态为IDLE
             _recognitionState.value = SpeechService.RecognitionState.IDLE
             println("[INFO] Vosk资源已释放")
@@ -576,14 +577,14 @@ class VoskSpeechService(private val recognizer:VoskSpeechRecognizer) : SpeechSer
      */
     fun reinitializeVosk(): Boolean {
         println("[INFO] 开始重新初始化Vosk处理管道...")
-        
+
         try {
             // 先释放现有资源
             releaseVoskResources()
-            
+
             // 等待资源释放完成
             kotlinx.coroutines.runBlocking { kotlinx.coroutines.delay(500) }
-            
+
             // 重新初始化 - 临时代码，应该由外部调用提供正确的参数
             return initialize("default", "/usr/local/share/vosk/model", 16000, 80)
         } catch (e: Exception) {
@@ -592,7 +593,7 @@ class VoskSpeechService(private val recognizer:VoskSpeechRecognizer) : SpeechSer
             return false
         }
     }
-    
+
     /**
      * 释放Vosk相关资源
      */
@@ -600,23 +601,23 @@ class VoskSpeechService(private val recognizer:VoskSpeechRecognizer) : SpeechSer
         try {
             // 停止识别
             stopRecognition()
-            
+
             // 释放Vosk识别器
             // 例如: vosk_recognizer_free(recognizer)
-            
+
             // 释放Vosk模型
             // 例如: vosk_model_free(model)
-            
+
             // 重置状态
             voskModelLoaded = false
             initialized = false
-            
+
             println("[INFO] Vosk资源已释放")
         } catch (e: Exception) {
             println("[WARN] 释放Vosk资源时出错: ${e.message}")
         }
     }
-    
+
     /**
      * 运行Vosk诊断
      * 检查Vosk相关组件是否正常工作
@@ -624,40 +625,41 @@ class VoskSpeechService(private val recognizer:VoskSpeechRecognizer) : SpeechSer
     fun runVoskDiagnostics(): String {
         val diagnostics = StringBuilder()
         diagnostics.append("=== Vosk诊断报告 ===\n")
-        
+
         try {
             // 检查库版本
             // 例如: diagnostics.append("Vosk库版本: ${vosk_get_version()}\n")
-            
+
             // 检查模型状态
             diagnostics.append("模型已加载: $voskModelLoaded\n")
-            
+
             // 检查初始化状态
             diagnostics.append("服务已初始化: $initialized\n")
-            
+
             // 检查识别状态
             diagnostics.append("当前识别状态: ${_recognitionState.value}\n")
-            
+
             // 检查处理的帧数
             diagnostics.append("已处理音频帧数: $audioFrameCounter\n")
-            
+
             // 检查模型资源
             // TODO: 添加实际的模型资源检查
-            
+
             // 检查系统资源
             serviceScope.launch {
                 val memInfo = executeCommand("free -h | grep Mem").trim()
                 diagnostics.append("系统内存: $memInfo\n")
-                
-                val cpuInfo = executeCommand("top -bn1 | grep 'Cpu(s)' | awk '{print $2 + $4}'").trim()
+
+                val cpuInfo =
+                    executeCommand("top -bn1 | grep 'Cpu(s)' | awk '{print $2 + $4}'").trim()
                 diagnostics.append("CPU使用率: $cpuInfo%\n")
             }
-            
+
             diagnostics.append("=== 诊断完成 ===")
         } catch (e: Exception) {
             diagnostics.append("诊断时出错: ${e.message}\n")
         }
-        
+
         val report = diagnostics.toString()
         println(report)
         return report

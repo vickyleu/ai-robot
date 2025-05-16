@@ -1,7 +1,7 @@
-package com.airobot.device.yanapi.snowboyPiper.impl
+package snowboyPiper.impl
 
-import com.airobot.device.yanapi.snowboyPiper.config.VoiceAssistantConfig
-import com.airobot.device.yanapi.snowboyPiper.interfaces.VoiceStateManager
+import snowboyPiper.config.VoiceAssistantConfig
+import snowboyPiper.interfaces.VoiceStateManager
 import kotlin.time.Clock
 import kotlin.time.ExperimentalTime
 

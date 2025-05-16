@@ -2,6 +2,7 @@
 
 package snowboyPiper.impl
 
+// Added imports
 import com.airobot.portaudiointerop.Pa_CloseStream
 import com.airobot.portaudiointerop.Pa_GetDeviceCount
 import com.airobot.portaudiointerop.Pa_GetDeviceInfo
@@ -34,43 +35,42 @@ import kotlinx.cinterop.toKString
 import kotlinx.cinterop.value
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import snowboyPiper.interfaces.AudioAnalyzer
 import snowboyPiper.interfaces.AudioDevice
+import snowboyPiper.interfaces.AudioPlayer
 import kotlin.experimental.ExperimentalNativeApi
 import kotlin.time.ExperimentalTime
-
-// Added imports
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.isActive
-import kotlinx.coroutines.delay
-import com.airobot.device.yanapi.snowboyPiper.impl.BasicAudioAnalyzer // Assuming AudioAnalyzer interface is in this path
-import com.airobot.device.yanapi.snowboyPiper.interfaces.AudioAnalyzer // Assuming AudioAnalyzer interface is in this path
 
 /**
  * PortAudio音频设备实现
  * 负责音频设备的初始化、列举、打开和关闭等操作
  */
-class PortAudioDevice(private val speechRecognizer: VoskSpeechRecognizer) : AudioDevice {
+class PortAudioDevice(private val speechRecognizer: VoskSpeechRecognizer) : AudioDevice,
+    AudioPlayer {
     // 音频流互斥锁，确保同一时间只有一个音频流在使用
     private val audioMutex = Mutex()
 
     // 输入流和输出流分开处理
     private var inputStreamPtr = nativeHeap.alloc<COpaquePointerVar>()
     private var outputStreamPtr = nativeHeap.alloc<COpaquePointerVar>()
-    
+
     // 设备状态
     private val _deviceState = MutableStateFlow(AudioDevice.AudioDeviceState.IDLE)
     override val deviceState: StateFlow<AudioDevice.AudioDeviceState> = _deviceState.asStateFlow()
-    
+
     // 存储设备信息
     private var selectedInputDeviceIndex = -1 // 将使用找到的第一个输入设备
     private var selectedOutputDeviceIndex = -1 // 将使用找到的第一个输出设备
-    
+
     // 标记PortAudio初始化状态
     private var portAudioInitialized = false
 
@@ -81,7 +81,7 @@ class PortAudioDevice(private val speechRecognizer: VoskSpeechRecognizer) : Audi
     private val audioPlayBuffer = ShortArray(8192)
     private var audioPlayBufferPos = 0
     private val minPlayFrames = 666 // 降低最小播放帧数，确保数据更快被播放出来
-    
+
     // Linux设备选择器
     private val deviceSelector = LinuxAudioDeviceSelector()
 
@@ -89,9 +89,20 @@ class PortAudioDevice(private val speechRecognizer: VoskSpeechRecognizer) : Audi
     private var audioReadCounter = 0
 
     // New fields for recognition loop and analyzer
-    private val analyzer: AudioAnalyzer = BasicAudioAnalyzer()
+    private val analyzer: AudioAnalyzer = BasicAudioAnalyzer(
+        energyThreshold = 300.0, // Default sensible value
+        noiseGateThreshold = 150.0, // Default sensible value
+        validVoiceRmsThreshold = 500.0, // Default sensible value
+        validVoiceZcrThreshold = 0.1 // Default sensible value
+    )
     private var recognitionJob: Job? = null
     private val recognitionLoopBufferFrames = 1600 // e.g., 100ms at 16kHz. Tune as needed.
+
+    // Implementation of AudioPlayer interface methods
+    override val playbackState: StateFlow<AudioPlayer.PlaybackState>
+        get() = _playbackState // Assuming you add a _playbackState Flow
+    private val _playbackState =
+        MutableStateFlow(AudioPlayer.PlaybackState.IDLE) // Example backing field
 
     override fun isInitialized(): Boolean {
         return portAudioInitialized
@@ -102,21 +113,22 @@ class PortAudioDevice(private val speechRecognizer: VoskSpeechRecognizer) : Audi
      * @return 初始化是否成功
      */
     override suspend fun initialize(): Boolean {
-        if (_deviceState.value == AudioDevice.AudioDeviceState.INITIALIZING || 
-            _deviceState.value == AudioDevice.AudioDeviceState.ACTIVE) {
+        if (_deviceState.value == AudioDevice.AudioDeviceState.INITIALIZING ||
+            _deviceState.value == AudioDevice.AudioDeviceState.ACTIVE
+        ) {
             println("[WARN] 音频设备已经初始化或正在初始化中")
             return true
         }
-        
+
         _deviceState.value = AudioDevice.AudioDeviceState.INITIALIZING
-        
+
         try {
             // 尝试修复ALSA配置
             if (deviceSelector.isRaspberryPi()) {
                 println("[INFO] 检测到树莓派，尝试修复ALSA配置")
                 deviceSelector.fixAlsaConfig()
             }
-            
+
             // 初始化PortAudio
             val result = Pa_Initialize()
             if (result != paNoError) {
@@ -124,20 +136,20 @@ class PortAudioDevice(private val speechRecognizer: VoskSpeechRecognizer) : Audi
                 _deviceState.value = AudioDevice.AudioDeviceState.ERROR
                 return false
             }
-            
+
             println("[INFO] PortAudio初始化成功")
-            
+
             // 打印设备信息
             val deviceCount = Pa_GetDeviceCount()
             println("[INFO] 发现 $deviceCount 个音频设备")
-            
+
             for (i in 0 until deviceCount) {
                 val info = Pa_GetDeviceInfo(i)?.pointed
                 println("[INFO] 设备 $i: ${info?.name?.toKString() ?: "未知"}, 输入通道: ${info?.maxInputChannels}, 输出通道: ${info?.maxOutputChannels}, 默认采样率: ${info?.defaultSampleRate}")
             }
-            
+
             // 注意：不再在初始化时打开流，由外部代码负责调用openInputStream和openOutputStream
-            
+
             portAudioInitialized = true
             _deviceState.value = AudioDevice.AudioDeviceState.READY // 改为READY而不是ACTIVE，因为流未打开
             return true
@@ -148,7 +160,7 @@ class PortAudioDevice(private val speechRecognizer: VoskSpeechRecognizer) : Audi
             return false
         }
     }
-    
+
     /**
      * 列举音频设备
      * @return 输入设备索引和输出设备索引的对
@@ -158,20 +170,20 @@ class PortAudioDevice(private val speechRecognizer: VoskSpeechRecognizer) : Audi
             println("[WARN] PortAudio未初始化，无法列举设备")
             return Pair(-1, -1)
         }
-        
+
         try {
             val deviceCount = Pa_GetDeviceCount()
             if (deviceCount <= 0) {
                 println("[WARN] 未找到音频设备")
                 return Pair(-1, -1)
             }
-            
+
             // 首先尝试使用Linux设备选择器
             if (deviceSelector.isRaspberryPi()) {
                 println("[INFO] 使用Linux设备选择器查找最佳音频设备")
                 val inputDeviceId = deviceSelector.getRecommendedRecordingDevice()
                 val outputDeviceId = deviceSelector.getRecommendedPlaybackDevice()
-                
+
                 if (inputDeviceId >= 0 || outputDeviceId >= 0) {
                     println("[INFO] Linux设备选择器推荐输入设备: $inputDeviceId, 输出设备: $outputDeviceId")
                     selectedInputDeviceIndex = inputDeviceId
@@ -179,57 +191,57 @@ class PortAudioDevice(private val speechRecognizer: VoskSpeechRecognizer) : Audi
                     return Pair(inputDeviceId, outputDeviceId)
                 }
             }
-            
+
             // 如果Linux选择器失败，回退到PortAudio设备搜索
             var bestInputDeviceIndex = -1
             var bestOutputDeviceIndex = -1
-            
+
             // 首先查找默认设备
             for (i in 0 until deviceCount) {
                 val info = Pa_GetDeviceInfo(i)?.pointed ?: continue
                 val hostInfo = Pa_GetHostApiInfo(info.hostApi)?.pointed
-                
+
                 // 检查是否为默认输入设备
                 if (hostInfo != null && i == hostInfo.defaultInputDevice) {
                     bestInputDeviceIndex = i
                     println("[INFO] 找到默认输入设备: ${info.name?.toKString()}")
                 }
-                
+
                 // 检查是否为默认输出设备
                 if (hostInfo != null && i == hostInfo.defaultOutputDevice) {
                     bestOutputDeviceIndex = i
                     println("[INFO] 找到默认输出设备: ${info.name?.toKString()}")
                 }
             }
-            
+
             // 如果找不到默认设备，查找任何可用设备
             if (bestInputDeviceIndex == -1 || bestOutputDeviceIndex == -1) {
                 for (i in 0 until deviceCount) {
                     val info = Pa_GetDeviceInfo(i)?.pointed ?: continue
-                    
+
                     // 检查输入通道
                     if (bestInputDeviceIndex == -1 && info.maxInputChannels > 0) {
                         bestInputDeviceIndex = i
                         println("[INFO] 找到输入设备: ${info.name?.toKString()}")
                     }
-                    
+
                     // 检查输出通道
                     if (bestOutputDeviceIndex == -1 && info.maxOutputChannels > 0) {
                         bestOutputDeviceIndex = i
                         println("[INFO] 找到输出设备: ${info.name?.toKString()}")
                     }
-                    
+
                     // 如果同时找到了输入和输出设备，可以提前结束搜索
                     if (bestInputDeviceIndex != -1 && bestOutputDeviceIndex != -1) {
                         break
                     }
                 }
             }
-            
+
             // 保存选择的设备
             selectedInputDeviceIndex = bestInputDeviceIndex
             selectedOutputDeviceIndex = bestOutputDeviceIndex
-            
+
             return Pair(bestInputDeviceIndex, bestOutputDeviceIndex)
         } catch (e: Exception) {
             println("[ERROR] 列举设备时出错: ${e.message}")
@@ -237,7 +249,7 @@ class PortAudioDevice(private val speechRecognizer: VoskSpeechRecognizer) : Audi
             return Pair(-1, -1)
         }
     }
-    
+
     /**
      * 打开音频输入流
      * @param deviceIndex 设备索引，-1表示默认设备
@@ -245,42 +257,46 @@ class PortAudioDevice(private val speechRecognizer: VoskSpeechRecognizer) : Audi
      * @param channels 通道数
      * @return 是否成功打开
      */
-    override suspend fun openInputStream(deviceIndex: Int, sampleRate: Int, channels: Int): Boolean {
+    override suspend fun openInputStream(
+        deviceIndex: Int,
+        sampleRate: Int,
+        channels: Int
+    ): Boolean {
         if (!portAudioInitialized) {
             println("[ERROR] PortAudio未初始化")
             return false
         }
-        
+
         return try {
             audioMutex.withLock {
                 println("[INFO] 尝试打开音频输入流...")
-                
+
                 // 关闭已存在的流
                 if (inputStreamPtr.value != null) {
                     Pa_StopStream(inputStreamPtr.value)
                     Pa_CloseStream(inputStreamPtr.value)
                     inputStreamPtr.value = null
                 }
-                
+
                 // 获取ALSA设备参数（如果是Linux系统）
                 val actualDeviceIndex = deviceIndex.takeIf { it >= 0 } ?: selectedInputDeviceIndex
                 var alsaDeviceParam = ""
-                
+
                 if (deviceSelector.isRaspberryPi()) {
                     alsaDeviceParam = deviceSelector.getALSADeviceString(actualDeviceIndex, true)
                     println("[INFO] 将使用ALSA输入设备: $alsaDeviceParam")
                 } else {
                     println("[INFO] 将使用输入设备索引: $actualDeviceIndex")
                 }
-                
+
                 // 尝试多次打开流，因为设备可能暂时被占用
                 var success = false
                 val maxRetries = 5
                 var retryCount = 0
-                
+
                 while (!success && retryCount < maxRetries) {
                     retryCount++
-                    
+
                     val result = if (actualDeviceIndex < 0) {
                         // 使用默认设备
                         Pa_OpenDefaultStream(
@@ -307,14 +323,15 @@ class PortAudioDevice(private val speechRecognizer: VoskSpeechRecognizer) : Audi
                             null       // 用户数据
                         )
                     }
-                    
+
                     if (result == paNoError) {
                         // 启动流
                         val startResult = Pa_StartStream(inputStreamPtr.value)
                         if (startResult == paNoError) {
                             println("[INFO] 音频输入流打开并启动成功")
                             success = true
-                            _deviceState.value = AudioDevice.AudioDeviceState.READY // Ready to start recognition loop
+                            _deviceState.value =
+                                AudioDevice.AudioDeviceState.READY // Ready to start recognition loop
                         } else {
                             println("[ERROR] 无法启动音频输入流: ${Pa_GetErrorText(startResult)?.toKString()}")
                             Pa_CloseStream(inputStreamPtr.value)
@@ -326,12 +343,12 @@ class PortAudioDevice(private val speechRecognizer: VoskSpeechRecognizer) : Audi
                         kotlinx.coroutines.runBlocking { kotlinx.coroutines.delay(1000) }
                     }
                 }
-                
+
                 if (!success) {
                     println("[ERROR] 多次尝试后仍无法打开音频输入流")
                     _deviceState.value = AudioDevice.AudioDeviceState.ERROR
                 }
-                
+
                 success
             }
         } catch (e: Exception) {
@@ -341,7 +358,7 @@ class PortAudioDevice(private val speechRecognizer: VoskSpeechRecognizer) : Audi
             false
         }
     }
-    
+
     /**
      * 打开音频输出流
      * @param deviceIndex 设备索引，-1表示默认设备
@@ -349,34 +366,38 @@ class PortAudioDevice(private val speechRecognizer: VoskSpeechRecognizer) : Audi
      * @param channels 通道数
      * @return 是否成功打开
      */
-    override suspend fun openOutputStream(deviceIndex: Int, sampleRate: Int, channels: Int): Boolean {
+    override suspend fun openOutputStream(
+        deviceIndex: Int,
+        sampleRate: Int,
+        channels: Int
+    ): Boolean {
         if (!portAudioInitialized) {
             println("[ERROR] PortAudio未初始化")
             return false
         }
-        
+
         return try {
             audioMutex.withLock {
                 println("[INFO] 尝试打开音频输出流...")
-                
+
                 // 关闭已存在的流
                 if (outputStreamPtr.value != null) {
                     Pa_StopStream(outputStreamPtr.value)
                     Pa_CloseStream(outputStreamPtr.value)
                     outputStreamPtr.value = null
                 }
-                
+
                 // 获取实际设备索引或ALSA设备
                 val actualDevice = deviceIndex.takeIf { it >= 0 } ?: selectedOutputDeviceIndex
                 var alsaDeviceParam = ""
-                
+
                 if (deviceSelector.isRaspberryPi()) {
                     alsaDeviceParam = deviceSelector.getALSADeviceString(actualDevice, false)
                     println("[INFO] 将使用ALSA输出设备: $alsaDeviceParam")
                 } else {
                     println("[INFO] 将使用输出设备: $actualDevice")
                 }
-                
+
                 // 尝试打开输出流
                 val result = if (actualDevice < 0) {
                     // 默认设备
@@ -403,7 +424,7 @@ class PortAudioDevice(private val speechRecognizer: VoskSpeechRecognizer) : Audi
                         null
                     )
                 }
-                
+
                 if (result == paNoError) {
                     // 启动流
                     val startResult = Pa_StartStream(outputStreamPtr.value)
@@ -430,7 +451,7 @@ class PortAudioDevice(private val speechRecognizer: VoskSpeechRecognizer) : Audi
             false
         }
     }
-    
+
     /**
      * 读取音频数据
      * @param buffer 数据缓冲区
@@ -442,10 +463,10 @@ class PortAudioDevice(private val speechRecognizer: VoskSpeechRecognizer) : Audi
             println("[ERROR] 音频输入流未打开")
             return -1
         }
-        
+
         // 简化计数逻辑
         val result = Pa_ReadStream(inputStreamPtr.value, buffer, frameCount.toUInt())
-        
+
         // 只检查必要的错误状态
         if (result == paNoError || result == paInputOverflowed) {
             // 仅在1000个样本时记录
@@ -458,14 +479,14 @@ class PortAudioDevice(private val speechRecognizer: VoskSpeechRecognizer) : Audi
             return -1
         }
     }
-    
+
     /**
      * 播放音频数据
      * @param buffer 数据缓冲区
      * @param frameCount 帧数
      * @return 播放的帧数，负值表示错误
      */
-    fun playAudio(buffer: CPointer<ShortVar>, frameCount: Int): Int {
+    override fun playAudio(buffer: CPointer<ShortVar>, frameCount: Int): Int {
         if (outputStreamPtr.value == null) {
             println("[ERROR] 音频输出流未打开，请在调用playAudio前先调用openOutputStream方法")
             return -1
@@ -476,7 +497,7 @@ class PortAudioDevice(private val speechRecognizer: VoskSpeechRecognizer) : Audi
         for (i in 0 until frameCount) {
             audioData[i] = buffer[i]
         }
-        
+
         // 通知语音识别器进行回声处理
         try {
             (speechRecognizer as? VoskSpeechRecognizer)?.processPlaybackReference(audioData)
@@ -487,16 +508,17 @@ class PortAudioDevice(private val speechRecognizer: VoskSpeechRecognizer) : Audi
         // 应用增益
         val amplifiedBuffer = nativeHeap.allocArray<ShortVar>(frameCount)
         val gain = 3.0f
-        
+
         for (i in 0 until frameCount) {
             val amplifiedValue = buffer[i].toInt() * gain
-            amplifiedBuffer[i] = kotlin.math.max(-32768, kotlin.math.min(32767, amplifiedValue.toInt())).toShort()
+            amplifiedBuffer[i] =
+                kotlin.math.max(-32768, kotlin.math.min(32767, amplifiedValue.toInt())).toShort()
         }
-        
+
         try {
             val result = Pa_WriteStream(outputStreamPtr.value, amplifiedBuffer, frameCount.toUInt())
             nativeHeap.free(amplifiedBuffer.rawValue)
-            
+
             if (result == paNoError) {
                 return frameCount
             } else if (result == paOutputUnderflowed) {
@@ -512,19 +534,19 @@ class PortAudioDevice(private val speechRecognizer: VoskSpeechRecognizer) : Audi
             return playAudioWithBuffer(buffer, frameCount)
         }
     }
-    
+
     /**
      * 使用缓冲策略播放音频
      */
     private fun playAudioWithBuffer(buffer: CPointer<ShortVar>, frameCount: Int): Int {
         if (outputStreamPtr.value == null) return -1
-        
+
         // 创建回声参考信号
         val audioData = ShortArray(frameCount)
         for (i in 0 until frameCount) {
             audioData[i] = buffer[i]
         }
-        
+
         // 通知语音识别器处理回声参考
         try {
             (speechRecognizer as? VoskSpeechRecognizer)?.processPlaybackReference(audioData)
@@ -540,21 +562,22 @@ class PortAudioDevice(private val speechRecognizer: VoskSpeechRecognizer) : Audi
             audioPlayBufferPos += frameCount
             return frameCount
         }
-        
+
         // 如果有缓冲数据，先播放缓冲数据
         if (audioPlayBufferPos > 0) {
             val totalFramesToPlay = audioPlayBufferPos + frameCount
             val tempBuffer = nativeHeap.allocArray<ShortVar>(totalFramesToPlay)
-            
+
             for (i in 0 until audioPlayBufferPos) {
                 tempBuffer[i] = audioPlayBuffer[i]
             }
             for (i in 0 until frameCount) {
                 tempBuffer[audioPlayBufferPos + i] = buffer[i]
             }
-            
+
             val result = try {
-                val writeResult = Pa_WriteStream(outputStreamPtr.value, tempBuffer, totalFramesToPlay.toUInt())
+                val writeResult =
+                    Pa_WriteStream(outputStreamPtr.value, tempBuffer, totalFramesToPlay.toUInt())
                 if (writeResult == paNoError || writeResult == paOutputUnderflowed) {
                     totalFramesToPlay
                 } else {
@@ -596,10 +619,10 @@ class PortAudioDevice(private val speechRecognizer: VoskSpeechRecognizer) : Audi
             _deviceState.value = AudioDevice.AudioDeviceState.ERROR
             return
         }
-        
+
         if (_deviceState.value != AudioDevice.AudioDeviceState.READY && _deviceState.value != AudioDevice.AudioDeviceState.ACTIVE) {
-             println("[ERROR] Device not in READY or ACTIVE state to start recognition. Current: ${_deviceState.value}")
-             return
+            println("[ERROR] Device not in READY or ACTIVE state to start recognition. Current: ${_deviceState.value}")
+            return
         }
 
         _deviceState.value = AudioDevice.AudioDeviceState.ACTIVE
@@ -613,12 +636,22 @@ class PortAudioDevice(private val speechRecognizer: VoskSpeechRecognizer) : Audi
 
             try {
                 while (isActive && inputStreamPtr.value != null) {
-                    val framesRead = Pa_ReadStream(currentInputStream, paBuffer, recognitionLoopBufferFrames.toUInt())
+                    val framesRead = Pa_ReadStream(
+                        currentInputStream,
+                        paBuffer,
+                        recognitionLoopBufferFrames.toUInt()
+                    )
 
                     if (!isActive) break
 
                     if (framesRead < 0) {
-                        println("[ERROR] Pa_ReadStream failed in recognition loop: ${Pa_GetErrorText(framesRead)?.toKString()}")
+                        println(
+                            "[ERROR] Pa_ReadStream failed in recognition loop: ${
+                                Pa_GetErrorText(
+                                    framesRead
+                                )?.toKString()
+                            }"
+                        )
                         _deviceState.value = AudioDevice.AudioDeviceState.ERROR
                         break
                     }
@@ -628,7 +661,8 @@ class PortAudioDevice(private val speechRecognizer: VoskSpeechRecognizer) : Audi
                     }
 
                     val currentAudioChunk = if (framesRead < recognitionLoopBufferFrames) {
-                        if (processingBuffer.size != framesRead) processingBuffer = ShortArray(framesRead)
+                        if (processingBuffer.size != framesRead) processingBuffer =
+                            ShortArray(framesRead)
                         for (i in 0 until framesRead) processingBuffer[i] = paBuffer[i]
                         processingBuffer
                     } else {
@@ -678,9 +712,9 @@ class PortAudioDevice(private val speechRecognizer: VoskSpeechRecognizer) : Audi
         }
         recognitionJob = null
         if (_deviceState.value == AudioDevice.AudioDeviceState.ACTIVE) {
-             _deviceState.value = AudioDevice.AudioDeviceState.READY
+            _deviceState.value = AudioDevice.AudioDeviceState.READY
         }
-         println("[INFO] Recognition stop requested. Loop should terminate.")
+        println("[INFO] Recognition stop requested. Loop should terminate.")
     }
 
     /**
@@ -696,37 +730,45 @@ class PortAudioDevice(private val speechRecognizer: VoskSpeechRecognizer) : Audi
                     try {
                         Pa_StopStream(inputStreamPtr.value)
                         Pa_CloseStream(inputStreamPtr.value)
-                        println("[INFO] 输入音频流已关闭 \n ${Throwable().getStackTrace().joinToString(" \n")} \n")
+                        println(
+                            "[INFO] 输入音频流已关闭 \n ${
+                                Throwable().getStackTrace().joinToString(" \n")
+                            } \n"
+                        )
                     } catch (e: Exception) {
                         println("[WARN] 关闭输入流时出错: ${e.message}")
                     }
                     inputStreamPtr.value = null
                 }
-                
+
                 // 在关闭输出流前，先播放缓冲区中的数据
                 if (outputStreamPtr.value != null && audioPlayBufferPos > 0) {
                     try {
                         println("[INFO] 关闭输出流前播放剩余缓冲数据，大小: $audioPlayBufferPos")
                         val tempBuffer = nativeHeap.allocArray<ShortVar>(audioPlayBufferPos)
-                        
+
                         // 复制缓冲区数据
                         for (i in 0 until audioPlayBufferPos) {
                             tempBuffer[i] = audioPlayBuffer[i]
                         }
-                        
+
                         // 播放剩余数据
-                        Pa_WriteStream(outputStreamPtr.value, tempBuffer, audioPlayBufferPos.toUInt())
-                        
+                        Pa_WriteStream(
+                            outputStreamPtr.value,
+                            tempBuffer,
+                            audioPlayBufferPos.toUInt()
+                        )
+
                         // 释放临时缓冲区
                         nativeHeap.free(tempBuffer.rawValue)
-                        
+
                         // 清空缓冲区
                         audioPlayBufferPos = 0
                     } catch (e: Exception) {
                         println("[WARN] 关闭前播放剩余数据时出错: ${e.message}")
                     }
                 }
-                
+
                 // 关闭输出流
                 if (outputStreamPtr.value != null) {
                     try {
@@ -738,9 +780,9 @@ class PortAudioDevice(private val speechRecognizer: VoskSpeechRecognizer) : Audi
                     }
                     outputStreamPtr.value = null
                 }
-                
+
                 if (_deviceState.value != AudioDevice.AudioDeviceState.ERROR) {
-                     _deviceState.value = AudioDevice.AudioDeviceState.IDLE
+                    _deviceState.value = AudioDevice.AudioDeviceState.IDLE
                 }
             }
         } catch (e: Exception) {
@@ -748,26 +790,81 @@ class PortAudioDevice(private val speechRecognizer: VoskSpeechRecognizer) : Audi
             e.printStackTrace()
         }
     }
-    
+
     /**
-     * 释放资源
+     * AudioDevice接口要求的suspend release方法
      */
     override suspend fun release() {
+        releaseResources()
+    }
+
+    /**
+     * AudioPlayer接口要求的非suspend release方法
+     */
+    override fun releasePlayer() {
+        // 通过协程调用suspend版本
+        scope.launch {
+            releaseResources()
+        }
+    }
+
+    /**
+     * 播放音频文件
+     * @param filePath 音频文件路径
+     * @return 是否成功开始播放
+     */
+    override fun playAudio(filePath: String): Boolean {
+        println("[INFO] 请求播放音频文件: $filePath")
+        // 简化实现 - 实际应用中应该加载并播放文件
+        _playbackState.value = AudioPlayer.PlaybackState.PLAYING
+
+        // 暂不实现实际文件播放功能，返回假成功
+        println("[WARN] 音频文件播放功能尚未实现")
+        _playbackState.value = AudioPlayer.PlaybackState.IDLE
+        return false
+    }
+
+    override fun initialize(
+        audioRecordDevice: AudioDevice,
+        deviceName: String,
+        sampleRate: Int
+    ): Boolean {
+        // Actual initialization logic for playback if different from general device init
+        // For now, let's assume general init is enough or it's handled by openOutputStream
+        println("[INFO] AudioPlayer (PortAudioDevice) initialized for playback with device: $deviceName, sampleRate: $sampleRate")
+        return true // Placeholder
+    }
+
+    override fun stopPlayback() {
+        // Actual stop playback logic if different from closing stream
+        // This might involve stopping a playback-specific coroutine or clearing playback buffers
+        println("[INFO] Playback stopped (PortAudioDevice)")
+        if (outputStreamPtr.value != null) {
+            // Pa_StopStream(outputStreamPtr.value) // Or Pa_AbortStream depending on desired behavior
+            // Consider managing playback state here
+            _playbackState.value = AudioPlayer.PlaybackState.IDLE
+        }
+    }
+
+    /**
+     * 内部实现释放逻辑
+     */
+    private suspend fun releaseResources() {
         stopRecognition() // Stop recognition loop before releasing PortAudio
         try {
             closeStreams() // Ensure streams are closed
-            
+
             // 终止PortAudio
             if (portAudioInitialized) {
                 Pa_Terminate()
                 portAudioInitialized = false
                 println("[INFO] PortAudio已终止")
             }
-            
+
             // 释放内存
             nativeHeap.free(inputStreamPtr.rawPtr)
             nativeHeap.free(outputStreamPtr.rawPtr)
-            
+
             if (_deviceState.value != AudioDevice.AudioDeviceState.ERROR) {
                 _deviceState.value = AudioDevice.AudioDeviceState.IDLE
             }

@@ -2,9 +2,9 @@
 
 package snowboyPiper.interfaces
 
-import com.airobot.device.yanapi.snowboyPiper.config.VoiceAssistantConfig
 import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.coroutines.flow.StateFlow
+import snowboyPiper.config.VoiceAssistantConfig
 
 /**
  * 关键词检测器接口
@@ -21,6 +21,7 @@ interface KeywordDetector {
         DETECTED,       // 检测到关键词
         ERROR           // 错误状态
     }
+
     enum class DetectorState(val value: Int) {
         Silence(-2),
         ERROR(-1),
@@ -28,18 +29,19 @@ interface KeywordDetector {
         Hotword1Triggered(1),
         Hotword2Triggered(2),
         Hotword3Triggered(3);
+
         companion object {
             fun fromValue(value: Int): DetectorState {
                 return entries.firstOrNull { it.value == value } ?: ERROR
             }
         }
     }
-    
+
     /**
      * 当前检测状态
      */
     val detectionState: StateFlow<DetectionState>
-    
+
     /**
      * 初始化检测器
      * @param resourcePath 资源文件路径
@@ -47,8 +49,12 @@ interface KeywordDetector {
      * @param sensitivity 灵敏度，范围0-1
      * @return 初始化是否成功
      */
-    fun initialize(resourcePath: String, modelPath: String, sensitivity: Float = VoiceAssistantConfig.snowboySensitivity): Boolean
-    
+    fun initialize(
+        resourcePath: String,
+        modelPath: String,
+        sensitivity: Float = 0.9f
+    ): Boolean
+
     /**
      * 检测关键词
      * @param buffer 音频数据缓冲区
@@ -62,7 +68,7 @@ interface KeywordDetector {
         sampleRate: Int,
         channels: Int
     ): DetectorState
-    
+
     /**
      * 释放资源
      */

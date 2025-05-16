@@ -2,12 +2,13 @@
 
 package snowboyPiper
 
-import com.airobot.device.yanapi.snowboyPiper.config.VoiceAssistantConfig
+
 import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.cinterop.staticCFunction
 import kotlinx.coroutines.runBlocking
 import platform.posix.SIGINT
 import platform.posix.signal
+import snowboyPiper.config.VoiceAssistantConfig
 import snowboyPiper.impl.SnowboyPiperVoiceAssistant
 import kotlin.time.ExperimentalTime
 
@@ -22,6 +23,10 @@ fun snowboyPiper() = runBlocking {
     println("该Demo将使用麦克风监听关键词，检测到关键词后会播放\"你好\"")
     println("按Ctrl+C终止程序")
     val config = VoiceAssistantConfig()
+
+    // 预热音频处理组件
+    AudioApplication.initialize()
+
     // 创建语音助手实例
     val voiceAssistant = SnowboyPiperVoiceAssistant(config)
     // 将局部变量赋值给全局变量
@@ -40,10 +45,10 @@ fun snowboyPiper() = runBlocking {
     // 初始化检测器
     println("初始化检测器...")
     val initSuccess = voiceAssistant.initialize()
-    
+
     if (initSuccess) {
         println("初始化成功，开始关键词检测...")
-        
+
         // 启动语音助手
         if (voiceAssistant.start()) {
             // 保持程序运行，直到收到终止信号
@@ -56,7 +61,7 @@ fun snowboyPiper() = runBlocking {
     } else {
         println("初始化失败")
     }
-    
+
     // 释放资源
     voiceAssistant.release()
 }

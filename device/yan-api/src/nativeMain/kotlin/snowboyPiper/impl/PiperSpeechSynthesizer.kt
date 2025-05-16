@@ -185,8 +185,8 @@ class PiperSpeechSynthesizer : SpeechSynthesizer {
                 text = text,
                 audio_buffer = audioBufferVar,
                 audio_length = audioLengthVar.ptr,
-                sampleRate=48000,
-                channels=1
+                sampleRate = 48000,
+                channels = 1
             )
 
             // 检查合成结果

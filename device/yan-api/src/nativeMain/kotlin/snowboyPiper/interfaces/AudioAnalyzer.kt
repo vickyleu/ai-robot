@@ -1,4 +1,4 @@
-package com.airobot.device.yanapi.snowboyPiper.interfaces
+package snowboyPiper.interfaces
 
 /**
  * 音频分析器接口
@@ -7,7 +7,7 @@ package com.airobot.device.yanapi.snowboyPiper.interfaces
 interface AudioAnalyzer {
     /**
      * 检测音频数据中是否含有语音活动
-     * @param audioData 音频数据
+     * @param buffer 音频数据
      * @return 是否检测到语音活动
      */
     fun hasVoiceActivity(buffer: ShortArray): Boolean

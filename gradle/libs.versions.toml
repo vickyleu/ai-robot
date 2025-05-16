@@ -8,7 +8,7 @@ grpcGoogleCloudSpeechV1 = "0.1.27"
 grpcOkhttp = "1.21.0"
 grpcStub = "1.70.0"
 gson = "2.12.1"
-kotlin = "2.1.20"
+kotlin = "2.1.21"
 #noinspection GradleDependency
 kotlin-grpc = "0.6.1-grpc-46"
 kotlinPopper = "2.11.8-pre.792"

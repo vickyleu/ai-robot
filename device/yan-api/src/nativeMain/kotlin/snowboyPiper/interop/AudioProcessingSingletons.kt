@@ -54,7 +54,13 @@ object RNNoiseSingleton {
     private var lastUseTime = 0L
 
     // 超时时间（毫秒）
-    private const val TIMEOUT_MS = 30000L
+    private const val TIMEOUT_MS = 120000L
+
+    // 默认VAD阈值
+    private const val DEFAULT_VAD_THRESHOLD = 0.08f
+
+    // 默认增益
+    private const val DEFAULT_GAIN = 2.5f
 
     // 用于多线程同步的锁对象
     private val lock = SynchronizedObject()
@@ -82,6 +88,10 @@ object RNNoiseSingleton {
                     println("[ERROR] 无法创建RNNoise实例")
                     return null
                 }
+
+                // 设置默认参数
+                rnnoise_wrapper_set_vad_threshold(instance, DEFAULT_VAD_THRESHOLD)
+                rnnoise_wrapper_set_gain(instance, DEFAULT_GAIN)
             }
 
             // 更新最后使用时间
@@ -118,14 +128,28 @@ object RNNoiseSingleton {
      * @return 处理的帧数
      */
     fun process(
-        inputBuffer: CArrayPointer<ShortVar>,
-        outputBuffer: CArrayPointer<ShortVar>,
+        inputBuffer: CArrayPointer<ShortVar>?,
+        outputBuffer: CArrayPointer<ShortVar>?,
         frameCount: Int,
         vadProbabilitiesPtr: CArrayPointer<FloatVar>? = null,
         maxVadValues: Int = 0,
-        vadThreshold: Float = 0.05f,
-        gain: Float = 3.0f
+        vadThreshold: Float = DEFAULT_VAD_THRESHOLD,
+        gain: Float = DEFAULT_GAIN
     ): Int {
+        // 参数检查
+        if (inputBuffer == null || outputBuffer == null || frameCount <= 0) {
+            // 如果参数检查失败，尝试获取实例并设置参数
+            val wrapper = getInstance() ?: return -1
+            try {
+                // 设置参数
+                rnnoise_wrapper_set_vad_threshold(wrapper, vadThreshold)
+                rnnoise_wrapper_set_gain(wrapper, gain)
+                return 0
+            } finally {
+                releaseInstance()
+            }
+        }
+
         val wrapper = getInstance() ?: return -1
 
         try {
@@ -235,10 +259,58 @@ object SoxrSingleton {
     private val lastUseTimeMap = mutableMapOf<SoxrConfig, Long>()
 
     // 超时时间（毫秒）
-    private const val TIMEOUT_MS = 30000L
+    private const val TIMEOUT_MS = 180000L // 增加超时时间，减少实例销毁重建
 
     // 用于多线程同步的锁对象
     private val lock = SynchronizedObject()
+
+    // 预定义常用采样率，用于预热
+    private val commonConfigs = listOf(
+        SoxrConfig(48000.0, 16000.0),
+        SoxrConfig(44100.0, 16000.0),
+        SoxrConfig(16000.0, 8000.0),
+        SoxrConfig(8000.0, 16000.0)
+    )
+
+    /**
+     * 预热常用采样率配置的实例
+     * 在程序启动时调用，减少运行时创建实例延迟
+     */
+    fun preloadCommonConfigs() {
+        synchronized(lock) {
+            for (config in commonConfigs) {
+                if (!instanceMap.containsKey(config) || instanceMap[config] == null) {
+                    val wrapper = createSoxrInstance(config.inputRate, config.outputRate)
+                    if (wrapper != null) {
+                        instanceMap[config] = wrapper
+                        refCountMap[config] = AtomicInt(0)
+                        lastUseTimeMap[config] = Clock.System.now().toEpochMilliseconds()
+                        println("[INFO] 预定义Soxr配置${config.inputRate}->${config.outputRate}预热成功")
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * 创建Soxr实例
+     */
+    private fun createSoxrInstance(inputRate: Double, outputRate: Double): CPointer<SoxWrapper>? {
+        val wrapper = soxr_wrapper_create() ?: return null
+
+        // 配置实例
+        soxr_io_spec_create(SOXR_FLOAT32_I, SOXR_FLOAT32_I, wrapper)
+        soxr_quality_spec_create(SOXR_FLOAT32_I, wrapper)
+
+        // 创建重采样器
+        val result = soxr_wrapper_create_resampler(wrapper, inputRate, outputRate)
+        if (result < 0 || wrapper.pointed.soxr == null) {
+            soxr_wrapper_destroy(wrapper)
+            return null
+        }
+
+        return wrapper
+    }
 
     /**
      * 获取Soxr实例
@@ -266,19 +338,11 @@ object SoxrSingleton {
 
             // 如果实例不存在，创建新实例
             if (!instanceMap.containsKey(config) || instanceMap[config] == null) {
-                val wrapper = soxr_wrapper_create() ?: return null
-
-                // 配置实例
-                soxr_io_spec_create(SOXR_FLOAT32_I, SOXR_FLOAT32_I, wrapper)
-                soxr_quality_spec_create(SOXR_FLOAT32_I, wrapper)
-
-                // 创建重采样器
-                val result = soxr_wrapper_create_resampler(wrapper, inputRate, outputRate)
-                if (result < 0 || wrapper.pointed.soxr == null) {
-                    soxr_wrapper_destroy(wrapper)
+                val wrapper = createSoxrInstance(inputRate, outputRate)
+                if (wrapper == null) {
+                    println("[ERROR] 无法创建Soxr实例: $inputRate -> $outputRate")
                     return null
                 }
-
                 // 保存实例
                 instanceMap[config] = wrapper
                 refCountMap[config] = AtomicInt(0)
@@ -407,6 +471,7 @@ object SoxrSingleton {
  */
 object AudioProcessingResourceManager {
     private var isShutdownHookRegistered = false
+    private var isPrewarmed = false
 
     /**
      * 注册关闭钩子，确保在程序结束时释放资源
@@ -424,6 +489,26 @@ object AudioProcessingResourceManager {
     }
 
     /**
+     * 预热资源，提前加载所有必要的资源
+     */
+    fun prewarmResources() {
+        if (isPrewarmed) return
+
+        // 预热常用采样率配置的实例
+        SoxrSingleton.preloadCommonConfigs()
+
+        // 预热RNNoise实例
+        val rnnoise = RNNoiseSingleton.getInstance()
+        if (rnnoise != null) {
+            println("[INFO] RNNoise实例预热成功")
+            RNNoiseSingleton.releaseInstance()
+        }
+
+        isPrewarmed = true
+        println("[INFO] 所有音频处理资源已预热完成")
+    }
+
+    /**
      * 释放所有音频处理资源
      */
     fun releaseAllResources() {
@@ -435,6 +520,9 @@ object AudioProcessingResourceManager {
 
         // 强制垃圾回收
         kotlin.native.runtime.GC.collect()
+
+        // 重置预热状态
+        isPrewarmed = false
 
         println("[INFO] 所有音频处理资源已释放")
     }

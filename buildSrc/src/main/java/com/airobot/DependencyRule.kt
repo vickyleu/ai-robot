@@ -34,6 +34,12 @@ data class DependencyRule(
                 // 固定版本, 不需要使用最新版本
                 "com.vickyleu.kotlinx:${it}:2.1.20-0.6.1"
             },
+            DependencyRule("com.vickyleu.kotlinx", { moduleName ->
+                moduleName.startsWith("kotlinx-rpc-compiler")
+            }) {
+                // 固定版本, 不需要使用最新版本
+                "com.vickyleu.kotlinx:${it}:2.1.20-0.6.1"
+            },
             DependencyRule("org.jetbrains.kotlinx", { moduleName ->
                 moduleName.startsWith("kotlinx-rpc") ||moduleName.startsWith("org.jetbrains.kotlinx.rpc")
             }) {
