@@ -1,4 +1,7 @@
+@file:OptIn(ExperimentalKotlinGradlePluginApi::class)
+
 import com.airobot.DependencyRule
+import org.jetbrains.kotlin.gradle.ExperimentalKotlinGradlePluginApi
 
 //需要判断是否是jitpack的构建，如果是jitpack的构建，需要将build目录设置到项目根目录下
 if (System.getenv("JITPACK") == null) {
@@ -109,6 +112,13 @@ subprojects {
     this.layout.buildDirectory.set(
         file("${rootProject.layout.buildDirectory.get().asFile.absolutePath}/subprojects/${project.name}")
     )
+    this.findProperty("kotlin")?.apply {
+        if (this is org.jetbrains.kotlin.gradle.dsl.KotlinMultiplatformExtension) {
+            this.apply {
+                kotlinDaemonJvmArgs = listOf("-Dkotlin.daemon.build.cache.dir=${this@subprojects.layout.buildDirectory.get().asFile.absolutePath}/cache")
+            }
+        }
+    }
 }
 
 
