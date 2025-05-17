@@ -64,6 +64,7 @@ android {
     dependencies{
         compileOnly(fileTree("libs") {
             include("*.jar", "*.aar")
+            exclude("rosa-2.7.0.jar")  // Exclude rosa-2.7.0.jar since it conflicts with cruzr-sdk
         })
     }
 }

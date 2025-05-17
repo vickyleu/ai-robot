@@ -1,0 +1,65 @@
+package voice.api
+
+import kotlinx.coroutines.flow.StateFlow
+
+/**
+ * 语音助手API接口
+ * 提供完整的语音助手功能
+ */
+interface VoiceAssistantApi {
+    /**
+     * 助手状态
+     */
+    enum class AssistantState {
+        IDLE,               // 空闲状态
+        INITIALIZING,       // 初始化中
+        LISTENING_KEYWORD,  // 监听唤醒词中
+        LISTENING_COMMAND,  // 监听命令中
+        RESPONDING,         // 正在响应
+        ERROR               // 错误状态
+    }
+    
+    /**
+     * 当前助手状态
+     */
+    val assistantState: StateFlow<AssistantState>
+    
+    /**
+     * 识别到的文本
+     */
+    val recognizedText: StateFlow<String?>
+    
+    /**
+     * 初始化语音助手
+     * @return 初始化是否成功
+     */
+    suspend fun initialize(): Boolean
+    
+    /**
+     * 启动语音助手
+     * @return 启动是否成功
+     */
+    suspend fun start(): Boolean
+    
+    /**
+     * 停止语音助手
+     */
+    suspend fun stop()
+    
+    /**
+     * 提交文本命令
+     * @param text 文本命令
+     */
+    suspend fun submitTextCommand(text: String): String
+    
+    /**
+     * 播放文本
+     * @param text 要播放的文本
+     */
+    suspend fun speak(text: String): Boolean
+    
+    /**
+     * 释放资源
+     */
+    suspend fun release()
+} 

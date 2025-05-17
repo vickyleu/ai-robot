@@ -1,4 +1,4 @@
-import snowboyPiper.snowboyPiper
+import voice.core.app.voiceDemo
 
 fun main() {
 //    val launcher = YanLauncher()
@@ -6,7 +6,6 @@ fun main() {
     println("Hello, Linux armhf! 我是编译的程序...\n")
 //    whisperPortaudio()
 //    portAudio()
-//    snowboyPiper()
 //    voiceAssistantDemo()
-    snowboyPiper()
+    voiceDemo()
 }
