@@ -35,8 +35,9 @@ import platform.posix.popen
 import voice.api.synthesis.ISpeechSynthesizer
 import voice.acquisition.portaudio.PortAudioDevice
 import voice.util.AudioUtils
-import voice.util.SynchronizedObject
 import kotlinx.cinterop.memScoped
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 /**
  * Piper语音合成器实现
@@ -54,7 +55,7 @@ class PiperSpeechSynthesizer : ISpeechSynthesizer {
     private val audioPlayer = PortAudioDevice.getInstance()
     
     // 同步锁，用于线程安全
-    private val mutex = SynchronizedObject()
+    private val mutex = Mutex()
     
     // 是否正在播放
     private var isSpeakingFlag = false
@@ -303,7 +304,7 @@ class PiperSpeechSynthesizer : ISpeechSynthesizer {
      * @param text 要播放的文本
      * @return 播放是否成功
      */
-    override fun speak(text: String): Boolean {
+    override suspend fun speak(text: String): Boolean {
         if (isSpeakingFlag) {
             stopSpeaking()
         }
