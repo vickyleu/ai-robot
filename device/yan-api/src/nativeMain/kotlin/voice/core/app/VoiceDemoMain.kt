@@ -53,12 +53,16 @@ fun voiceDemo() = runBlocking {
             // 保持程序运行，直到收到终止信号
             var counter = 0
             while (true) {
-                // 每秒钟输出一条消息，确保程序还在运行
+                // 每秒钟增加计数器
                 counter++
-                println("【系统检测】程序正在运行，已经运行${counter}秒")
                 
-                // 每10秒打印一次简单诊断信息
-                if (counter % 10 == 0) {
+                // 降低日志频率：每30秒输出一次运行状态
+                if (counter % 30 == 0) {
+                    println("【系统检测】程序正在运行，已经运行${counter}秒")
+                }
+                
+                // 降低诊断信息频率：每60秒打印一次诊断信息
+                if (counter % 60 == 0) {
                     println("【诊断信息】语音助手状态: ${voiceAssistant.assistantState.value}")
                 }
                 

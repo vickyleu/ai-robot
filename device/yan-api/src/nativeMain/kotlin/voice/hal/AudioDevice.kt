@@ -12,8 +12,9 @@ import kotlinx.coroutines.flow.StateFlow
  * 定义音频设备的基本操作
  */
 interface AudioDevice {
+
     /**
-     * 音频设备状态
+     * 音频设备状态枚举
      */
     enum class AudioDeviceState {
         IDLE,           // 空闲状态
@@ -101,6 +102,11 @@ interface AudioDevice {
      * 释放资源
      */
     fun release()
+    
+    /**
+     * 停止当前播放
+     */
+    fun stopPlayback()
     
     /**
      * 获取设备信息

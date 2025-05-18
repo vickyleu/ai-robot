@@ -1,15 +1,18 @@
 package voice.audio.processing
 
+import com.airobot.core.utils.format
 import kotlinx.cinterop.ExperimentalForeignApi
+import kotlinx.datetime.Clock.System
 import voice.api.AudioProcessingApi
 import voice.api.vad.IVoiceActivityDetector
 import voice.audio.AudioPipeline
-import voice.audio.acquisition.PortAudioAcquisition
+import voice.acquisition.portaudio.PortAudioAcquisition
 import voice.audio.recognition.VoskSpeechRecognizer
 import voice.audio.vad.VoiceActivityDetector
 import voice.util.DiagnosticsCollector
 import voice.util.LogManager
 import kotlin.time.ExperimentalTime
+import voice.acquisition.portaudio.PortAudioDevice
 
 /**
  * 音频处理管理器
@@ -23,13 +26,16 @@ class AudioProcessingManager(
     
     // 音频流水线组件
     private val acquisition = PortAudioAcquisition(
-        // 降低采样率以提高性能
-        AudioPipeline.Acquisition.Config(sampleRate = 16000, channels = 1)
+        AudioPipeline.Acquisition.Config(sampleRate = 16000, channels = 2)
     )
     private val preprocessor = AudioPreprocessor()
     private val vad = VoiceActivityDetector()
     private val recognizer = VoskSpeechRecognizer()
     private val diagnostics = DiagnosticsCollector()
+
+    // 专用的播放设备用于识别回放，与录音设备分开可避免冲突
+    private val playbackDevice: PortAudioDevice = PortAudioDevice()
+    private var playerReady = false
     
     // 回调处理
     private var keywordDetectedCallback: ((String) -> Unit)? = null
@@ -43,6 +49,27 @@ class AudioProcessingManager(
     private var speechFrameCount = 0
     private var lastFrameTime = 0L
     private var recognitionCallCount = 0
+    
+    // 记录处理开始的时间，用于计算识别延迟
+    private var processingStartTime = 0L
+    
+    // 是否处于调试模式，只有调试模式才会输出部分日志
+    private val debugMode = false
+
+    /**
+     * 将字节数组（PCM 16位）转换为短整型数组
+     */
+    private fun convertBytesToShorts(bytes: ByteArray, length: Int): ShortArray {
+        if (length == 0 || length % 2 != 0) return ShortArray(0)
+        val shorts = ShortArray(length / 2)
+        for (i in shorts.indices) {
+            // 小端字节序 (Little Endian)
+            val byte1 = bytes[i * 2].toInt() and 0xFF
+            val byte2 = bytes[i * 2 + 1].toInt() and 0xFF
+            shorts[i] = ((byte2 shl 8) or byte1).toShort()
+        }
+        return shorts
+    }
     
     /**
      * 获取处理统计信息
@@ -80,6 +107,24 @@ class AudioProcessingManager(
             return false
         }
         
+        // 配置VAD灵敏度 - 设置为中低灵敏度(0.4)以减少误触发
+        vad.setSensitivity(0.4f)
+        logger.info("已设置VAD灵敏度为中低灵敏度(0.4)，减少误触发")
+
+        // 初始化专用的播放设备 (与录音设备分离)
+        if (playbackDevice.initialize("回放设备", 16000)) {
+            if (playbackDevice.start()) {
+                playerReady = true
+                logger.info("专用播放设备初始化成功")
+            } else {
+                logger.warn("启动专用播放设备失败，回放功能将不可用")
+                playerReady = false
+            }
+        } else {
+            logger.warn("初始化专用播放设备失败，回放功能将不可用")
+            playerReady = false
+        }
+        
         isInitialized = true
         logger.info("音频处理管理器初始化成功")
         return true
@@ -104,10 +149,7 @@ class AudioProcessingManager(
             return
         }
         
-        // 构建关键词字符串，以逗号分隔
         val keywordsString = keywords.joinToString(",")
-        
-        // 更新Vosk识别器的关键词
         recognizer.updateKeywords(keywordsString)
     }
     
@@ -119,10 +161,14 @@ class AudioProcessingManager(
             logger.warn("音频处理流水线已经在运行中")
             return
         }
+        if (!isInitialized) {
+            logger.error("音频处理管理器未初始化，无法启动！")
+            return
+        }
         
         logger.info("启动音频处理流水线")
+        processingStartTime = System.now().toEpochMilliseconds()
         
-        // 启动音频采集
         acquisition.startCapture { audioData, length ->
             val timestamp = LogManager.getCurrentTimeMillis()
             processAudioFrame(audioData, length, timestamp)
@@ -141,15 +187,14 @@ class AudioProcessingManager(
         frameCount++
         lastFrameTime = timestamp
         
-        logger.info("【调试】音频帧#$frameCount: 长度=${length}字节, 时间戳=$timestamp")
-        logger.info("【调试】原始音频能量: ${calculateRms(audioData, length)}")
-        
-        // 输出状态信息
-        println("【系统状态】音频帧#$frameCount: 能量=${calculateRms(audioData, length)}")
+        // 仅在调试模式下每100帧输出系统状态
+        if (debugMode && frameCount % 100 == 0) {
+            val energy = calculateRms(audioData, length)
+            println("【系统状态】音频帧#$frameCount: 能量=$energy")
+        }
         
         // 1. 音频预处理
         val processResult = preprocessor.process(audioData, length)
-        logger.info("【调试】音频预处理结果: shouldContinue=${processResult.shouldContinue}, RMS=${processResult.metrics.rms}, 处理后长度=${processResult.processedLength}")
         
         // 如果预处理判断为不应继续，则跳过后续处理
         if (!processResult.shouldContinue || processResult.processedLength == 0) {
@@ -158,25 +203,52 @@ class AudioProcessingManager(
         
         // 2. 语音活动检测
         val vadResult = vad.detect(processResult.processedAudio, processResult.processedLength)
-        logger.info("【调试】VAD结果: 语音=${vadResult.hasSpeech}, 概率=${vadResult.confidence}, 能量=${vadResult.metrics.energyLevel}")
+
+        // 仅当检测到语音且置信度高时输出VAD结果
+        if (vadResult.hasSpeech && vadResult.confidence > 0.80) {
+            logger.info("VAD: 检测到语音！置信度=${vadResult.confidence}, 能量=${vadResult.metrics.energyLevel}")
+        }
         
-        // 只在VAD确认检测到语音，且有语音边界事件时才处理语音识别
-        // 这样可以减少频繁的处理和错误识别
-        if (vadResult.hasSpeech) {
+        // 使用更严格的条件进行语音识别，避免误触发
+        if (vadResult.hasSpeech && vadResult.confidence > 0.80) {
+            if (processResult.processedLength == 0) {
+                return
+            }
+
+            // 复制一份用于识别和播放的音频数据
+            val audioToRecognizeAndPlay = processResult.processedAudio.copyOfRange(0, processResult.processedLength)
+            
+            // 只在识别开始时记录日志，减少输出
+            logger.info("识别开始: 置信度=${"%.2f".format(vadResult.confidence.toDouble())}, 音频长度=${audioToRecognizeAndPlay.size}字节")
+            
             // 3. 语音识别
             val recognitionResult = recognizer.recognize(
-                processResult.processedAudio,
-                processResult.processedLength
+                audioToRecognizeAndPlay,
+                audioToRecognizeAndPlay.size
             )
             recognitionCallCount++
             
-            logger.info("【调试】语音识别结果: 成功=${recognitionResult.success}, 文本=\"${recognitionResult.text}\", 部分=${recognitionResult.isPartial}")
-            
-            // 检测到关键词
-            if (recognitionResult.success && !recognitionResult.isPartial && 
-                recognitionResult.text.isNotBlank() && frameCount % 5 == 0) {
-                // 调用关键词回调
-                keywordDetectedCallback?.invoke(recognitionResult.text)
+            // 只记录有结果的识别或明确失败的识别
+            if (recognitionResult.success && recognitionResult.text.isNotBlank()) {
+                logger.info("识别结果: \"${recognitionResult.text}\"${if(recognitionResult.isPartial) " (部分结果)" else ""}")
+                
+                if (!recognitionResult.isPartial) {
+                    speechFrameCount++ 
+                    
+                    // 播放被识别的音频片段
+                    if (playerReady) {
+                        val shortArrayToPlay = convertBytesToShorts(audioToRecognizeAndPlay, audioToRecognizeAndPlay.size)
+                        if (shortArrayToPlay.isNotEmpty()) {
+                            playbackDevice.playAudio(shortArrayToPlay)
+                            logger.info("回放识别的音频片段 (${shortArrayToPlay.size}采样点)")
+                        }
+                    }
+                    
+                    // 触发关键词回调 (每个非部分结果都会触发，不再限制为每3次)
+                    keywordDetectedCallback?.invoke(recognitionResult.text)
+                }
+            } else if (!recognitionResult.success) {
+                logger.warn("识别失败")
             }
         }
     }
@@ -197,7 +269,6 @@ class AudioProcessingManager(
     
     /**
      * 生成诊断报告
-     * @return 诊断信息文本
      */
     override fun generateDiagnosticReport(): String {
         val report = StringBuilder()
@@ -207,25 +278,27 @@ class AudioProcessingManager(
         report.appendLine("运行状态: ${if (isRunning) "运行中" else "未运行"}")
         report.appendLine("处理总帧数: $frameCount")
         report.appendLine("识别到语音的帧数: $speechFrameCount")
-        report.appendLine("语音比例: ${if (frameCount > 0) "${speechFrameCount * 100 / frameCount}%" else "N/A"}")
+        report.appendLine("语音比例: ${if (frameCount > 0 && speechFrameCount > 0) "${"%.2f".format(speechFrameCount.toDouble() * 100.0 / frameCount)}%" else "N/A"}")
         report.appendLine("最后一帧处理时间: $lastFrameTime")
         report.appendLine("识别调用次数: $recognitionCallCount")
+        report.appendLine("运行时间: ${(System.now().toEpochMilliseconds() - processingStartTime) / 1000}秒")
         
-        // 添加采集器诊断信息
-        report.appendLine("\n音频采集器状态:")
+        report.appendLine("音频采集器状态:")
         report.appendLine("------------------")
-        report.appendLine("采样率: 16000Hz")
+        report.appendLine("采样率: ${acquisition.config.sampleRate}Hz, 通道数: ${acquisition.config.channels}")
         
-        // 添加VAD诊断信息
-        report.appendLine("\nVAD状态:")
+        report.appendLine("VAD状态:")
         report.appendLine("------------------")
-        report.appendLine("VAD已初始化: ${vad != null}")
+        report.appendLine("VAD已配置")
         
-        // 添加识别器诊断信息
-        report.appendLine("\n识别器状态:")
+        report.appendLine("识别器状态:")
         report.appendLine("------------------")
-        report.appendLine("识别器已初始化: ${recognizer != null}")
+        report.appendLine("识别器已初始化: ${recognizer.isInitialized}")
         
+        report.appendLine("播放器状态:")
+        report.appendLine("------------------")
+        report.appendLine("专用播放器已就绪: $playerReady")
+
         return report.toString()
     }
     
@@ -240,32 +313,38 @@ class AudioProcessingManager(
         if (isInitialized) {
             acquisition.release()
             recognizer.release()
+            
+            if (playerReady) {
+                logger.info("释放专用播放设备...")
+                playbackDevice.stopPlayback()
+                playbackDevice.release()
+                playerReady = false
+            }
+            
             isInitialized = false
+            logger.info("音频处理管理器资源已释放")
         }
     }
     
     /**
      * 计算音频数据的RMS能量
-     * @param audioData 音频数据
-     * @param length 数据长度
-     * @return RMS能量值
      */
     private fun calculateRms(audioData: ByteArray, length: Int): Double {
+        if (length == 0 || length % 2 != 0) return 0.0
         var sumSquares = 0.0
-        val sampleCount = length / 2 // 16位音频每样本2字节
+        val sampleCount = length / 2 
         
         for (i in 0 until length step 2) {
-            if (i + 1 < length) {
-                val sample = (audioData[i].toInt() and 0xFF) or ((audioData[i + 1].toInt() and 0xFF) shl 8)
-                val signedSample = if (sample and 0x8000 != 0) {
-                    sample - 0x10000
-                } else {
-                    sample
-                }
-                sumSquares += signedSample * signedSample
+            val byte1 = audioData[i].toInt() and 0xFF
+            val byte2 = audioData[i + 1].toInt() and 0xFF
+            var sample = (byte2 shl 8) or byte1
+            // 将无符号16位PCM转换为有符号
+            if (sample > 32767) {
+                sample -= 65536
             }
+            sumSquares += sample * sample.toDouble()
         }
         
-        return kotlin.math.sqrt(sumSquares / sampleCount)
+        return if (sampleCount > 0) kotlin.math.sqrt(sumSquares / sampleCount) else 0.0
     }
-} 
+}

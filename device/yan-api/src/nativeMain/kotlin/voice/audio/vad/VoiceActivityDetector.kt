@@ -16,7 +16,13 @@ import kotlin.time.TimeSource
 @OptIn(ExperimentalForeignApi::class, ExperimentalTime::class)
 class VoiceActivityDetector : IVoiceActivityDetector {
     private val logger = LogManager.getLogger("VoiceActivityDetector")
-    private val config = VADConfig()
+    private val config = VADConfig(
+        energyThreshold = 800.0,     // 提高能量阈值，减少误触发
+        snrThreshold = 3.5,          // 提高信噪比要求，增加触发难度
+        speechThreshold = 0.85f,     // 提高语音阈值要求
+        minConsecutiveSpeechFrames = 6, // 提高连续语音帧要求
+        minConsecutiveSilenceFrames = 6  // 提高连续静音帧要求
+    )
     
     // 语音检测状态
     private var isSpeechDetected = false
@@ -54,18 +60,23 @@ class VoiceActivityDetector : IVoiceActivityDetector {
     override fun detect(audio: ByteArray, length: Int): IVoiceActivityDetector.DetectionResult {
         totalFrames++
         
-        // 输出原始音频长度
-        logger.info("【调试】VAD收到音频: 长度=${length}, 帧序号=${totalFrames}")
+        // 修改为debug级别且每50帧才输出一次（从10帧提高到50帧）
+        if (totalFrames % 50 == 0) {
+            logger.debug("VAD收到音频: 长度=${length}, 帧序号=${totalFrames}")
+        }
         
         // 计算当前帧能量
         val samples = convertBytesToShorts(audio, length)
         val energy = calculateEnergy(samples)
         
-        logger.info("【调试】VAD音频能量: $energy, 阈值: ${config.energyThreshold}")
+        // 每100帧才输出一次能量信息，或者超过阈值很多时才输出（从20帧提高到100帧）
+        if (totalFrames % 100 == 0 || energy > config.energyThreshold * 2.0) {
+            logger.debug("VAD音频能量: $energy, 阈值: ${config.energyThreshold}")
+        }
         
-        // 每100帧记录一次能量值
+        // 每200帧记录一次能量值（从100帧提高到200帧）
         frameCounter++
-        if (frameCounter % 100 == 0 || (energy > config.energyThreshold && frameCounter % 10 == 0)) {
+        if (frameCounter % 200 == 0 || (energy > config.energyThreshold * 2.0 && frameCounter % 50 == 0)) {
             logger.debug("音频能量: $energy, 阈值: ${config.energyThreshold}, 上次能量: $lastEnergy")
             lastEnergy = energy
         }
@@ -93,10 +104,13 @@ class VoiceActivityDetector : IVoiceActivityDetector {
         val isStableSpeech = consecutiveSpeechFrames >= config.minConsecutiveSpeechFrames
         val isStableSilence = consecutiveSilenceFrames >= config.minConsecutiveSilenceFrames
         
-        logger.info("【调试】VAD状态: 能量=${energy}, 噪声基准=${noiseFloor}, 信噪比=${snr}, 语音概率=${speechProbability}, 连续语音帧=${consecutiveSpeechFrames}, 连续静音帧=${consecutiveSilenceFrames}")
+        // 只在状态变化或每200帧输出一次详细日志（从50帧提高到200帧）
+        if (totalFrames % 200 == 0 || isStableSpeech || (isSpeechDetected && isStableSilence)) {
+            logger.debug("VAD状态: 能量=${energy}, 噪声基准=${noiseFloor}, 信噪比=${snr}, 语音概率=${speechProbability}, 连续语音帧=${consecutiveSpeechFrames}, 连续静音帧=${consecutiveSilenceFrames}")
+        }
         
         // 语音检测状态处理（防抖动）
-        handleSpeechState(isStableSpeech, isStableSilence)
+        handleSpeechState(isStableSpeech, isStableSilence, speechProbability, energy)
         
         // 创建VAD指标
         val metrics = VADMetrics(
@@ -105,23 +119,27 @@ class VoiceActivityDetector : IVoiceActivityDetector {
             noiseLevel = noiseFloor
         )
         
-        // 记录详细诊断
-        if (totalFrames % 100 == 0) {
+        // 记录详细诊断，从200帧提高到500帧
+        if (totalFrames % 500 == 0) {
             logger.debug("VAD统计: 总帧数=${totalFrames}, 语音帧数=${speechFrames}, " +
                     "语音比例=${speechFrames.toFloat() / totalFrames.toFloat() * 100f}%, " +
                     "当前噪声基准=${noiseFloor}")
         }
         
-        // 确定是否有语音和是否可以开始识别
-        val hasSpeech = isSpeechDetected || speechEndDetected
-        
-        // 如果检测到语音结束，在返回一次hasSpeech=true后重置状态
-        if (speechEndDetected) {
-            logger.info("【重要】语音片段已结束，触发一次识别")
+        // 确定是否有语音
+        val hasSpeech = if (speechEndDetected) {
+            // 如果是语音结束帧，强制返回一次true后重置
             speechEndDetected = false
+            true
+        } else {
+            // 否则只在检测到稳定语音且语音概率足够高时返回true
+            isSpeechDetected && (speechProbability > 0.5f || consecutiveSilenceFrames <= config.minConsecutiveSilenceFrames / 2)
         }
         
-        logger.info("【调试】VAD最终结果: 检测到语音=${hasSpeech}, 信心指数=${speechProbability}")
+        // 只在状态变化或每200帧记录一次最终结果（从100帧提高到200帧）
+        if (hasSpeech || (totalFrames % 200 == 0)) {
+            logger.debug("VAD最终结果: 检测到语音=${hasSpeech}, 信心指数=${speechProbability}")
+        }
         
         return IVoiceActivityDetector.DetectionResult(
             hasSpeech = hasSpeech,
@@ -133,7 +151,7 @@ class VoiceActivityDetector : IVoiceActivityDetector {
     /**
      * 处理语音状态（防抖动）
      */
-    private fun handleSpeechState(isStableSpeech: Boolean, isStableSilence: Boolean) {
+    private fun handleSpeechState(isStableSpeech: Boolean, isStableSilence: Boolean, speechProbability: Float, energy: Double) {
         val now = TimeSource.Monotonic.markNow()
         
         if (isStableSpeech) {
@@ -150,20 +168,40 @@ class VoiceActivityDetector : IVoiceActivityDetector {
             
             speechFrames++
         } else if (isStableSilence) {
-            // 检测到稳定静音，检查是否超过保持时间
+            // 检测到稳定静音
             val elapsed = now - lastSpeechTime
-            if (isSpeechDetected && elapsed.inWholeMilliseconds > config.speechHoldTimeMs) {
-                logger.info("语音结束，持续 ${elapsed.inWholeMilliseconds} ms")
+            
+            // 如果语音概率为0，且当前是语音状态，且已经有足够的静音帧，则立即结束语音
+            if (isSpeechDetected && speechProbability < 0.2f && 
+                consecutiveSilenceFrames >= config.minConsecutiveSilenceFrames) {
+                // 降低语音结束的时间阈值，使语音更快结束
+                val timeThreshold = if (energy < config.energyThreshold * 0.7) 300L else config.speechHoldTimeMs
                 
-                // 如果正在等待语音结束，标记语音结束事件
-                if (waitingForSpeechEnd) {
-                    speechEndDetected = true
-                    waitingForSpeechEnd = false
-                    logger.info("检测到完整语音片段，可以开始识别")
+                if (elapsed.inWholeMilliseconds > timeThreshold) {
+                    logger.info("语音结束，持续 ${elapsed.inWholeMilliseconds} ms")
+                    
+                    // 如果正在等待语音结束，标记语音结束事件
+                    if (waitingForSpeechEnd) {
+                        speechEndDetected = true
+                        waitingForSpeechEnd = false
+                        logger.info("检测到完整语音片段，可以开始识别")
+                    }
+                    
+                    // 立即重置语音状态
+                    isSpeechDetected = false
                 }
-                
-                isSpeechDetected = false
             }
+        }
+        
+        // 新增：强制结束过长语音
+        val speechDuration = now - lastSpeechTime
+        if (isSpeechDetected && speechDuration.inWholeMilliseconds > 3000) { // 3秒最大语音时长
+            logger.info("语音时长过长，强制结束")
+            if (waitingForSpeechEnd) {
+                speechEndDetected = true
+                waitingForSpeechEnd = false
+            }
+            isSpeechDetected = false
         }
     }
     
@@ -185,7 +223,7 @@ class VoiceActivityDetector : IVoiceActivityDetector {
         val energyFactor = minOf(1.0, (energy - config.energyThreshold) / config.energyThreshold)
         val snrFactor = minOf(1.0, (snr - config.snrThreshold) / config.snrThreshold)
         
-        return (energyFactor * 0.8 + snrFactor * 0.2).toFloat()
+        return (energyFactor * 0.85 + snrFactor * 0.15).toFloat()
     }
     
     /**
@@ -283,7 +321,8 @@ class VoiceActivityDetector : IVoiceActivityDetector {
             energyThreshold = 500.0 * (1.0 + factor),
             snrThreshold = 2.5 * (1.0 + factor * 0.5),
             speechThreshold = 0.7f * (1.0f + factor * 0.3f),
-            minConsecutiveSpeechFrames = (3 + factor * 2).toInt()
+            minConsecutiveSpeechFrames = (3 + factor * 2).toInt(),
+            minConsecutiveSilenceFrames = (4 + factor * 2).toInt()
         )
         
         logger.info("VAD灵敏度设置为 $sensitivity, 能量阈值=${customConfig.energyThreshold}, 语音概率阈值=${customConfig.speechThreshold}")
@@ -296,9 +335,9 @@ class VoiceActivityDetector : IVoiceActivityDetector {
         val energyThreshold: Double = 500.0,     // 能量阈值，进一步提高以降低误触发
         val snrThreshold: Double = 2.5,          // 信噪比阈值，提高以要求更清晰的语音
         val speechThreshold: Float = 0.7f,       // 语音概率阈值，提高以增加可信度要求
-        val speechHoldTimeMs: Long = 600,        // 语音保持时间，降低以更快结束语音状态
+        val speechHoldTimeMs: Long = 400,        // 语音保持时间，降低以更快结束语音状态
         val minConsecutiveSpeechFrames: Int = 3, // 判定为语音所需的最少连续帧数
-        val minConsecutiveSilenceFrames: Int = 5 // 判定为静音所需的最少连续帧数
+        val minConsecutiveSilenceFrames: Int = 4 // 判定为静音所需的最少连续帧数
     )
     
     companion object {

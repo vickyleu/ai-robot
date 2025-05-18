@@ -6,6 +6,16 @@ package voice.api
  */
 interface AudioPlayerApi {
     /**
+     * 音频设备状态
+     */
+    enum class AudioDeviceState {
+        IDLE,           // 空闲状态
+        INITIALIZING,   // 初始化中
+        READY,          // 就绪状态
+        ACTIVE,         // 活动状态
+        ERROR           // 错误状态
+    }
+    /**
      * 初始化播放器
      * @param sampleRate 采样率
      * @param channels 通道数

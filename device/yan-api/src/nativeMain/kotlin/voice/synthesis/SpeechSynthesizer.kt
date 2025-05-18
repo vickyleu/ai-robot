@@ -33,7 +33,7 @@ import platform.posix.fread
 import platform.posix.pclose
 import platform.posix.popen
 import voice.api.synthesis.ISpeechSynthesizer
-import voice.hal.PortAudioDevice
+import voice.acquisition.portaudio.PortAudioDevice
 
 /**
  * Piper语音合成器实现

@@ -220,4 +220,19 @@ class KeywordDetector : IKeywordDetector {
         callbacks.clear()
         _detectorState.value = IKeywordDetector.DetectorState.IDLE
     }
+    
+    /**
+     * 直接检测给定的音频数据是否包含关键词
+     * @param audioData 音频数据
+     * @return 是否检测到关键词
+     */
+    fun detect(audioData: ShortArray): Boolean {
+        // 如果不在监听状态，直接返回false
+        if (_detectorState.value != IKeywordDetector.DetectorState.LISTENING) {
+            return false
+        }
+        
+        // 处理音频帧，这会将数据传递给AudioProcessingManager
+        return processAudioFrame(audioData, audioData.size)
+    }
 } 
