@@ -35,6 +35,7 @@ import platform.posix.popen
 import voice.api.synthesis.ISpeechSynthesizer
 import voice.acquisition.portaudio.PortAudioDevice
 import voice.util.AudioUtils
+import voice.util.SynchronizedObject
 import kotlinx.cinterop.memScoped
 
 /**
@@ -51,6 +52,9 @@ class PiperSpeechSynthesizer : ISpeechSynthesizer {
 
     // 使用全局单例的音频设备，避免多个实例导致状态不同步
     private val audioPlayer = PortAudioDevice.getInstance()
+    
+    // 同步锁，用于线程安全
+    private val mutex = SynchronizedObject()
     
     // 是否正在播放
     private var isSpeakingFlag = false
@@ -221,6 +225,7 @@ class PiperSpeechSynthesizer : ISpeechSynthesizer {
 
         _synthesisState.value = SynthesisState.SYNTHESIZING
         println("[INFO] 开始合成文本: \"$text\"")
+        println("Starting synthesis for text: $text")
 
         return memScoped {
             val audioBufferVar = alloc<CPointerVar<ShortVar>>()
@@ -240,28 +245,55 @@ class PiperSpeechSynthesizer : ISpeechSynthesizer {
                 println("[ERROR] 语音合成失败，返回值: $ret")
                 _synthesisState.value = SynthesisState.ERROR
                 ByteArray(0)
-            } else {
+            }
+            else {
                 val frameCount = audioLengthVar.value
                 val monoBufferPtr = audioBufferVar.value
+                
                 if (monoBufferPtr == null) {
                     println("[ERROR] Piper返回的音频缓冲区为空")
                     _synthesisState.value = SynthesisState.ERROR
                     return@memScoped ByteArray(0)
                 }
-
-                val monoShortArray = ShortArray(frameCount)
-                for (i in 0 until frameCount) {
-                    monoShortArray[i] = monoBufferPtr[i]
+                
+                // 安全检查：帧数应该是个合理值
+                if (frameCount <= 0 || frameCount > 1000000) {  // 设置一个合理的上限，防止异常值
+                    println("[ERROR] Piper返回的帧数异常: $frameCount")
+                    // 释放C侧音频缓冲区
+                    com.airobot.piperinterop.piper_wrapper_free_audio(monoBufferPtr)
+                    _synthesisState.value = SynthesisState.ERROR
+                    return@memScoped ByteArray(0)
                 }
-
-                // 释放C侧音频缓冲区，防止内存泄漏
-                com.airobot.piperinterop.piper_wrapper_free_audio(monoBufferPtr)
-
-                val stereoShortArray = AudioUtils.monoToStereo(monoShortArray)
-                val byteArray = AudioUtils.shortArrayToByteArray(stereoShortArray)
-
-                _synthesisState.value = SynthesisState.IDLE
-                byteArray
+                
+                println("[INFO] Piper生成了 $frameCount 帧音频数据")
+                
+                try {
+                    // 直接使用字节数组，跳过ShortArray转换，避免中间数组分配
+                    // 单声道转立体声(1通道转2通道)并转换为字节格式
+                    // 一个short是2字节，一个立体声帧是2个short(左右声道)，所以总长度是frameCount*2*2
+                    val byteArraySize = frameCount * 4  // 立体声每帧4字节
+                    val byteArray = ByteArray(byteArraySize)
+                    
+                    // 直接复制并转换，避免中间数组
+                    for (i in 0 until frameCount) {
+                        val monoSample = monoBufferPtr[i]
+                        
+                        // 复制到左声道(低字节在前，高字节在后 - 小端序)
+                        byteArray[i * 4] = (monoSample.toInt() and 0xFF).toByte()
+                        byteArray[i * 4 + 1] = (monoSample.toInt() shr 8).toByte()
+                        
+                        // 复制到右声道(同样的值)
+                        byteArray[i * 4 + 2] = (monoSample.toInt() and 0xFF).toByte()
+                        byteArray[i * 4 + 3] = (monoSample.toInt() shr 8).toByte()
+                    }
+                    
+                    _synthesisState.value = SynthesisState.IDLE
+                    byteArray
+                } finally {
+                    // 确保在任何情况下都释放C侧音频缓冲区
+                    com.airobot.piperinterop.piper_wrapper_free_audio(monoBufferPtr)
+                    println("[INFO] 已释放Piper音频缓冲区")
+                }
             }
         }
     }
@@ -278,6 +310,7 @@ class PiperSpeechSynthesizer : ISpeechSynthesizer {
         
         val audioData = synthesize(text)
         if (audioData.isEmpty()) {
+            println("[WARN] 合成返回了空音频数据，无法播放")
             return false
         }
         
@@ -285,17 +318,31 @@ class PiperSpeechSynthesizer : ISpeechSynthesizer {
         _synthesisState.value = SynthesisState.SPEAKING
         
         try {
-            // 将字节数组转换为短整数数组以便播放
-            val shortArray = AudioUtils.byteArrayToShortArray(audioData)
-            
             // 确保音频设备已处于活动状态
             if (audioPlayer.deviceState.value != voice.hal.AudioDevice.AudioDeviceState.ACTIVE) {
-                audioPlayer.start()
+                val activated = audioPlayer.start()
+                if (!activated) {
+                    println("[WARN] 无法激活音频设备，但将尝试播放")
+                }
             }
 
-            // 播放音频
-            val result = audioPlayer.playAudio(shortArray)
-            return result
+            // 使用音频设备的低级API来播放数据
+            // 这是硬件交互的关键点，需要特别小心
+            val result = mutex.withLock {
+                // 直接使用ByteArray播放，避免转换
+                audioPlayer.play(audioData, audioData.size)
+            }
+            
+            if (!result) {
+                println("[WARN] 调用音频播放失败，可能是设备被其他进程占用")
+                return false
+            }
+            
+            return true
+        } catch (e: Exception) {
+            println("[ERROR] 播放音频时发生异常: ${e.message}")
+            e.printStackTrace()
+            return false
         } finally {
             // 确保无论如何都重置状态
             isSpeakingFlag = false

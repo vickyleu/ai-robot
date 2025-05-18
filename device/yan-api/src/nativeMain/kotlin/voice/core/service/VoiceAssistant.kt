@@ -214,10 +214,6 @@ class VoiceAssistant(
                                 if (!audioDevice.openOutputStream(deviceIndex = -1, sampleRate = config.sampleRate, channels = 2)) {
                                     logger.warn("无法打开输出流，但将继续处理")
                                 }
-                                
-                                // 播放应答提示音
-//                                playAcknowledgeTone()
-                                
                                 // 进入对话状态
                                 onKeywordDetected()
                             }
