@@ -7,6 +7,9 @@ import com.airobot.device.yanapi.voice.audio.processing.RNNoiseSingleton
 import com.airobot.device.yanapi.voice.audio.processing.SoxrSingleton
 import com.airobot.device.yanapi.voice.audio.processing.SpeexDspProcessor
 import kotlinx.cinterop.ExperimentalForeignApi
+import voice.acquisition.portaudio.PortAudioDevice
+import voice.hal.LinuxAudioDeviceSelector
+import platform.posix.system
 
 /**
  * 应用程序入口点
@@ -14,6 +17,7 @@ import kotlinx.cinterop.ExperimentalForeignApi
  */
 object AudioApplication {
     private var isInitialized = false
+    private val deviceSelector = LinuxAudioDeviceSelector()
 
     /**
      * 初始化应用程序
@@ -23,63 +27,107 @@ object AudioApplication {
         if (isInitialized) return
 
         // 注册资源释放钩子
+        println("[INFO] 已注册程序退出清理钩子")
         AudioProcessingResourceManager.registerShutdownHook()
 
-        // 预热核心资源，减少运行时延迟
+        // 释放系统音频资源
+        deviceSelector.killOtherAudioProcesses()
+        
+        // 应用ALSA配置
+        if (deviceSelector.isRaspberryPi()) {
+            deviceSelector.fixAlsaConfig()
+            println("[INFO] 已应用树莓派优化配置")
+        }
+
+        // 预热核心资源
         preloadResources()
+
+        // 初始化音频设备（全局单例）
+        initializeAudioDevice()
 
         // 初始化完成
         isInitialized = true
         println("[INFO] 应用程序初始化完成")
     }
 
+    /**
+     * 预热音频处理资源
+     */
     private fun preloadResources() {
-        println("[INFO] 开始预热关键资源...")
+        println("[INFO] 预热音频处理资源...")
 
-        // 预热RNNoise实例 - 更低的VAD阈值以提高灵敏度
-        RNNoiseSingleton.getInstance()?.let {
-            // 预先设置更灵敏的参数
-            RNNoiseSingleton.process(
-                inputBuffer = null,
-                outputBuffer = null,
-                frameCount = 0,
-                vadThreshold = 0.08f, // 降低VAD阈值提高灵敏度
-                gain = 2.5f // 提高增益改善弱音识别
-            )
-            RNNoiseSingleton.releaseInstance()
-            println("[INFO] RNNoise预热成功")
-        }
-
-        // 预热常用采样率配置的Soxr实例
-        val commonSampleRates = arrayOf(
-            Pair(48000.0, 16000.0),
-            Pair(44100.0, 16000.0),
-            Pair(16000.0, 8000.0),
-            Pair(8000.0, 16000.0) // 添加上采样场景
-        )
-
-        for ((inputRate, outputRate) in commonSampleRates) {
-            SoxrSingleton.getInstance(inputRate, outputRate)?.let {
-                SoxrSingleton.releaseInstance(inputRate, outputRate)
-                println("[INFO] Soxr预热成功: $inputRate → $outputRate")
+        try {
+            // 预热RNNoise实例
+            RNNoiseSingleton.getInstance()?.let {
+                RNNoiseSingleton.process(
+                    inputBuffer = null,
+                    outputBuffer = null,
+                    frameCount = 0,
+                    vadThreshold = 0.08f,
+                    gain = 2.5f
+                )
+                RNNoiseSingleton.releaseInstance()
+                println("[INFO] RNNoise预热成功")
             }
+        } catch (e: Exception) {
+            println("[WARN] RNNoise预热失败: ${e.message}")
         }
 
-        // 预热SpeexDSP处理器 - 减小滤波器长度，降低CPU需求
-        val speexProcessor = SpeexDspProcessor()
-        speexProcessor.initialize(
-            sampleRate = 16000,
-            frameSize = 320,
-            enableDenoise = true,
-            enableAgc = true,
-            enableEcho = true
-        )
-        // 处理一个空帧以完成预热
-        speexProcessor.process(ShortArray(320))
-        speexProcessor.release()
-        println("[INFO] SpeexDSP预热成功")
+        try {
+            // 预热Soxr实例
+            val commonSampleRates = arrayOf(
+                Pair(48000.0, 16000.0),
+                Pair(44100.0, 16000.0),
+                Pair(16000.0, 8000.0),
+                Pair(8000.0, 16000.0)
+            )
 
-        println("[INFO] 资源预热完成")
+            for ((inputRate, outputRate) in commonSampleRates) {
+                SoxrSingleton.getInstance(inputRate, outputRate)?.let {
+                    SoxrSingleton.releaseInstance(inputRate, outputRate)
+                    println("[INFO] Soxr预热成功: $inputRate → $outputRate")
+                }
+            }
+        } catch (e: Exception) {
+            println("[WARN] Soxr预热失败: ${e.message}")
+        }
+
+        try {
+            // 预热SpeexDSP处理器
+            val speexProcessor = SpeexDspProcessor()
+            speexProcessor.initialize(
+                sampleRate = 16000,
+                frameSize = 320,
+                enableDenoise = true,
+                enableAgc = true,
+                enableEcho = true
+            )
+            speexProcessor.process(ShortArray(320))
+            speexProcessor.release()
+            println("[INFO] SpeexDSP预热成功")
+        } catch (e: Exception) {
+            println("[WARN] SpeexDSP预热失败: ${e.message}")
+        }
+    }
+
+    /**
+     * 初始化音频设备
+     */
+    private fun initializeAudioDevice() {
+        println("[INFO] 初始化PortAudio...")
+        
+        // 获取全局单例实例
+        val audioDevice = PortAudioDevice.getInstance()
+        
+        try {
+            if (audioDevice.initialize("default", 16000)) {
+                println("[INFO] PortAudio初始化成功")
+            } else {
+                println("[WARN] PortAudio初始化失败，应用可能无法正常工作")
+            }
+        } catch (e: Exception) {
+            println("[WARN] PortAudio初始化异常: ${e.message}")
+        }
     }
 
     /**
@@ -89,6 +137,13 @@ object AudioApplication {
     fun shutdown() {
         // 释放音频处理资源
         AudioProcessingResourceManager.releaseAllResources()
+        
+        // 释放PortAudio全局单例
+        try {
+            PortAudioDevice.getInstance().release()
+        } catch (e: Exception) {
+            println("[WARN] 清理PortAudio资源时出错: ${e.message}")
+        }
 
         // 重置初始化状态
         isInitialized = false

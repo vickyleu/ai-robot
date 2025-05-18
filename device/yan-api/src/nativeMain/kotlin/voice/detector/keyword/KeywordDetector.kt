@@ -232,7 +232,8 @@ class KeywordDetector : IKeywordDetector {
             return false
         }
         
-        // 处理音频帧，这会将数据传递给AudioProcessingManager
-        return processAudioFrame(audioData, audioData.size)
+        // 仅检查当前状态，确认是否已经检测到关键词
+        // 音频数据会通过audioManager的回调机制处理，这里不需要额外处理
+        return audioManager?.processAudio(audioData) == true
     }
 } 

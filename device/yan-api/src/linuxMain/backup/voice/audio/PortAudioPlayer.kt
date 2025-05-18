@@ -51,11 +51,11 @@ class PortAudioPlayer : AudioPlayer {
     private var isPaused = false
 
     // 音频参数
-    private var sampleRate = 48000
-    private var channels = 1
+    private var sampleRate = 16000
+    private var channels = 2
     private var framesPerBuffer = 1024
     // 设备默认采样率
-    private var deviceDefaultSampleRate = 48000.0
+    private var deviceDefaultSampleRate = 16000.0
 
     // 协程作用域
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)

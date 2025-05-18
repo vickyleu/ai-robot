@@ -50,11 +50,11 @@ class PortAudioRecorder : AudioRecorder {
     private var isPaused = false
 
     // 音频参数
-    private var sampleRate = 48000  // 使用48kHz而不是44.1kHz
-    private var channels = 1        // 改为单声道录制（原为2）
+    private var sampleRate = 16000  // 使用48kHz而不是44.1kHz
+    private var channels = 2        // 改为单声道录制（原为2）
     private var framesPerBuffer = 1024
     // 设备默认采样率
-    private var deviceDefaultSampleRate = 48000.0
+    private var deviceDefaultSampleRate = 16000.0
 
     // 协程作用域
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)

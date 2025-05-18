@@ -9,6 +9,7 @@ import voice.audio.AudioPipeline
 import voice.acquisition.portaudio.PortAudioAcquisition
 import voice.audio.recognition.VoskSpeechRecognizer
 import voice.audio.vad.VoiceActivityDetector
+import voice.util.AudioUtils
 import voice.util.DiagnosticsCollector
 import voice.util.LogManager
 import kotlin.time.ExperimentalTime
@@ -34,7 +35,7 @@ class AudioProcessingManager(
     private val diagnostics = DiagnosticsCollector()
 
     // 专用的播放设备用于识别回放，与录音设备分开可避免冲突
-    private val playbackDevice: PortAudioDevice = PortAudioDevice()
+    private val playbackDevice: PortAudioDevice = PortAudioDevice.getInstance()
     private var playerReady = false
     
     // 回调处理
@@ -56,21 +57,6 @@ class AudioProcessingManager(
     // 是否处于调试模式，只有调试模式才会输出部分日志
     private val debugMode = false
 
-    /**
-     * 将字节数组（PCM 16位）转换为短整型数组
-     */
-    private fun convertBytesToShorts(bytes: ByteArray, length: Int): ShortArray {
-        if (length == 0 || length % 2 != 0) return ShortArray(0)
-        val shorts = ShortArray(length / 2)
-        for (i in shorts.indices) {
-            // 小端字节序 (Little Endian)
-            val byte1 = bytes[i * 2].toInt() and 0xFF
-            val byte2 = bytes[i * 2 + 1].toInt() and 0xFF
-            shorts[i] = ((byte2 shl 8) or byte1).toShort()
-        }
-        return shorts
-    }
-    
     /**
      * 获取处理统计信息
      */
@@ -237,7 +223,7 @@ class AudioProcessingManager(
                     
                     // 播放被识别的音频片段
                     if (playerReady) {
-                        val shortArrayToPlay = convertBytesToShorts(audioToRecognizeAndPlay, audioToRecognizeAndPlay.size)
+                        val shortArrayToPlay = AudioUtils.byteArrayToShortArray(audioToRecognizeAndPlay)
                         if (shortArrayToPlay.isNotEmpty()) {
                             playbackDevice.playAudio(shortArrayToPlay)
                             logger.info("回放识别的音频片段 (${shortArrayToPlay.size}采样点)")
@@ -300,6 +286,28 @@ class AudioProcessingManager(
         report.appendLine("专用播放器已就绪: $playerReady")
 
         return report.toString()
+    }
+    
+    /**
+     * 处理来自KeywordDetector的音频数据
+     * 更高效的音频处理接口，直接处理Short数组
+     * @param audioData Short数组音频数据
+     * @return Boolean 是否检测到语音（有效语音帧）
+     */
+    fun processAudio(audioData: ShortArray): Boolean {
+        if (!isInitialized || !isRunning) {
+            return false
+        }
+        
+        // 转换为字节数组，使用AudioUtils工具类
+        val byteData = AudioUtils.shortArrayToByteArray(audioData)
+        
+        // 直接处理音频数据
+        val timestamp = LogManager.getCurrentTimeMillis()
+        processAudioFrame(byteData, byteData.size, timestamp)
+        
+        // 返回检测结果
+        return true  // 返回true表示已处理，回调会处理实际的检测结果
     }
     
     /**

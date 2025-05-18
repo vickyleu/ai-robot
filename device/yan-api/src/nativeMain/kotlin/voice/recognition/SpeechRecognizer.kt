@@ -22,6 +22,7 @@ import kotlinx.cinterop.free
 import kotlinx.cinterop.nativeHeap
 import voice.audio.AudioPipeline
 import voice.audio.RecognitionMetrics
+import voice.util.AudioUtils
 import voice.util.LogManager
 import kotlin.time.ExperimentalTime
 
@@ -178,13 +179,8 @@ class SpeechRecognizer : AudioPipeline.SpeechRecognition {
             energy = kotlin.math.sqrt(energy / (length / 2))
             logger.info("【调试】语音音频能量: $energy")
             
-            // 将ByteArray转换为16位PCM格式的ShortArray
-            val shortData = ShortArray(length / 2)
-            for (i in shortData.indices) {
-                val lo = audio[i * 2].toInt() and 0xff
-                val hi = audio[i * 2 + 1].toInt() and 0xff
-                shortData[i] = ((hi shl 8) or lo).toShort()
-            }
+            // 将ByteArray转换为16位PCM格式的ShortArray，使用AudioUtils
+            val shortData = AudioUtils.byteArrayToShortArray(audio.copyOf(length))
             
             // 创建临时缓冲区
             val shortBuffer = nativeHeap.allocArray<ShortVar>(shortData.size)

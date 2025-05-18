@@ -3,6 +3,7 @@ package voice.audio.processing
 import kotlinx.cinterop.ExperimentalForeignApi
 import voice.audio.AudioMetrics
 import voice.audio.AudioPipeline
+import voice.util.AudioUtils
 import voice.util.LogManager
 import kotlin.math.abs
 import kotlin.math.log10
@@ -201,29 +202,15 @@ class AudioPreprocessor : AudioPipeline.Preprocessing {
         val isStereo = length % 4 == 0 && length > 4
         
         if (isStereo) {
-            // 立体声转单声道处理，只保留左声道或对两个声道进行混合
-            val monoLength = length / 4  // 一个立体声样本占4字节，转换后的单声道数组长度
-            val shorts = ShortArray(monoLength)
+            // 立体声转单声道处理
+            // 首先使用AudioUtils将字节转为短整型
+            val stereoShorts = AudioUtils.byteArrayToShortArray(bytes.copyOf(length))
             
-            for (i in 0 until monoLength) {
-                // 取左声道数据（立体声中的第一个通道）
-                val leftChannel = ((bytes[i * 4 + 1].toInt() and 0xFF) shl 8 or (bytes[i * 4].toInt() and 0xFF)).toShort()
-                
-                // 取右声道数据（立体声中的第二个通道）
-                val rightChannel = ((bytes[i * 4 + 3].toInt() and 0xFF) shl 8 or (bytes[i * 4 + 2].toInt() and 0xFF)).toShort()
-                
-                // 混合左右声道，避免溢出
-                shorts[i] = ((leftChannel.toInt() + rightChannel.toInt()) / 2).toShort()
-            }
-            
-            return shorts
+            // 然后将立体声转为单声道
+            return AudioUtils.stereoToMono(stereoShorts)
         } else {
             // 单声道数据，直接转换
-            val shorts = ShortArray(length / 2)
-            for (i in shorts.indices) {
-                shorts[i] = ((bytes[i * 2 + 1].toInt() and 0xFF) shl 8 or (bytes[i * 2].toInt() and 0xFF)).toShort()
-            }
-            return shorts
+            return AudioUtils.byteArrayToShortArray(bytes.copyOf(length))
         }
     }
     
