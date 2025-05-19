@@ -34,7 +34,7 @@ interface KeywordDetectorApi {
      * 开始监听关键词
      * @return 是否成功启动
      */
-    fun startListening(): Boolean
+    suspend fun startListening(): Boolean
     
     /**
      * 停止监听

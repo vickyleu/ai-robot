@@ -91,8 +91,8 @@ class PortAudioAcquisition(
     }
 
     // 启动音频采集任务，并通过回调传递数据
-    fun startCapture(onData: (ByteArray, Int) -> Unit) {
-        logger.info("⭐⭐⭐ startCapture 被调用，开始采集音频 ⭐⭐⭐")
+    suspend fun startCapture(onData: (ByteArray, Int) -> Unit) {
+        logger.info("开始采集音频")
         
         if (isCapturing) {
             logger.warn("音频采集已经在运行中")
@@ -135,9 +135,9 @@ class PortAudioAcquisition(
                     
                     try {
                         // 读取音频数据
-                        logger.info("⭐⭐⭐ 准备调用readAudioSuspend读取音频数据")
+                        logger.info("准备调用readAudioSuspend读取音频数据")
                         val framesRead = audioDevice.readAudioSuspend(buffer, frameSize)
-                        logger.info("⭐⭐⭐ readAudioSuspend返回：读取了 $framesRead 帧")
+                        logger.info("readAudioSuspend返回：读取了 $framesRead 帧")
                         
                         // 更新最大帧数统计
                         if (framesRead > maxFramesEverRead) {
@@ -150,11 +150,11 @@ class PortAudioAcquisition(
                             // 安全检查 - 确保framesRead不超过缓冲区大小的一半
                             val safeFramesRead = if (framesRead <= bufferSize/2) framesRead else bufferSize/2
                             if (framesRead > bufferSize/2) {
-                                logger.warn("⚠️ 帧数 $framesRead 超过安全限制 ${bufferSize/2}，将被截断")
+                                logger.warn("帧数 $framesRead 超过安全限制 ${bufferSize/2}，将被截断")
                             }
                             
                             // 将short数组转换为byte数组
-                            logger.info("⭐⭐⭐ 准备处理和回调音频数据，帧数: $safeFramesRead")
+                            logger.info("准备处理和回调音频数据，帧数: $safeFramesRead")
                             val byteData = ByteArray(safeFramesRead * 2) // 每个short占用2个byte
                             
                             for (i in 0 until safeFramesRead) {
@@ -179,9 +179,9 @@ class PortAudioAcquisition(
                             }
                             
                             // 回调通知
-                            logger.info("⭐⭐⭐ 准备执行onAudioDataReceived回调")
+                            logger.info("准备执行onAudioDataReceived回调")
                             onAudioDataReceived?.invoke(byteData, byteData.size)
-                            logger.info("⭐⭐⭐ onAudioDataReceived回调完成")
+                            logger.info("onAudioDataReceived回调完成")
                         } else if (framesRead < 0) {
                             // 读取错误
                             logger.error("音频读取错误: $framesRead")
@@ -247,7 +247,7 @@ class PortAudioAcquisition(
     }
 
     // --- 实现 AudioDevice 接口的其余方法，委托给 audioDevice --- 
-    override fun start(): Boolean {
+    override suspend fun start(): Boolean {
         // PortAudioAcquisition的start主要用于启动采集循环，底层设备启动由initialize或采集循环内部管理
         // 如果需要一个通用的start方法，它应该触发startCapture
         logger.warn("PortAudioAcquisition.start() 被调用，但实际采集通过 startCapture(callback) 启动。若要开始采集，请使用 startCapture。")

@@ -17,7 +17,7 @@ interface AudioProcessingPipeline {
     /**
      * 开始处理
      */
-    fun start()
+    fun start() : Boolean
     
     /**
      * 停止处理

@@ -272,18 +272,16 @@ class PortAudioDevice private constructor() : AudioDevice {
 
     // suspend版本的readAudio - 委托给非suspend版本并添加读取锁
     suspend fun readAudioSuspend(buffer: CPointer<ShortVar>, frameCount: Int): Int {
-        logger.info("⭐⭐⭐ readAudioSuspend被调用，准备获取readLock...")
         try {
             // 添加超时保护，避免无限等待锁
             val lockResult = kotlinx.coroutines.withTimeoutOrNull(5000) { // 5秒超时
                 readLock.withLock {
-                    logger.info("⭐⭐⭐ 已获取readLock，准备读取音频...")
                     performActualRead(buffer, frameCount)
                 }
             }
             
             if (lockResult == null) {
-                logger.error("⭐⭐⭐ readAudioSuspend获取锁超时，返回静音数据")
+                logger.error("readAudioSuspend获取锁超时，返回静音数据")
                 // 超时情况下，填充静音数据作为备选
                 for (i in 0 until frameCount) {
                     buffer[i] = 0
@@ -291,10 +289,9 @@ class PortAudioDevice private constructor() : AudioDevice {
                 return frameCount
             }
             
-            logger.info("⭐⭐⭐ readAudioSuspend完成，返回结果：$lockResult")
             return lockResult
         } catch (e: Exception) {
-            logger.error("⭐⭐⭐ readAudioSuspend发生异常: ${e.message}")
+            logger.error("readAudioSuspend发生异常: ${e.message}")
             // 发生异常时，填充静音数据
             for (i in 0 until frameCount) {
                 buffer[i] = 0
@@ -305,7 +302,6 @@ class PortAudioDevice private constructor() : AudioDevice {
 
     // 实际的读取实现
     private suspend fun performActualRead(buffer: CPointer<ShortVar>, frameCount: Int): Int {
-        logger.info("⭐⭐⭐ performActualRead开始...")
         val currentTimeMs = System.now().toEpochMilliseconds()
 
         // 防御性检查：确保frameCount > 0
@@ -349,7 +345,6 @@ class PortAudioDevice private constructor() : AudioDevice {
 
         // 检查是否需要重置音频流
         if (audioReadResetNeeded) {
-            logger.info("⭐⭐⭐ 检测到需要重置音频流")
             audioReadResetNeeded = false // 重置状态标志
             
             // 尝试恢复，但在协程上下文中安全执行
@@ -357,8 +352,6 @@ class PortAudioDevice private constructor() : AudioDevice {
             val recoverySuccess = kotlinx.coroutines.withTimeoutOrNull(3000) {
                 attemptStreamRecovery()
             } ?: false
-            
-            logger.info("⭐⭐⭐ 音频流重置尝试结果: $recoverySuccess")
             
             // 无论恢复结果如何，这一帧都返回静音
             for (i in 0 until frameCount) {
@@ -368,7 +361,6 @@ class PortAudioDevice private constructor() : AudioDevice {
         }
 
         // 正常执行读取操作，但增加超时保护
-        logger.info("⭐⭐⭐ 准备从输入流读取数据...")
         try {
             // 使用withTimeoutOrNull包装实际读取操作，最多等待2秒
             val result = kotlinx.coroutines.withTimeoutOrNull(2000) {
@@ -404,7 +396,7 @@ class PortAudioDevice private constructor() : AudioDevice {
             // 处理读取结果
             if (result == null) {
                 // 读取超时
-                logger.error("⭐⭐⭐ 从输入流读取数据超时，返回静音")
+                logger.error("从输入流读取数据超时，返回静音")
                 // 填充静音
                 for (i in 0 until frameCount) {
                     buffer[i] = 0
@@ -416,7 +408,7 @@ class PortAudioDevice private constructor() : AudioDevice {
                 return frameCount
             } else if (result < 0) {
                 // 读取错误
-                logger.error("⭐⭐⭐ 读取音频数据失败")
+                logger.error("读取音频数据失败")
                 consecutiveErrors++
                 
                 // 填充静音
@@ -432,13 +424,13 @@ class PortAudioDevice private constructor() : AudioDevice {
                 return frameCount
             } else {
                 // 读取成功
-                logger.info("⭐⭐⭐ 成功读取音频数据，帧数: $result")
+                logger.info("成功读取音频数据，帧数: $result")
                 consecutiveErrors = 0
                 return result
             }
         } catch (e: Exception) {
             // 捕获任何异常
-            logger.error("⭐⭐⭐ 读取音频时发生异常: ${e.message}")
+            logger.error("读取音频时发生异常: ${e.message}")
             e.printStackTrace()
 
             // 标记流需要重建
@@ -824,12 +816,11 @@ class PortAudioDevice private constructor() : AudioDevice {
         logger.info("所有音频流已强制关闭")
     }
 
-    override fun start(): Boolean {
+    override suspend fun start(): Boolean {
+        logger.info("启动音频设备，当前状态: ${_deviceState.value}")
+        
         runBlocking {
             deviceMutex.withLock {
-                logger.info("⭐⭐⭐ 启动音频设备，当前状态: ${_deviceState.value}")
-                println("⭐⭐⭐ 启动音频设备，当前状态: ${_deviceState.value}")
-        
                 // 如果已经是ACTIVE状态，检查流是否真的存在，如果不存在则尝试修复
                 if (_deviceState.value == AudioDeviceState.ACTIVE) {
                     if (inputStreamPtr.value == null) {
@@ -888,12 +879,11 @@ class PortAudioDevice private constructor() : AudioDevice {
         }
         
         // 检查最终状态
-        val finalState = _deviceState.value
-        logger.info("⭐⭐⭐ 音频设备启动完成，最终状态: $finalState 查看是否是synchronized导致后续问题")
-        val streamActive = inputStreamPtr.value != null && synchronized(streamStateLock) { inputStreamActive }
-        logger.info("⭐⭐⭐ 音频设备启动完成，最终状态: $finalState, 输入流: ${if(streamActive) "有效" else "无效"}")
-        println("⭐⭐⭐ 音频设备启动完成，最终状态: $finalState, 输入流: ${if(streamActive) "有效" else "无效"}")
-        return true
+        val finalState = deviceState.value
+        val streamActive = synchronized(streamStateLock) { inputStreamActive }
+        logger.info("音频设备启动完成，最终状态: $finalState, 输入流: ${if(streamActive) "有效" else "无效"}")
+        
+        return finalState == AudioDeviceState.ACTIVE && streamActive
     }
 
     override fun stop() {

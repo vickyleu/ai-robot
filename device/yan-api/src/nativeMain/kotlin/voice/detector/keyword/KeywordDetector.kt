@@ -89,7 +89,7 @@ class KeywordDetector : KeywordDetectorApi {
      * 开始监听
      * @return 是否成功开始监听
      */
-    override fun startListening(): Boolean {
+    override suspend fun startListening(): Boolean {
         logger.info("KeywordDetector.startListening() 被调用")
         try {
             if (audioManager == null) {
@@ -97,18 +97,13 @@ class KeywordDetector : KeywordDetectorApi {
                 return false
             }
             _detectorState.value = KeywordDetectorApi.DetectorState.LISTENING
-            logger.info("⭐⭐⭐ 调用 audioManager.start() 启动音频处理流水线 - 开始")
-            try {
-                logger.info("准备调用audioManager.start()，当前线程: ${platform.posix.getpid()}")
-                audioManager?.start()
-                logger.info("⭐⭐⭐ audioManager.start() 已调用成功，下一步操作")
-            } catch (e: Exception) {
-                logger.error("调用audioManager.start()时发生异常: ${e.message}")
-                e.printStackTrace()
-                _detectorState.value = KeywordDetectorApi.DetectorState.ERROR
-                return false
-            }
-            logger.info("⭐⭐⭐ startListening流程结束，状态: ${_detectorState.value}")
+            
+            // 启动音频处理流水线
+            logger.info("调用 audioManager.start() 启动音频处理流水线 - 开始")
+            audioManager?.start()
+            logger.info("audioManager.start() 已调用成功，下一步操作")
+            
+            logger.info("startListening流程结束，状态: ${_detectorState.value}")
             return true
         } catch (e: Exception) {
             logger.error("KeywordDetector.startListening() 发生异常: ${e.message}")

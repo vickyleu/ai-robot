@@ -140,148 +140,108 @@ class AudioProcessingManager(private val modelPath: String) : AudioProcessingPip
     /**
      * 开始音频处理
      */
-    override fun start() {
-        logger.info("⭐⭐⭐ AudioProcessingManager.start() 被调用")
-        if (isRunning) {
-            logger.warn("音频处理流水线已经在运行中")
-            return
-        }
+    override fun start() : Boolean{
         if (!isInitialized) {
-            logger.error("音频处理管理器未初始化，无法启动！")
+            logger.error("音频处理管理器未初始化")
+            return false
+        }
+
+        if (isRunning) {
+            logger.warn("音频处理已经在运行中")
+            return true
+        }
+
+        logger.info("启动音频处理流水线")
+        isRunning = true
+        processingStartTime = LogManager.getCurrentTimeMillis()
+
+        // 创建新的协程作用域
+        processingScope = CoroutineScope(Dispatchers.Default + SupervisorJob())
+        
+        processingScope?.launch {
+            try {
+                acquisition.startCapture { audioData, length ->
+                    if (!isRunning) return@startCapture
+                    
+                    try {
+                        // 预处理音频数据
+                        val processedData = preprocessor.process(audioData, length)
+                        
+                        // VAD检测
+                        val vadResult = vad.detect(processedData.processedAudio, processedData.processedLength)
+                        
+                        // 更新VAD阈值
+                        adaptiveVadThreshold = (adaptiveVadThreshold * 0.9f + vadResult.confidence * 0.1f)
+                            .coerceIn(0.5f, 0.95f)
+                        
+                        // 更新统计信息
+                        frameCount++
+                        if (vadResult.hasSpeech) {
+                            speechFrameCount++
+                        }
+                        lastFrameTime = LogManager.getCurrentTimeMillis()
+                        
+                        // 处理音频数据
+                        if (vadResult.hasSpeech) {
+                            val recognitionResult = recognizer.recognize(
+                                processedData.processedAudio, processedData.processedLength,
+                                lastFrameTime
+                            )
+                            
+                            recognitionCallCount++
+                            
+                            // 检查是否检测到关键词
+                            if (recognitionResult.success && recognitionResult.text.isNotBlank()) {
+                                val keywords = recognizer.getCurrentKeywords()
+                                val detectedKeyword = keywords.find { keyword ->
+                                    recognitionResult.text.contains(keyword, ignoreCase = true)
+                                }
+                                
+                                if (detectedKeyword != null) {
+                                    logger.info("检测到关键词: $detectedKeyword")
+                                    keywordDetectedCallback?.invoke(detectedKeyword)
+                                }
+                            }
+                        }
+                    } catch (e: Exception) {
+                        logger.error("音频处理异常: ${e.message}")
+                    }
+                }
+            } catch (e: Exception) {
+                logger.error("启动音频捕获失败: ${e.message}")
+                isRunning = false
+            }
+        }
+        return true
+    }
+
+    /**
+     * 停止音频处理
+     */
+    override fun stop() {
+        if (!isRunning) {
+            logger.warn("音频处理未在运行")
             return
         }
 
-        logger.info("⭐⭐⭐ 启动音频处理流水线")
-        processingStartTime = System.now().toEpochMilliseconds()
+        logger.info("停止音频处理流水线")
+        isRunning = false
+        
+        // 取消所有协程
+        processingScope?.cancel()
+        processingScope = null
+        
+        // 停止音频捕获
+        acquisition.stopCapture()
+        
+        // 重置状态
         frameCount = 0
         speechFrameCount = 0
         recognitionCallCount = 0
         lastFrameTime = 0L
+        processingStartTime = 0L
         lastRecognitionTime = 0L
-        (diagnostics as? DiagnosticsCollector)?.clear()
-
-        logger.info("⭐⭐⭐ 创建处理协程...")
-        processingScope = CoroutineScope(Dispatchers.Default + SupervisorJob())
-        processingScope?.launch {
-            logger.info("⭐⭐⭐ 处理协程已启动")
-            isRunning = true
-            logger.info("⭐⭐⭐ 准备启动音频采集循环...")
-            
-            try {
-                logger.info("⭐⭐⭐ 调用 acquisition.startCapture 设置回调...")
-                acquisition.startCapture { audioData, length ->
-                    if (frameCount == 0) {
-                        logger.info("⭐⭐⭐ 首次收到音频数据回调！长度=$length")
-                    }
-                    
-                    if (isRunning) {
-                        processAudioFrame(audioData, length, System.now().toEpochMilliseconds())
-                    } else {
-                        logger.warn("收到音频数据但处理管理器已停止")
-                    }
-                }
-                logger.info("⭐⭐⭐ acquisition.startCapture 返回成功，等待音频数据...")
-            } catch (e: Exception) {
-                logger.error("⭐⭐⭐ 启动音频采集时发生异常: ${e.message}")
-                e.printStackTrace()
-                isRunning = false
-            }
-        }?.invokeOnCompletion { throwable ->
-            isRunning = false
-            if (throwable is CancellationException) {
-                logger.info("音频处理主协程被取消")
-            } else if (throwable != null) {
-                logger.error("音频处理主协程异常结束: ${throwable.message}")
-                throwable.printStackTrace()
-            }
-            logger.info("音频处理流水线已停止.")
-        }
-        
-        logger.info("⭐⭐⭐ AudioProcessingManager.start() 完成，等待音频数据处理...")
-    }
-
-    /**
-     * 处理音频帧
-     */
-    private fun processAudioFrame(audioData: ByteArray, length: Int, timestamp: Long) {
-        if (!isRunning) return
-        if (length <= 0) {
-            logger.debug("收到无效音频帧，长度=$length")
-            return
-        }
-
-        try {
-            frameCount++
-            if (frameCount == 1) {
-                logger.info("⭐⭐⭐ 收到第一帧音频数据，长度=$length, 时间戳=$timestamp")
-            }
-            
-            lastFrameTime = timestamp
-            diagnostics.recordAcquisitionMetrics("PortAudio", length, timestamp)
-
-            val preprocessResult = preprocessor.process(audioData, length)
-            diagnostics.recordPreprocessingMetrics(preprocessResult.metrics, timestamp)
-
-            if (!preprocessResult.shouldContinue || preprocessResult.processedLength == 0) {
-                return
-            }
-
-            val vadResult =
-                vad.detect(preprocessResult.processedAudio, preprocessResult.processedLength)
-            diagnostics.recordVADMetrics(vadResult.metrics, timestamp)
-
-            if (!vadResult.hasSpeech || vadResult.confidence < 0.6f) {
-                if (frameCount % 20 == 0) {
-                    logger.debug("无语音活动或置信度不足: hasSpeech=${vadResult.hasSpeech}, confidence=${vadResult.confidence}, energy=${vadResult.metrics.energy}")
-                }
-                return
-            }
-            logger.debug("检测到语音活动! energy=${vadResult.metrics.energy}, SNR=${vadResult.metrics.signalToNoiseRatio}, confidence=${vadResult.confidence}")
-
-            val currentTimeMs = System.now().toEpochMilliseconds()
-            if (currentTimeMs - lastRecognitionTime > recognitionCooldownMs) {
-                lastRecognitionTime = currentTimeMs
-                recognitionCallCount++
-                speechFrameCount++
-
-                val audioToRecognize =
-                    preprocessResult.processedAudio.copyOfRange(0, preprocessResult.processedLength)
-                val recognitionResult =
-                    recognizer.recognize(audioToRecognize, audioToRecognize.size, timestamp)
-                diagnostics.recordRecognitionMetrics(recognitionResult.metrics, timestamp)
-                handleRecognitionResult(recognitionResult)
-            }
-        } catch (e: Exception) {
-            logger.error("处理音频帧时发生异常: ${e.message}")
-        }
-    }
-
-    /**
-     * 处理识别结果
-     */
-    private fun handleRecognitionResult(result: SpeechRecognizerApi.RecognitionResult) {
-        if (!result.success || result.text.isBlank()) {
-            return
-        }
-        logger.info("识别结果: \"${result.text}\", 置信度: ${result.confidence}")
-
-        val currentKeywords =
-            (recognizer as? VoskSpeechRecognizer)?.getCurrentKeywords() ?: emptyList()
-        if (currentKeywords.isEmpty()) return
-
-        val detectedKeywords = findKeywordsInText(result.text, currentKeywords)
-        if (detectedKeywords.isNotEmpty()) {
-            logger.info("检测到关键词: ${detectedKeywords.joinToString(", ")}")
-            keywordDetectedCallback?.invoke(detectedKeywords.first())
-        }
-    }
-
-    /**
-     * 在文本中查找关键词
-     */
-    private fun findKeywordsInText(text: String, keywords: List<String>): List<String> {
-        val lowerText = text.lowercase()
-        return keywords.filter { kw -> lowerText.contains(kw.lowercase()) }
+        adaptiveVadThreshold = 0.8f
     }
 
     /**
@@ -297,24 +257,6 @@ class AudioProcessingManager(private val modelPath: String) : AudioProcessingPip
         } catch (e: Exception) {
             logger.warn("回放音频时出错: ${e.message}")
         }
-    }
-
-    /**
-     * 停止音频处理
-     */
-    override fun stop() {
-        logger.info("AudioProcessingManager.stop() 被调用")
-        if (!isRunning) {
-            logger.warn("音频处理管理器未在运行")
-            return
-        }
-        isRunning = false
-        processingScope?.cancel("停止请求")
-        processingScope = null
-        acquisition.stopCapture()
-        logger.info("音频处理流水线已请求停止")
-        val report = diagnostics.generateReport()
-        logger.info("停止时生成的诊断报告:\n$report")
     }
 
     /**
@@ -467,5 +409,13 @@ class AudioProcessingManager(private val modelPath: String) : AudioProcessingPip
         
         // 直接返回预处理器的结果，因为这是process方法在此上下文中的主要职责
         return preprocessResult 
+    }
+
+    /**
+     * 在文本中查找关键词
+     */
+    private fun findKeywordsInText(text: String, keywords: List<String>): List<String> {
+        val lowerText = text.lowercase()
+        return keywords.filter { kw -> lowerText.contains(kw.lowercase()) }
     }
 }

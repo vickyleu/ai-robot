@@ -42,7 +42,7 @@ interface AudioDevice {
      * 开始音频流
      * @return 启动是否成功
      */
-    fun start(): Boolean
+    suspend fun start(): Boolean
     
     /**
      * 停止音频流

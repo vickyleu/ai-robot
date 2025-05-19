@@ -113,8 +113,9 @@ class AudioPreprocessor : AudioProcessingPipeline {
     /**
      * 开始音频处理
      */
-    override fun start() {
+    override fun start(): Boolean {
         // 预处理器不需要实现此功能
+        return false
     }
 
     /**

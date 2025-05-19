@@ -156,43 +156,29 @@ class VoiceAssistant(
             }
 
             // 启动音频设备
-            logger.info("准备调用 audioDevice.start() ...")
-            if (!audioDevice.start()) {
-                logger.error("无法启动音频设备")
-                _assistantState.value = VoiceAssistantApi.AssistantState.ERROR
-                return false
-            }
-            logger.info("⭐⭐⭐ 音频设备start()调用成功，继续执行...")
+            val deviceStarted = audioDevice.start()
+            logger.info("音频设备start()调用成功，继续执行...")
             
             // 添加延迟确保设备状态已稳定
             logger.info("延迟300ms确保音频设备状态稳定...")
             delay(300)
             logger.info("延迟结束，当前设备状态: ${audioDevice.deviceState.value}")
             
-            // 启动关键词监听
-            logger.info("⭐⭐⭐ 准备启动关键词监听...")
-            try {
-                logger.info("调用 keywordDetector.startListening() 开始...")
-                val result = keywordDetector.startListening()
-                logger.info("⭐⭐⭐ keywordDetector.startListening() 返回结果: $result")
-                if (!result) {
-                    logger.error("无法启动关键词监听")
-                    audioDevice.stop()
-                    _assistantState.value = VoiceAssistantApi.AssistantState.ERROR
-                    return false
-                }
-                logger.info("关键词监听启动成功")
-            } catch (e: Exception) {
-                logger.error("启动关键词监听时发生异常: ${e.message}")
-                e.printStackTrace()
+            // 启动关键词检测器
+            logger.info("准备启动关键词监听...")
+            val kwdStartResult = keywordDetector.startListening()
+            logger.info("keywordDetector.startListening() 返回结果: $kwdStartResult")
+            if (!kwdStartResult) {
+                logger.error("无法启动关键词监听")
                 audioDevice.stop()
                 _assistantState.value = VoiceAssistantApi.AssistantState.ERROR
                 return false
             }
+            logger.info("关键词监听启动成功")
 
             // 启动助手任务
             try {
-                logger.info("⭐⭐⭐ 准备启动助手主循环协程...")
+                logger.info("准备启动助手主循环协程...")
                 assistantJob?.cancel()
                 val deferred = CompletableDeferred<Boolean>()
                 assistantJob = scope.launch {
@@ -200,12 +186,12 @@ class VoiceAssistant(
                     try {
                         withContext(Dispatchers.Unconfined) {
                             try {
-                                logger.info("⭐⭐⭐ 设置状态为LISTENING_KEYWORD")
+                                logger.info("设置状态为LISTENING_KEYWORD")
                                 _assistantState.value = VoiceAssistantApi.AssistantState.LISTENING_KEYWORD
                                 isRunning = true
 
                                 // 让 KeywordDetector / PortAudioAcquisition 自行打开输入流，避免在这里阻塞
-                                logger.info("⚠️ 跳过 VoiceAssistant 内部打开输入流，交由 KeywordDetector 处理")
+                                logger.info("跳过 VoiceAssistant 内部打开输入流，交由 KeywordDetector 处理")
 
                                 // 流打开后稍等片刻让系统稳定
                                 logger.info("延迟500ms让音频流稳定...")
@@ -213,11 +199,11 @@ class VoiceAssistant(
                                 logger.info("延迟结束，准备进入主循环")
 
                                 // 确认状态更新
-                                logger.info("⭐⭐⭐ 语音助手状态: ${_assistantState.value}")
-                                logger.info("⭐⭐⭐ 开始监听关键词...")
+                                logger.info("语音助手状态: ${_assistantState.value}")
+                                logger.info("开始监听关键词...")
                                 
                                 // 主循环 - 监听唤醒词
-                                logger.info("⭐⭐⭐ 已开始监听关键词，等待唤醒...")
+                                logger.info("已开始监听关键词，等待唤醒...")
 
                                 // 音频帧读取缓冲区 - 分配一次重复使用
                                 val frameSize = 1024
@@ -226,7 +212,7 @@ class VoiceAssistant(
                                 val audioData = ShortArray(frameSize) // 预分配，避免频繁创建对象
                                 logger.info("音频缓冲区分配完成")
 
-                                logger.info("⭐⭐⭐ 进入主检测循环...")
+                                logger.info("进入主检测循环...")
                                 var frameCounter = 0
                                 while (isActive && isRunning) {
                                     try {
@@ -305,7 +291,7 @@ class VoiceAssistant(
                         _assistantState.value = VoiceAssistantApi.AssistantState.IDLE
                     }
                 }
-                logger.info("⭐⭐⭐ 助手主循环协程已创建，等待协程完成初始化")
+                logger.info("助手主循环协程已创建，等待协程完成初始化")
                 
                 // 等待足够时间让主循环启动
                 logger.info("延迟1000ms等待主循环启动...")
@@ -313,13 +299,13 @@ class VoiceAssistant(
                 logger.info("延迟结束，检查助手状态")
                 
                 // 检查状态并返回结果
-                logger.info("⭐⭐⭐ 当前助手状态: ${_assistantState.value}")
+                logger.info("当前助手状态: ${_assistantState.value}")
                 if (_assistantState.value == VoiceAssistantApi.AssistantState.ERROR) {
                     logger.error("启动过程中出现错误，助手状态为ERROR")
                     return false
                 }
                 
-                logger.info("⭐⭐⭐ 语音助手启动完成，状态: ${_assistantState.value}")
+                logger.info("语音助手启动完成，状态: ${_assistantState.value}")
                 return true
             } catch (e: Exception) {
                 logger.error("创建助手主循环协程时发生异常: ${e.message}")
