@@ -21,6 +21,7 @@ interface AudioDevice {
         INITIALIZING,   // 初始化中
         READY,          // 就绪状态
         ACTIVE,         // 活动状态
+        PAUSED,         // 暂停状态
         ERROR           // 错误状态
     }
     
@@ -39,7 +40,7 @@ interface AudioDevice {
     
     /**
      * 开始音频流
-     * @return 是否成功启动
+     * @return 启动是否成功
      */
     fun start(): Boolean
     
@@ -87,11 +88,19 @@ interface AudioDevice {
     
     /**
      * 读取音频数据
-     * @param buffer 数据缓冲区
-     * @param frameCount 帧数
-     * @return 读取的帧数，负值表示错误
+     * @param buffer 音频数据缓冲区
+     * @param frameCount 要读取的帧数
+     * @return 实际读取的帧数
      */
-    suspend fun readAudio(buffer: CPointer<ShortVar>, frameCount: Int): Int
+    fun readAudio(buffer: CPointer<ShortVar>, frameCount: Int): Int
+    
+    /**
+     * 写入音频数据
+     * @param buffer 音频数据缓冲区
+     * @param frameCount 要写入的帧数
+     * @return 实际写入的帧数
+     */
+    fun writeAudio(buffer: CPointer<ShortVar>, frameCount: Int): Int
     
     /**
      * 关闭音频流
@@ -99,9 +108,36 @@ interface AudioDevice {
     suspend fun closeStreams()
     
     /**
-     * 释放资源
+     * 播放音频数据
+     * @param audioData 音频数据
+     * @param length 数据长度
+     * @return 播放是否成功
      */
-    fun release()
+    fun play(audioData: ByteArray, length: Int): Boolean
+    
+    /**
+     * 异步播放音频数据
+     * @param audioData 音频数据
+     * @param length 数据长度
+     * @param onComplete 播放完成回调
+     * @return 播放是否成功启动
+     */
+    fun playAsync(audioData: ByteArray, length: Int, onComplete: () -> Unit = {}): Boolean
+    
+    /**
+     * 暂停播放
+     */
+    fun pause()
+    
+    /**
+     * 恢复播放
+     */
+    fun resume()
+    
+    /**
+     * 是否正在播放
+     */
+    fun isPlaying(): Boolean
     
     /**
      * 停止当前播放
@@ -113,4 +149,9 @@ interface AudioDevice {
      * @return 设备信息的字符串表示
      */
     fun getDeviceInfo(): String
+    
+    /**
+     * 释放资源
+     */
+    fun release()
 }

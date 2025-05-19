@@ -19,5 +19,6 @@ data class VoiceAssistantConfig(
     val voskModelPath: String = "/usr/local/share/yanshee-model/vosk/vosk-model-small-cn-0.22",
     val piperModelPath: String = "/usr/local/share/yanshee-model/piper/zh_CN-huayan-medium.onnx",
     val piperConfigPath: String = "/usr/local/share/yanshee-model/piper/zh_CN-huayan-medium.onnx.json",
-    val piperESpeakDataPath: String = "/usr/local/share/yanshee-model/piper/espeak-ng-data"
+    val piperESpeakDataPath: String = "/usr/local/share/yanshee-model/piper/espeak-ng-data",
+    val useInternalResponse: Boolean = false
 )

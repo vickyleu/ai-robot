@@ -1,6 +1,7 @@
-import voice.core.app.voiceDemo
+import voice.core.app.initSignalHandler
+import voice.core.app.runVoiceDemo
 
-fun main() {
-    // 直接调用语音演示
-    voiceDemo()
+fun main(args: Array<String>) {
+    initSignalHandler()
+    runVoiceDemo()
 }

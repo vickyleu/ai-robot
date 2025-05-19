@@ -33,7 +33,7 @@ interface SpeechSynthesizerApi {
      * @param text 要播放的文本
      * @return 播放是否成功
      */
-    fun speak(text: String): Boolean
+    suspend fun speak(text: String): Boolean
     
     /**
      * 停止播放

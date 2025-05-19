@@ -20,12 +20,13 @@ import kotlinx.cinterop.toKString
 import kotlinx.cinterop.set
 import kotlinx.cinterop.free
 import kotlinx.cinterop.nativeHeap
-import voice.api.recognition.ISpeechRecognizer
-import voice.audio.AudioPipeline
+import voice.api.SpeechRecognizerApi
 import voice.audio.RecognitionMetrics
 import voice.util.LogManager
 import kotlin.time.ExperimentalTime
 import kotlin.math.sqrt
+import platform.posix.*
+import kotlinx.cinterop.*
 
 // 用于解析JSON
 import kotlinx.serialization.json.*
@@ -35,7 +36,7 @@ import kotlinx.serialization.json.*
  * 负责对音频进行语音识别，包括关键词检测和完整语音识别
  */
 @OptIn(ExperimentalForeignApi::class, ExperimentalTime::class)
-class VoskSpeechRecognizer : AudioPipeline.SpeechRecognition {
+class VoskSpeechRecognizer : SpeechRecognizerApi {
     private val logger = LogManager.getLogger("VoskSpeechRecognizer")
     
     // Vosk模型和识别器
@@ -81,7 +82,7 @@ class VoskSpeechRecognizer : AudioPipeline.SpeechRecognition {
     /**
      * 获取当前已注册的关键词列表
      */
-    fun getCurrentKeywords(): List<String> {
+    override fun getCurrentKeywords(): List<String> {
         return registeredKeywords.toList()
     }
     
@@ -89,12 +90,13 @@ class VoskSpeechRecognizer : AudioPipeline.SpeechRecognition {
      * 处理音频数据
      * @param audio 音频数据
      * @param length 数据长度
+     * @param timestamp 时间戳
      * @return 识别结果
      */
-    override fun recognize(audio: ByteArray, length: Int): AudioPipeline.SpeechRecognition.RecognitionResult {
+    override fun recognize(audio: ByteArray, length: Int, timestamp: Long): SpeechRecognizerApi.RecognitionResult {
         if (!isInitialized || voskRecognizer == null) {
             logger.error("Vosk识别器未初始化或已失效")
-            return createErrorResult("识别器未初始化") 
+            return createErrorResult("识别器未初始化", timestamp) 
         }
         
         recognitionCount++
@@ -106,7 +108,7 @@ class VoskSpeechRecognizer : AudioPipeline.SpeechRecognition {
             // 只在能量高时处理音频（避免处理静音）
             val energy = calculateEnergy(audio, length)
             if (energy < 100 && recognitionCount % 10 != 0) {
-                return createEmptyResult()
+                return createEmptyResult(timestamp)
             }
             
             // 累积音频数据
@@ -117,7 +119,7 @@ class VoskSpeechRecognizer : AudioPipeline.SpeechRecognition {
             val bufferSizeAdequate = accumulatedAudio.size >= minAudioBufferSize
             
             if (!bufferSizeAdequate || timeElapsed < recognitionCooldownMs) {
-                return createEmptyResult()
+                return createEmptyResult(timestamp)
             }
             
             // 处理音频数据
@@ -140,45 +142,49 @@ class VoskSpeechRecognizer : AudioPipeline.SpeechRecognition {
                     }
                     
                     // 创建最终结果
-                    AudioPipeline.SpeechRecognition.RecognitionResult(
+                    SpeechRecognizerApi.RecognitionResult(
                         success = true,
                         text = voskResult.text,
                         isPartial = false,
+                        confidence = voskResult.confidence,
                         metrics = RecognitionMetrics(
                             processingTimeMs = endTime - startTime,
                             confidenceScore = voskResult.confidence,
                             errorCode = 0,
-                            errorMessage = ""
+                            errorMessage = "",
+                            timestamp = timestamp
                         )
                     )
                 }
                 
                 ResultType.PARTIAL -> {
                     // 部分结果不清空音频缓冲
-                    AudioPipeline.SpeechRecognition.RecognitionResult(
+                    SpeechRecognizerApi.RecognitionResult(
                         success = true,
                         text = voskResult.partialText,
                         isPartial = true,
+                        confidence = voskResult.confidence,
                         metrics = RecognitionMetrics(
                             processingTimeMs = endTime - startTime,
                             confidenceScore = voskResult.confidence,
                             errorCode = 0,
-                            errorMessage = ""
+                            errorMessage = "",
+                            timestamp = timestamp
                         )
                     )
                 }
                 
                 ResultType.EMPTY -> {
-                    createEmptyResult()
+                    createEmptyResult(timestamp)
                 }
                 
                 ResultType.ERROR -> {
-                    createErrorResult("处理过程中出错")
+                    createErrorResult("处理过程中出错", timestamp)
                 }
             }
         } catch (e: Exception) {
             logger.error("识别处理异常: ${e.message}")
-            return createErrorResult("识别处理异常: ${e.message}")
+            return createErrorResult("识别处理异常: ${e.message}", timestamp)
         }
     }
     
@@ -514,16 +520,18 @@ class VoskSpeechRecognizer : AudioPipeline.SpeechRecognition {
     /**
      * 创建空结果
      */
-    private fun createEmptyResult(): AudioPipeline.SpeechRecognition.RecognitionResult {
-        return AudioPipeline.SpeechRecognition.RecognitionResult(
+    private fun createEmptyResult(timestamp: Long): SpeechRecognizerApi.RecognitionResult {
+        return SpeechRecognizerApi.RecognitionResult(
             success = true,
             text = "",
             isPartial = true,
+            confidence = 0.0f,
             metrics = RecognitionMetrics(
                 processingTimeMs = 0,
                 confidenceScore = 0.0f,
                 errorCode = 0,
-                errorMessage = ""
+                errorMessage = "",
+                timestamp = timestamp
             )
         )
     }
@@ -531,16 +539,18 @@ class VoskSpeechRecognizer : AudioPipeline.SpeechRecognition {
     /**
      * 创建错误结果
      */
-    private fun createErrorResult(errorMessage: String): AudioPipeline.SpeechRecognition.RecognitionResult {
-        return AudioPipeline.SpeechRecognition.RecognitionResult(
+    private fun createErrorResult(errorMessage: String, timestamp: Long): SpeechRecognizerApi.RecognitionResult {
+        return SpeechRecognizerApi.RecognitionResult(
             success = false,
             text = "",
             isPartial = false,
+            confidence = 0.0f,
             metrics = RecognitionMetrics(
                 processingTimeMs = 0,
                 confidenceScore = 0.0f,
                 errorCode = 1,
-                errorMessage = errorMessage
+                errorMessage = errorMessage,
+                timestamp = timestamp
             )
         )
     }
@@ -550,7 +560,7 @@ class VoskSpeechRecognizer : AudioPipeline.SpeechRecognition {
      * @param modelPath 模型文件路径
      * @return 初始化是否成功
      */
-    fun initialize(modelPath: String): Boolean {
+    override fun initialize(modelPath: String): Boolean {
         logger.info("初始化Vosk语音识别器，模型路径: $modelPath")
         
         try {
@@ -560,6 +570,9 @@ class VoskSpeechRecognizer : AudioPipeline.SpeechRecognition {
                 logger.error("Vosk模型加载失败")
                 return false
             }
+            
+            // 自动补全词表
+            ensureVoskVocabulary(modelPath, registeredKeywords + shortCommandKeywords)
             
             // 创建Vosk识别器
             voskRecognizer = vosk_recognizer_new(voskModel, sampleRate.toFloat())
@@ -592,7 +605,7 @@ class VoskSpeechRecognizer : AudioPipeline.SpeechRecognition {
      * @param keywords 关键词列表，逗号分隔
      * @return 更新是否成功
      */
-    fun updateKeywords(keywords: String): Boolean {
+    override fun updateKeywords(keywords: List<String>): Boolean {
         if (!isInitialized || voskRecognizer == null) {
             logger.error("Vosk识别器未初始化，无法更新关键词")
             return false
@@ -603,7 +616,7 @@ class VoskSpeechRecognizer : AudioPipeline.SpeechRecognition {
             registeredKeywords.clear()
             
             // 解析并添加新关键词
-            keywords.split(",").forEach { keyword ->
+            keywords.forEach { keyword ->
                 val trimmed = keyword.trim()
                 if (trimmed.isNotBlank() && !registeredKeywords.contains(trimmed)) {
                     registeredKeywords.add(trimmed)
@@ -642,7 +655,7 @@ class VoskSpeechRecognizer : AudioPipeline.SpeechRecognition {
                 append("[")
                 registeredKeywords.forEachIndexed { index, keyword ->
                     if (index > 0) append(", ")
-                    append("\"").append(keyword).append("\"")
+                    append("\"").append(keyword.replace("\"", "\\\"")).append("\"")
                 }
                 append("]")
             }
@@ -658,7 +671,7 @@ class VoskSpeechRecognizer : AudioPipeline.SpeechRecognition {
     /**
      * 重置识别器状态
      */
-    fun reset() {
+    override fun reset() {
         if (isInitialized && voskRecognizer != null) {
             vosk_recognizer_reset(voskRecognizer)
             accumulatedAudio = ByteArray(0)
@@ -670,7 +683,7 @@ class VoskSpeechRecognizer : AudioPipeline.SpeechRecognition {
     /**
      * 释放资源
      */
-    fun release() {
+    override fun release() {
         logger.info("释放Vosk识别器资源")
         cleanup()
         isInitialized = false
@@ -691,5 +704,59 @@ class VoskSpeechRecognizer : AudioPipeline.SpeechRecognition {
         }
         
         accumulatedAudio = ByteArray(0)
+    }
+
+    private fun ensureVoskVocabulary(modelPath: String, keywords: List<String>) {
+        val vocabPath = "$modelPath/words.txt"
+        val lines = mutableSetOf<String>()
+        val file = fopen(vocabPath, "r")
+        if (file == null) {
+            // 文件不存在，自动创建并写入所有关键词
+            val wfile = fopen(vocabPath, "w")
+            if (wfile != null) {
+                for (word in keywords.distinct()) {
+                    fputs("$word 1.0\n", wfile)
+                    lines.add("$word 1.0")
+                }
+                fclose(wfile)
+                logger.info("Vosk词表文件不存在，已自动创建并写入所有关键词: $vocabPath")
+            } else {
+                logger.warn("""
+                    无法创建Vosk词表文件: $vocabPath 
+                      sudo touch $vocabPath
+                      sudo chown pi:pi $vocabPath
+                      sudo chmod 666 $vocabPath
+                """.trimIndent())
+            }
+            return
+        }
+        memScoped {
+            val buffer = allocArray<ByteVar>(512)
+            while (fgets(buffer, 512, file) != null) {
+                val line = buffer.toKString().trim()
+                if (line.isNotEmpty()) lines.add(line)
+            }
+        }
+        fclose(file)
+
+        var changed = false
+        for (word in keywords) {
+            if (lines.none { it.split(" ")[0] == word }) {
+                lines.add("$word 1.0")
+                changed = true
+            }
+        }
+        if (changed) {
+            val wfile = fopen(vocabPath, "w")
+            if (wfile != null) {
+                for (line in lines) {
+                    fputs(line + "\n", wfile)
+                }
+                fclose(wfile)
+                logger.info("已自动补全Vosk词表: ${keywords.filter { k -> lines.any { it.startsWith(k) } }}")
+            }
+        } else {
+            logger.info("Vosk词表已包含所有关键词，无需补全。")
+        }
     }
 } 

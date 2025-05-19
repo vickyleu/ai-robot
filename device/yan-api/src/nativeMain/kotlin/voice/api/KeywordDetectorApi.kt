@@ -40,7 +40,12 @@ interface KeywordDetectorApi {
      * 停止监听
      */
     fun stopListening()
-    
+
+    /**
+     * 释放资源
+     */
+    fun release()
+
     /**
      * 处理音频帧以检测关键词
      * @param audioFrame 音频数据

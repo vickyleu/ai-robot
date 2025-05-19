@@ -6,17 +6,14 @@ import com.airobot.piperinterop.PiperContext
 import com.airobot.piperinterop.piper_wrapper_init
 import com.airobot.piperinterop.piper_wrapper_terminate
 import com.airobot.piperinterop.piper_wrapper_text_to_audio
-import kotlinx.cinterop.CPointer
 import kotlinx.cinterop.CPointerVar
 import kotlinx.cinterop.CValuesRef
 import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.cinterop.IntVar
 import kotlinx.cinterop.ShortVar
 import kotlinx.cinterop.alloc
-import kotlinx.cinterop.allocArray
 import kotlinx.cinterop.get
-import kotlinx.cinterop.nativeHeap
-import kotlinx.cinterop.pointed
+import kotlinx.cinterop.memScoped
 import kotlinx.cinterop.ptr
 import kotlinx.cinterop.refTo
 import kotlinx.cinterop.value
@@ -26,24 +23,21 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
-import platform.posix.FILE
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import platform.posix.fclose
 import platform.posix.fopen
 import platform.posix.fread
 import platform.posix.pclose
 import platform.posix.popen
-import voice.api.synthesis.ISpeechSynthesizer
 import voice.acquisition.portaudio.PortAudioDevice
-import voice.util.AudioUtils
-import kotlinx.cinterop.memScoped
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
+import voice.api.SpeechSynthesizerApi
 
 /**
  * Piper语音合成器实现
  * 负责将文本转换为语音
  */
-class PiperSpeechSynthesizer : ISpeechSynthesizer {
+class PiperSpeechSynthesizer : SpeechSynthesizerApi {
     // Piper上下文
     private var piperContext: CValuesRef<PiperContext>? = null
 
@@ -53,10 +47,10 @@ class PiperSpeechSynthesizer : ISpeechSynthesizer {
 
     // 使用全局单例的音频设备，避免多个实例导致状态不同步
     private val audioPlayer = PortAudioDevice.getInstance()
-    
+
     // 同步锁，用于线程安全
     private val mutex = Mutex()
-    
+
     // 是否正在播放
     private var isSpeakingFlag = false
 
@@ -193,7 +187,7 @@ class PiperSpeechSynthesizer : ISpeechSynthesizer {
         }
         return exists
     }
-    
+
     /**
      * 检查目录是否存在
      */
@@ -246,17 +240,16 @@ class PiperSpeechSynthesizer : ISpeechSynthesizer {
                 println("[ERROR] 语音合成失败，返回值: $ret")
                 _synthesisState.value = SynthesisState.ERROR
                 ByteArray(0)
-            }
-            else {
+            } else {
                 val frameCount = audioLengthVar.value
                 val monoBufferPtr = audioBufferVar.value
-                
+
                 if (monoBufferPtr == null) {
                     println("[ERROR] Piper返回的音频缓冲区为空")
                     _synthesisState.value = SynthesisState.ERROR
                     return@memScoped ByteArray(0)
                 }
-                
+
                 // 安全检查：帧数应该是个合理值
                 if (frameCount <= 0 || frameCount > 1000000) {  // 设置一个合理的上限，防止异常值
                     println("[ERROR] Piper返回的帧数异常: $frameCount")
@@ -265,29 +258,29 @@ class PiperSpeechSynthesizer : ISpeechSynthesizer {
                     _synthesisState.value = SynthesisState.ERROR
                     return@memScoped ByteArray(0)
                 }
-                
+
                 println("[INFO] Piper生成了 $frameCount 帧音频数据")
-                
+
                 try {
                     // 直接使用字节数组，跳过ShortArray转换，避免中间数组分配
                     // 单声道转立体声(1通道转2通道)并转换为字节格式
                     // 一个short是2字节，一个立体声帧是2个short(左右声道)，所以总长度是frameCount*2*2
                     val byteArraySize = frameCount * 4  // 立体声每帧4字节
                     val byteArray = ByteArray(byteArraySize)
-                    
+
                     // 直接复制并转换，避免中间数组
                     for (i in 0 until frameCount) {
                         val monoSample = monoBufferPtr[i]
-                        
+
                         // 复制到左声道(低字节在前，高字节在后 - 小端序)
                         byteArray[i * 4] = (monoSample.toInt() and 0xFF).toByte()
                         byteArray[i * 4 + 1] = (monoSample.toInt() shr 8).toByte()
-                        
+
                         // 复制到右声道(同样的值)
                         byteArray[i * 4 + 2] = (monoSample.toInt() and 0xFF).toByte()
                         byteArray[i * 4 + 3] = (monoSample.toInt() shr 8).toByte()
                     }
-                    
+
                     _synthesisState.value = SynthesisState.IDLE
                     byteArray
                 } finally {
@@ -298,7 +291,7 @@ class PiperSpeechSynthesizer : ISpeechSynthesizer {
             }
         }
     }
-    
+
     /**
      * 播放文本
      * @param text 要播放的文本
@@ -308,16 +301,16 @@ class PiperSpeechSynthesizer : ISpeechSynthesizer {
         if (isSpeakingFlag) {
             stopSpeaking()
         }
-        
+
         val audioData = synthesize(text)
         if (audioData.isEmpty()) {
             println("[WARN] 合成返回了空音频数据，无法播放")
             return false
         }
-        
+
         isSpeakingFlag = true
         _synthesisState.value = SynthesisState.SPEAKING
-        
+
         try {
             // 确保音频设备已处于活动状态
             if (audioPlayer.deviceState.value != voice.hal.AudioDevice.AudioDeviceState.ACTIVE) {
@@ -333,12 +326,12 @@ class PiperSpeechSynthesizer : ISpeechSynthesizer {
                 // 直接使用ByteArray播放，避免转换
                 audioPlayer.play(audioData, audioData.size)
             }
-            
+
             if (!result) {
                 println("[WARN] 调用音频播放失败，可能是设备被其他进程占用")
                 return false
             }
-            
+
             return true
         } catch (e: Exception) {
             println("[ERROR] 播放音频时发生异常: ${e.message}")
@@ -350,7 +343,7 @@ class PiperSpeechSynthesizer : ISpeechSynthesizer {
             _synthesisState.value = SynthesisState.IDLE
         }
     }
-    
+
     /**
      * 停止播放
      */
@@ -361,7 +354,7 @@ class PiperSpeechSynthesizer : ISpeechSynthesizer {
             _synthesisState.value = SynthesisState.IDLE
         }
     }
-    
+
     /**
      * 是否正在播放
      */
@@ -378,7 +371,7 @@ class PiperSpeechSynthesizer : ISpeechSynthesizer {
             if (isSpeakingFlag) {
                 stopSpeaking()
             }
-            
+
             piper_wrapper_terminate(piperContext)
             piperContext = null
             audioPlayer.release()

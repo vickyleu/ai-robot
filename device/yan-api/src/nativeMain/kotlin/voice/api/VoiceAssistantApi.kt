@@ -15,7 +15,8 @@ interface VoiceAssistantApi {
         INITIALIZING,       // 初始化中
         LISTENING_KEYWORD,  // 监听唤醒词中
         LISTENING_COMMAND,  // 监听命令中
-        RESPONDING,         // 正在响应
+        PROCESSING_COMMAND, // 正在处理命令
+        SPEAKING,           // 正在回复
         ERROR               // 错误状态
     }
     
@@ -49,12 +50,14 @@ interface VoiceAssistantApi {
     /**
      * 提交文本命令
      * @param text 文本命令
+     * @return 回复内容
      */
     suspend fun submitTextCommand(text: String): String
     
     /**
-     * 播放文本
-     * @param text 要播放的文本
+     * 朗读文本
+     * @param text 要朗读的文本
+     * @return 播放是否成功
      */
     suspend fun speak(text: String): Boolean
     

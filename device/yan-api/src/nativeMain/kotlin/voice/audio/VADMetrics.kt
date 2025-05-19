@@ -5,7 +5,9 @@ package voice.audio
  * 用于保存VAD过程中的各种性能和诊断数据
  */
 data class VADMetrics(
-    val energyLevel: Double,        // 能量水平
-    val speechProbability: Float,   // 语音概率
-    val noiseLevel: Double          // 噪声基准水平
-) 
+    val energy: Float,               // 音频能量
+    val noiseFloor: Float,           // 噪声基准值
+    val signalToNoiseRatio: Float,   // 信噪比
+    val speechProbability: Float,    // 语音概率
+    val hasVoice: Boolean            // 是否检测到人声
+)
