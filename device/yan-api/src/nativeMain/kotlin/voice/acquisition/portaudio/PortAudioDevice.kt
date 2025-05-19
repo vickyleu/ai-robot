@@ -133,6 +133,8 @@ class PortAudioDevice private constructor() : SynchronizedObject(), AudioDevice 
 
     // 音频流管理
     private val audioMutex = Mutex()
+    // 添加专门的读取锁，避免多线程并发访问
+    private val readLock = Mutex()
     private var inputStreamPtr = nativeHeap.alloc<COpaquePointerVar>()
     private var outputStreamPtr = nativeHeap.alloc<COpaquePointerVar>()
 
@@ -166,38 +168,59 @@ class PortAudioDevice private constructor() : SynchronizedObject(), AudioDevice 
     // 流重置相关状态
     private var audioReadResetNeeded = false
 
+    // 添加流恢复状态标志
+    @Volatile
+    private var isStreamRecovering = false
+
+    // 流恢复间隔控制
+    private var lastRecoveryTime = 0L
+    private val recoveryIntervalMs = 30000L // 30秒最多恢复一次
+
     // 工具: 获取当前线程ID (仅用于调试日志)
     private fun threadId(): ULong = pthread_self().toLong().toULong()
 
-    // 非suspend版本的readAudio
+    // 非suspend版本的readAudio - 作为主要实现
     override fun readAudio(buffer: CPointer<ShortVar>, frameCount: Int): Int {
-        if (inputStreamPtr.value == null) {
-            if (audioReadCounter++ % 200 == 0) {
-                logger.warn("Sync readAudio: Input stream is null")
+        synchronized(portAudioLock) {
+            // 检查流状态
+            if (inputStreamPtr.value == null) {
+                if (audioReadCounter++ % 200 == 0) {
+                    logger.warn("Sync readAudio: Input stream is null")
+                }
+                // 填充静音
+                for (i in 0 until frameCount) {
+                    buffer[i] = 0
+                }
+                return frameCount // 返回读取的帧数（静音）
             }
-            // 填充静音
-            for (i in 0 until frameCount) {
-                buffer[i] = 0
+            
+            // 直接调用PortAudio，不涉及协程
+            val result = Pa_ReadStream(inputStreamPtr.value, buffer, frameCount.toUInt())
+            
+            if (result == paNoError || result == paInputOverflowed) {
+                return frameCount
+            } else {
+                if (audioReadCounter++ % 50 == 0) {
+                    logger.warn("Sync readAudio failed: ${Pa_GetErrorText(result)?.toKString()} (code: $result)")
+                }
+                // 填充静音
+                for (i in 0 until frameCount) {
+                    buffer[i] = 0
+                }
+                return frameCount // 即使错误也返回帧数，因为数据被静音填充
             }
-            return frameCount // 返回读取的帧数（静音）
-        }
-        val result = Pa_ReadStream(inputStreamPtr.value, buffer, frameCount.toUInt())
-        if (result == paNoError || result == paInputOverflowed) {
-            return frameCount
-        } else {
-            if (audioReadCounter++ % 50 == 0) {
-                logger.warn("Sync readAudio failed: ${Pa_GetErrorText(result)?.toKString()} (code: $result)")
-            }
-            // 填充静音
-            for (i in 0 until frameCount) {
-                buffer[i] = 0
-            }
-            return frameCount // 即使错误也返回帧数，因为数据被静音填充
         }
     }
 
-    // suspend版本的readAudio (之前的内容)
+    // suspend版本的readAudio - 委托给非suspend版本并添加读取锁
     suspend fun readAudioSuspend(buffer: CPointer<ShortVar>, frameCount: Int): Int {
+        return readLock.withLock {
+            performActualRead(buffer, frameCount)
+        }
+    }
+
+    // 实际的读取实现
+    private suspend fun performActualRead(buffer: CPointer<ShortVar>, frameCount: Int): Int {
         val currentTimeMs = System.now().toEpochMilliseconds()
 
         // 如果全局流标志激活但流指针为null，直接返回静音数据
@@ -221,16 +244,9 @@ class PortAudioDevice private constructor() : SynchronizedObject(), AudioDevice 
                 logger.error("音频输入流为NULL，尝试恢复流...")
             }
 
-            // 如果流为null，尝试恢复（带冷却）
-            if (currentTimeMs - lastRecoveryAttemptTimestamp > recoveryAttemptCooldownMs) {
-                lastRecoveryAttemptTimestamp = currentTimeMs
-
-                // 先检查PortAudio初始化状态
-                if (!portAudioInitialized) {
-                    logger.warn("PortAudio未初始化，尝试重新初始化...")
-                    initialize("default", currentSampleRate)
-                }
-
+            // 检查恢复间隔
+            if (currentTimeMs - lastRecoveryTime > recoveryIntervalMs) {
+                // 尝试流恢复
                 if (!attemptStreamRecovery()) {
                     // 返回静音数据而不是错误
                     for (i in 0 until frameCount) {
@@ -274,70 +290,8 @@ class PortAudioDevice private constructor() : SynchronizedObject(), AudioDevice 
                 return 0
             }
 
-            // 安全地从音频流读取数据
-            val result = Pa_ReadStream(inputStreamPtr.value, buffer, frameCount.toUInt())
-
-            // 处理不同的错误结果
-            when (result) {
-                paNoError -> {
-                    // 正常读取成功
-                    if (currentTimeMs - lastErrorTimestamp > errorResetIntervalMs) {
-                        consecutiveErrors = 0
-                    }
-                    return frameCount
-                }
-
-                paInputOverflowed -> {
-                    // 输入溢出，数据可能丢失但本次读取应该成功
-                    if (audioReadCounter++ % 100 == 0) {
-                        logger.warn("输入缓冲区溢出，数据可能丢失")
-                    }
-                    if (currentTimeMs - lastErrorTimestamp > errorResetIntervalMs) {
-                        consecutiveErrors = 0
-                    }
-                    return frameCount
-                }
-
-                else -> {
-                    // 其他错误情况
-                    val errorMsg = Pa_GetErrorText(result)?.toKString() ?: "未知错误"
-
-                    // 降低日志频率
-                    if (audioReadCounter++ % 50 == 0) {
-                        logger.warn("读取音频数据失败: $errorMsg (错误码: $result)")
-                    }
-
-                    // 记录错误时间和增加计数
-                    lastErrorTimestamp = currentTimeMs
-                    consecutiveErrors++
-
-                    // 连续错误超过阈值，尝试恢复
-                    if (consecutiveErrors >= maxConsecutiveErrors) {
-                        // 添加随机性，避免多个实例同时尝试恢复
-                        val jitter = (random() * 500).toLong()
-
-                        logger.warn("检测到连续$consecutiveErrors 次错误，开始恢复流程")
-                        audioReadResetNeeded = true
-
-                        // 如果已超过冷却时间，尝试立即恢复
-                        if (currentTimeMs - lastRecoveryAttemptTimestamp > recoveryAttemptCooldownMs) {
-                            lastRecoveryAttemptTimestamp = currentTimeMs
-
-                            // 延迟一个随机时间，避免雷同
-                            kotlinx.coroutines.delay(50 + jitter)
-
-                            // 如果是流错误，直接尝试重新打开流而不是整个初始化过程
-                            attemptStreamRecovery()
-                        }
-                    }
-
-                    // 返回静音数据
-                    for (i in 0 until frameCount) {
-                        buffer[i] = 0
-                    }
-                    return frameCount
-                }
-            }
+            // 简化：直接使用readAudio实现
+            return readAudio(buffer, frameCount)
         } catch (e: Exception) {
             // 捕获任何异常
             if (audioReadCounter++ % 50 == 0) {
@@ -357,112 +311,106 @@ class PortAudioDevice private constructor() : SynchronizedObject(), AudioDevice 
     }
 
     private suspend fun attemptStreamRecovery(): Boolean {
+        // 检查是否已在恢复中，避免重复恢复
+        if (isStreamRecovering) {
+            logger.warn("流已在恢复过程中，跳过重复恢复尝试")
+            return false
+        }
+        
         logger.warn("尝试恢复音频输入流...")
-        var recoveryAttempt = 0
-        val maxRecoveryAttempts = 5  // 最多尝试5次
+        isStreamRecovering = true // 设置恢复状态标志
+        lastRecoveryTime = System.now().toEpochMilliseconds() // 更新恢复时间
+        
+        try {
+            var recoveryAttempt = 0
+            val maxRecoveryAttempts = 3  // 减少尝试次数，避免过度重试
 
-        while (recoveryAttempt < maxRecoveryAttempts) {
-            recoveryAttempt++
-            logger.info("恢复尝试 #$recoveryAttempt")
+            while (recoveryAttempt < maxRecoveryAttempts) {
+                recoveryAttempt++
+                logger.info("恢复尝试 #$recoveryAttempt")
 
-            audioMutex.withLock {
-                // 首先关闭现有流
-                if (inputStreamPtr.value != null) {
-                    logger.info("关闭现有输入流")
-                    try {
-                        Pa_StopStream(inputStreamPtr.value)
-                    } catch (e: Exception) {
-                        logger.warn("停止输入流时发生异常: ${e.message}")
+                audioMutex.withLock {
+                    // 首先关闭现有流
+                    if (inputStreamPtr.value != null) {
+                        logger.info("关闭现有输入流")
+                        try {
+                            Pa_StopStream(inputStreamPtr.value)
+                        } catch (e: Exception) {
+                            logger.warn("停止输入流时发生异常: ${e.message}")
+                        }
+
+                        try {
+                            Pa_CloseStream(inputStreamPtr.value)
+                        } catch (e: Exception) {
+                            logger.warn("关闭输入流时发生异常: ${e.message}")
+                        }
+                        inputStreamPtr.value = null
+                        // 重置输入流标志
+                        inputStreamActive = false
                     }
 
-                    try {
-                        Pa_CloseStream(inputStreamPtr.value)
-                    } catch (e: Exception) {
-                        logger.warn("关闭输入流时发生异常: ${e.message}")
+                    // 延长延迟，给系统更多时间稳定
+                    val delayTime = 500L * recoveryAttempt
+                    kotlinx.coroutines.delay(delayTime)
+
+                    // 尝试使用root权限修复设备访问权限
+                    if (recoveryAttempt >= 1) {
+                        logger.info("尝试修复设备权限...")
+                        platform.posix.system("sudo chmod 666 /dev/snd/* 2>/dev/null || true")
+
+                        // 加大间隔确保命令有效
+                        kotlinx.coroutines.delay(500)
                     }
-                    inputStreamPtr.value = null
-                }
 
-                // 短暂延迟，时间随尝试次数增加
-                val delayTime = 300L * recoveryAttempt
-                kotlinx.coroutines.delay(delayTime)
-
-                // 尝试使用root权限修复设备访问权限
-                if (recoveryAttempt >= 1) {
-                    logger.info("尝试修复设备权限...")
-                    platform.posix.system("sudo chmod 666 /dev/snd/* 2>/dev/null || true")
-
-                    // 加大间隔确保命令有效
-                    kotlinx.coroutines.delay(300)
-                }
-
-                // 检查是否需要先处理其他音频进程
-                if (recoveryAttempt >= 2 || deviceSelector.isRaspberryPi() && consecutiveErrors >= 3) {
+                    // 清理其他音频进程
                     logger.info("尝试清理其他音频进程...")
                     deviceSelector.killOtherAudioProcesses()
-                    // 恢复后再等待一小段时间
-                    kotlinx.coroutines.delay(200)
-                }
+                    kotlinx.coroutines.delay(500) // 延长等待时间
 
-                // 特殊处理：从第3次恢复尝试开始，尝试更多的恢复策略
-                if (recoveryAttempt >= 3) {
-                    logger.info("尝试更多恢复策略 - 尝试 #$recoveryAttempt")
-                    when (recoveryAttempt) {
-                        3 -> {
-                            logger.info("尝试强制卸载并重新加载声卡模块...")
-                            platform.posix.system("sudo rmmod snd_microsemi 2>/dev/null || true")
-                            platform.posix.system("sudo modprobe snd_microsemi 2>/dev/null || true")
-                            // 检查系统日志中可能的音频错误
-                            platform.posix.system("dmesg | grep -i audio > /tmp/audio_log.txt 2>/dev/null || true")
-                            platform.posix.system("dmesg | grep -i alsa >> /tmp/audio_log.txt 2>/dev/null || true")
-                            platform.posix.system("dmesg | grep -i snd >> /tmp/audio_log.txt 2>/dev/null || true")
-                            kotlinx.coroutines.delay(700) // 等待模块加载
-                        }
+                    // 特殊处理：从第2次恢复尝试开始，尝试更多的恢复策略
+                    if (recoveryAttempt >= 2) {
+                        logger.info("尝试更多恢复策略 - 尝试 #$recoveryAttempt")
+                        when (recoveryAttempt) {
+                            2 -> {
+                                logger.info("尝试强制卸载并重新加载声卡模块...")
+                                platform.posix.system("sudo rmmod snd_microsemi 2>/dev/null || true")
+                                platform.posix.system("sudo modprobe snd_microsemi 2>/dev/null || true")
+                                kotlinx.coroutines.delay(1000) // 延长等待模块加载时间
+                            }
 
-                        4 -> {
-                            // 尝试重新初始化PortAudio
-                            logger.info("尝试重新初始化整个PortAudio...")
-                            Pa_Terminate()
-                            kotlinx.coroutines.delay(500)
-                            initialize("default", currentSampleRate)
-                        }
-
-                        5 -> {
-                            // 尝试应用最激进的修复方法
-                            logger.info("应用最终修复策略...")
-                            platform.posix.system("sudo alsactl -F restore 2>/dev/null || true")
-                            platform.posix.system("sudo alsactl store 2>/dev/null || true") // 保存当前状态
-                            kotlinx.coroutines.delay(1000)
-                            // 重新初始化PortAudio
-                            if (!portAudioInitialized) {
-                                Pa_Initialize()
-                                portAudioInitialized = true
+                            3 -> {
+                                // 尝试重新初始化PortAudio
+                                logger.info("尝试重新初始化整个PortAudio...")
+                                Pa_Terminate()
+                                kotlinx.coroutines.delay(1000)
+                                initialize("default", currentSampleRate)
                             }
                         }
                     }
-                }
 
-                logger.info("尝试重新打开输入流，设备: $selectedInputDeviceIndex, 采样率: $currentSampleRate")
+                    logger.info("尝试重新打开输入流，设备: $selectedInputDeviceIndex, 采样率: $currentSampleRate")
 
-                // 调用openInputStream重新打开流
-                val reopened =
-                    openInputStream(selectedInputDeviceIndex, currentSampleRate, 2)  // 确保使用2通道
+                    // 调用openInputStream重新打开流
+                    val reopened = openInputStream(selectedInputDeviceIndex, currentSampleRate, 2)
 
-                if (reopened) {
-                    logger.info("音频输入流已成功恢复 (尝试 #$recoveryAttempt)")
-                    consecutiveErrors = 0
-                    audioReadResetNeeded = false
-                    return true
-                } else if (recoveryAttempt < maxRecoveryAttempts) {
-                    logger.warn("恢复尝试 #$recoveryAttempt 失败，将继续尝试...")
-                    // 继续下一次循环尝试
-                } else {
-                    logger.error("经过 $maxRecoveryAttempts 次尝试后，恢复音频输入流失败")
-                    return false
+                    if (reopened) {
+                        logger.info("音频输入流已成功恢复 (尝试 #$recoveryAttempt)")
+                        consecutiveErrors = 0
+                        audioReadResetNeeded = false
+                        return true
+                    } else if (recoveryAttempt < maxRecoveryAttempts) {
+                        logger.warn("恢复尝试 #$recoveryAttempt 失败，将继续尝试...")
+                        // 继续下一次循环尝试
+                    } else {
+                        logger.error("经过 $maxRecoveryAttempts 次尝试后，恢复音频输入流失败")
+                        return false
+                    }
                 }
             }
+            return false
+        } finally {
+            isStreamRecovering = false // 恢复完成，重置标志
         }
-        return false
     }
 
     override fun initialize(deviceName: String, sampleRate: Int): Boolean {

@@ -434,14 +434,23 @@ class VoiceAssistant(
 
         _assistantState.value = VoiceAssistantApi.AssistantState.SPEAKING
 
-        // 确保输出流已打开
-        if (!audioDevice.openOutputStream(
+        // 在尝试打开输出流前，先检查输出流是否已激活
+        val outputStreamActive = PortAudioDevice.isOutputStreamActive()
+        
+        // 如果输出流未激活，则尝试打开输出流
+        if (!outputStreamActive) {
+            // 尝试打开输出流
+            val outputStreamOpened = audioDevice.openOutputStream(
                 deviceIndex = -1,
                 sampleRate = config.sampleRate,
                 channels = 2
             )
-        ) {
-            logger.warn("无法打开输出流，但将继续尝试合成")
+            
+            if (!outputStreamOpened) {
+                logger.warn("无法打开输出流，但将继续尝试合成")
+            }
+        } else {
+            logger.warn("输出流已激活，跳过打开输出流步骤")
         }
 
         // 合成并播放
