@@ -162,13 +162,19 @@ class VoiceAssistant(
                 _assistantState.value = VoiceAssistantApi.AssistantState.ERROR
                 return false
             }
-            logger.info("音频设备启动成功")
+            logger.info("⭐⭐⭐ 音频设备start()调用成功，继续执行...")
+            
+            // 添加延迟确保设备状态已稳定
+            logger.info("延迟300ms确保音频设备状态稳定...")
+            delay(300)
+            logger.info("延迟结束，当前设备状态: ${audioDevice.deviceState.value}")
             
             // 启动关键词监听
-            logger.info("启动关键词监听...")
+            logger.info("⭐⭐⭐ 准备启动关键词监听...")
             try {
+                logger.info("调用 keywordDetector.startListening() 开始...")
                 val result = keywordDetector.startListening()
-                logger.info("关键词监听启动结果: $result")
+                logger.info("⭐⭐⭐ keywordDetector.startListening() 返回结果: $result")
                 if (!result) {
                     logger.error("无法启动关键词监听")
                     audioDevice.stop()
@@ -186,7 +192,7 @@ class VoiceAssistant(
 
             // 启动助手任务
             try {
-                logger.info("准备启动助手主循环协程...")
+                logger.info("⭐⭐⭐ 准备启动助手主循环协程...")
                 assistantJob?.cancel()
                 val deferred = CompletableDeferred<Boolean>()
                 assistantJob = scope.launch {
@@ -194,30 +200,24 @@ class VoiceAssistant(
                     try {
                         withContext(Dispatchers.Unconfined) {
                             try {
+                                logger.info("⭐⭐⭐ 设置状态为LISTENING_KEYWORD")
                                 _assistantState.value = VoiceAssistantApi.AssistantState.LISTENING_KEYWORD
                                 isRunning = true
 
-                                // 打开输入流，使用立体声模式
-                                logger.info("尝试打开音频输入流...")
-                                if (!audioDevice.openInputStream(
-                                        deviceIndex = -1,
-                                        sampleRate = config.sampleRate,
-                                        channels = 2
-                                    )
-                                ) {
-                                    logger.error("无法打开音频输入流")
-                                    audioDevice.stop()
-                                    _assistantState.value = VoiceAssistantApi.AssistantState.ERROR
-                                    deferred.complete(false)
-                                    return@withContext
-                                }
-                                logger.info("音频输入流已打开，参数: 采样率=${config.sampleRate}, 通道=2")
+                                // 让 KeywordDetector / PortAudioAcquisition 自行打开输入流，避免在这里阻塞
+                                logger.info("⚠️ 跳过 VoiceAssistant 内部打开输入流，交由 KeywordDetector 处理")
 
                                 // 流打开后稍等片刻让系统稳定
+                                logger.info("延迟500ms让音频流稳定...")
                                 delay(500)
+                                logger.info("延迟结束，准备进入主循环")
 
+                                // 确认状态更新
+                                logger.info("⭐⭐⭐ 语音助手状态: ${_assistantState.value}")
+                                logger.info("⭐⭐⭐ 开始监听关键词...")
+                                
                                 // 主循环 - 监听唤醒词
-                                logger.info("已开始监听关键词，等待唤醒...")
+                                logger.info("⭐⭐⭐ 已开始监听关键词，等待唤醒...")
 
                                 // 音频帧读取缓冲区 - 分配一次重复使用
                                 val frameSize = 1024
@@ -226,16 +226,20 @@ class VoiceAssistant(
                                 val audioData = ShortArray(frameSize) // 预分配，避免频繁创建对象
                                 logger.info("音频缓冲区分配完成")
 
-                                logger.info("进入主检测循环...")
+                                logger.info("⭐⭐⭐ 进入主检测循环...")
                                 var frameCounter = 0
                                 while (isActive && isRunning) {
                                     try {
                                         frameCounter++
+                                        if (frameCounter == 1 || frameCounter % 100 == 0) {
+                                            logger.info("主循环迭代次数: $frameCounter")
+                                        }
+                                        
                                         // 从音频设备读取数据 - 使用 suspend 版本
                                         val framesRead = audioDevice.readAudioSuspend(buffer, frameSize)
                                         
                                         // 偶尔记录一次读取状态，避免日志过多
-                                        if (frameCounter % 100 == 0) {
+                                        if (frameCounter == 1 || frameCounter % 100 == 0) {
                                             logger.info("主循环读取音频: $framesRead 帧")
                                         }
 
@@ -254,8 +258,10 @@ class VoiceAssistant(
                                         }
 
                                         // 关键词检测
-                                        val detected =
-                                            keywordDetector.detect(audioData.copyOfRange(0, framesRead))
+                                        if (frameCounter == 1 || frameCounter % 100 == 0) {
+                                            logger.info("准备调用keywordDetector.detect进行检测...")
+                                        }
+                                        val detected = keywordDetector.detect(audioData.copyOfRange(0, framesRead))
                                         
                                         // 如果检测到关键词
                                         if (detected) {
@@ -299,18 +305,21 @@ class VoiceAssistant(
                         _assistantState.value = VoiceAssistantApi.AssistantState.IDLE
                     }
                 }
-                logger.info("助手主循环协程已创建，等待协程完成初始化")
+                logger.info("⭐⭐⭐ 助手主循环协程已创建，等待协程完成初始化")
                 
                 // 等待足够时间让主循环启动
+                logger.info("延迟1000ms等待主循环启动...")
                 delay(1000)
+                logger.info("延迟结束，检查助手状态")
                 
                 // 检查状态并返回结果
+                logger.info("⭐⭐⭐ 当前助手状态: ${_assistantState.value}")
                 if (_assistantState.value == VoiceAssistantApi.AssistantState.ERROR) {
                     logger.error("启动过程中出现错误，助手状态为ERROR")
                     return false
                 }
                 
-                logger.info("语音助手启动完成，状态: ${_assistantState.value}")
+                logger.info("⭐⭐⭐ 语音助手启动完成，状态: ${_assistantState.value}")
                 return true
             } catch (e: Exception) {
                 logger.error("创建助手主循环协程时发生异常: ${e.message}")
@@ -354,6 +363,22 @@ class VoiceAssistant(
     private suspend fun playActivationSound() {
         logger.info("播放激活提示音")
 
+        // 检查输入流状态
+        val inputStreamActive = PortAudioDevice.isInputStreamActive()
+        
+        if (inputStreamActive) {
+            // 输入流活动，使用系统命令播放嘟嘟声
+            val beepCmd = "echo -e \"\\007\\007\" > /dev/console || echo 'beep' > /dev/null"
+            try {
+                platform.posix.system(beepCmd)
+                logger.debug("系统命令播放激活提示音完成")
+            } catch (e: Exception) {
+                logger.error("使用系统命令播放激活提示音失败: ${e.message}")
+            }
+            return
+        }
+
+        // 如果输入流不活跃，尝试使用PortAudio播放
         // 创建一个简单的哔声
         val beepDuration = 200 // 毫秒
         val sampleRate = config.sampleRate
@@ -434,35 +459,86 @@ class VoiceAssistant(
 
         _assistantState.value = VoiceAssistantApi.AssistantState.SPEAKING
 
-        // 在尝试打开输出流前，先检查输出流是否已激活
-        val outputStreamActive = PortAudioDevice.isOutputStreamActive()
-        
-        // 如果输出流未激活，则尝试打开输出流
-        if (!outputStreamActive) {
-            // 尝试打开输出流
-            val outputStreamOpened = audioDevice.openOutputStream(
-                deviceIndex = -1,
-                sampleRate = config.sampleRate,
-                channels = 2
-            )
+        try {
+            // 检查输入流状态
+            val inputStreamActive = PortAudioDevice.isInputStreamActive()
             
-            if (!outputStreamOpened) {
-                logger.warn("无法打开输出流，但将继续尝试合成")
+            if (inputStreamActive) {
+                // 输入流活动时，直接使用系统命令合成和播放
+                logger.info("检测到输入流活动，使用系统命令播放音频...")
+                
+                // 使用系统命令合成并直接播放
+                val cmd = "echo \"$text\" | piper --model ${config.piperModelPath} --config ${config.piperConfigPath} --output-raw | aplay -f S16_LE -r 16000 -c 1 -D hw:0,0 2>/dev/null"
+                try {
+                    val result = platform.posix.system(cmd)
+                    logger.info("使用系统命令合成并播放完成，结果: $result")
+                    
+                    _assistantState.value = VoiceAssistantApi.AssistantState.LISTENING_KEYWORD
+                    return result == 0
+                } catch (e: Exception) {
+                    logger.error("使用系统命令合成播放失败: ${e.message}")
+                    _assistantState.value = VoiceAssistantApi.AssistantState.LISTENING_KEYWORD
+                    return false
+                }
+            } else {
+                // 仅在输入流不活动时才尝试使用PortAudio播放
+                // 使用额外尝试次数增加合成成功率
+                var success = false
+                var attempts = 0
+                val maxAttempts = 3
+
+                while (!success && attempts < maxAttempts) {
+                    attempts++
+                    
+                    // 再次检查输入流状态
+                    if (PortAudioDevice.isInputStreamActive()) {
+                        logger.warn("尝试播放时检测到输入流已变为活动状态，取消播放")
+                        break
+                    }
+                    
+                    // 尝试检查输出流
+                    val outputStreamActive = PortAudioDevice.isOutputStreamActive()
+                    
+                    if (!outputStreamActive) {
+                        // 尝试打开输出流
+                        val outputStreamOpened = audioDevice.openOutputStream(
+                            deviceIndex = -1,
+                            sampleRate = config.sampleRate,
+                            channels = 2
+                        )
+                        
+                        if (!outputStreamOpened) {
+                            logger.warn("无法打开输出流（尝试 #$attempts），等待后重试")
+                            delay(500) // 等待一段时间再重试
+                            continue
+                        }
+                    }
+                    
+                    // 合成并播放
+                    try {
+                        success = speechSynthesizer.speak(text)
+                        if (!success) {
+                            logger.warn("语音合成失败（尝试 #$attempts），等待后重试")
+                            delay(500) // 等待一段时间再重试
+                        }
+                    } catch (e: Exception) {
+                        logger.error("语音合成错误（尝试 #$attempts）: ${e.message}")
+                        delay(500) // 等待一段时间再重试
+                    }
+                }
+
+                if (!success) {
+                    logger.error("多次尝试后语音合成仍然失败")
+                }
+                
+                _assistantState.value = VoiceAssistantApi.AssistantState.LISTENING_KEYWORD
+                return success
             }
-        } else {
-            logger.warn("输出流已激活，跳过打开输出流步骤")
-        }
-
-        // 合成并播放
-        val success = try {
-            speechSynthesizer.speak(text)
         } catch (e: Exception) {
-            logger.error("语音合成错误: ${e.message}")
-            false
+            logger.error("语音合成过程中发生异常: ${e.message}")
+            _assistantState.value = VoiceAssistantApi.AssistantState.LISTENING_KEYWORD
+            return false
         }
-
-        _assistantState.value = VoiceAssistantApi.AssistantState.LISTENING_KEYWORD
-        return success
     }
 
     /**
@@ -487,6 +563,22 @@ class VoiceAssistant(
     private suspend fun playAcknowledgeTone() {
         logger.info("播放应答提示音")
 
+        // 检查输入流状态
+        val inputStreamActive = PortAudioDevice.isInputStreamActive()
+        
+        if (inputStreamActive) {
+            // 输入流活动，使用系统命令播放嘟嘟声
+            val beepCmd = "echo -e \"\\007\" > /dev/console || echo 'beep' > /dev/null"
+            try {
+                platform.posix.system(beepCmd)
+                logger.debug("系统命令播放应答提示音完成")
+            } catch (e: Exception) {
+                logger.error("使用系统命令播放应答提示音失败: ${e.message}")
+            }
+            return
+        }
+
+        // 如果输入流不活跃，尝试使用PortAudio播放
         // 创建一个简单的哔声
         val beepDuration = 200 // 毫秒
         val sampleRate = config.sampleRate

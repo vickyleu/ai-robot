@@ -107,18 +107,8 @@ class AudioProcessingManager(private val modelPath: String) : AudioProcessingPip
         logger.info("已设置VAD灵敏度为中低灵敏度(0.4)，减少误触发")
 
         // 初始化专用的播放设备 (与录音设备分离)
-        if (playbackDevice.initialize("回放设备", 16000)) {
-            if (playbackDevice.start()) {
-                playerReady = true
-                logger.info("专用播放设备初始化成功")
-            } else {
-                logger.warn("启动专用播放设备失败，回放功能将不可用")
-                playerReady = false
-            }
-        } else {
-            logger.warn("初始化专用播放设备失败，回放功能将不可用")
-            playerReady = false
-        }
+        logger.info("⚠️  跳过专用播放设备的即时启动，将在首次需要播放时再尝试初始化 (lazy start)")
+        playerReady = false
 
         isInitialized = true
         logger.info("音频处理管理器初始化成功")
@@ -151,7 +141,7 @@ class AudioProcessingManager(private val modelPath: String) : AudioProcessingPip
      * 开始音频处理
      */
     override fun start() {
-        logger.info("AudioProcessingManager.start() 被调用")
+        logger.info("⭐⭐⭐ AudioProcessingManager.start() 被调用")
         if (isRunning) {
             logger.warn("音频处理流水线已经在运行中")
             return
@@ -161,7 +151,7 @@ class AudioProcessingManager(private val modelPath: String) : AudioProcessingPip
             return
         }
 
-        logger.info("启动音频处理流水线")
+        logger.info("⭐⭐⭐ 启动音频处理流水线")
         processingStartTime = System.now().toEpochMilliseconds()
         frameCount = 0
         speechFrameCount = 0
@@ -170,25 +160,44 @@ class AudioProcessingManager(private val modelPath: String) : AudioProcessingPip
         lastRecognitionTime = 0L
         (diagnostics as? DiagnosticsCollector)?.clear()
 
+        logger.info("⭐⭐⭐ 创建处理协程...")
         processingScope = CoroutineScope(Dispatchers.Default + SupervisorJob())
         processingScope?.launch {
+            logger.info("⭐⭐⭐ 处理协程已启动")
             isRunning = true
-            logger.info("音频采集循环启动...")
-            acquisition.startCapture { audioData, length ->
-                if (isRunning) {
-                    processAudioFrame(audioData, length, System.now().toEpochMilliseconds())
+            logger.info("⭐⭐⭐ 准备启动音频采集循环...")
+            
+            try {
+                logger.info("⭐⭐⭐ 调用 acquisition.startCapture 设置回调...")
+                acquisition.startCapture { audioData, length ->
+                    if (frameCount == 0) {
+                        logger.info("⭐⭐⭐ 首次收到音频数据回调！长度=$length")
+                    }
+                    
+                    if (isRunning) {
+                        processAudioFrame(audioData, length, System.now().toEpochMilliseconds())
+                    } else {
+                        logger.warn("收到音频数据但处理管理器已停止")
+                    }
                 }
+                logger.info("⭐⭐⭐ acquisition.startCapture 返回成功，等待音频数据...")
+            } catch (e: Exception) {
+                logger.error("⭐⭐⭐ 启动音频采集时发生异常: ${e.message}")
+                e.printStackTrace()
+                isRunning = false
             }
-            logger.info("acquisition.startCapture 回调设置完成，等待音频数据...")
         }?.invokeOnCompletion { throwable ->
             isRunning = false
             if (throwable is CancellationException) {
                 logger.info("音频处理主协程被取消")
             } else if (throwable != null) {
-                logger.error("音频处理主协程异常结束")
+                logger.error("音频处理主协程异常结束: ${throwable.message}")
+                throwable.printStackTrace()
             }
             logger.info("音频处理流水线已停止.")
         }
+        
+        logger.info("⭐⭐⭐ AudioProcessingManager.start() 完成，等待音频数据处理...")
     }
 
     /**
@@ -203,6 +212,10 @@ class AudioProcessingManager(private val modelPath: String) : AudioProcessingPip
 
         try {
             frameCount++
+            if (frameCount == 1) {
+                logger.info("⭐⭐⭐ 收到第一帧音频数据，长度=$length, 时间戳=$timestamp")
+            }
+            
             lastFrameTime = timestamp
             diagnostics.recordAcquisitionMetrics("PortAudio", length, timestamp)
 

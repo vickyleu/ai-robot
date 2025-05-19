@@ -20,5 +20,8 @@ data class VoiceAssistantConfig(
     val piperModelPath: String = "/usr/local/share/yanshee-model/piper/zh_CN-huayan-medium.onnx",
     val piperConfigPath: String = "/usr/local/share/yanshee-model/piper/zh_CN-huayan-medium.onnx.json",
     val piperESpeakDataPath: String = "/usr/local/share/yanshee-model/piper/espeak-ng-data",
-    val useInternalResponse: Boolean = false
+    val useInternalResponse: Boolean = false,
+    
+    // 提示音文件路径
+    val soundsPath: String = "/usr/local/share/yanshee-model/sounds"
 )

@@ -23,7 +23,7 @@ object LogManager {
     }
     
     // 默认日志级别
-    private var defaultLogLevel = LogLevel.WARN
+    private var defaultLogLevel = LogLevel.DEBUG
     
     /**
      * 设置默认日志级别

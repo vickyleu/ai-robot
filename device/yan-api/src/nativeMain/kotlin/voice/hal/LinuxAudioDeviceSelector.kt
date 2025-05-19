@@ -104,17 +104,20 @@ class LinuxAudioDeviceSelector {
 
         // 创建针对Microsemi DAC的特殊配置
         val asoundrcContent = """
-        # Microsemi DAC立体声配置 - 由AI-Robot生成
-        
+        # Microsemi DAC 配置 (plug -> hw:0,0) - 自动生成
+
         pcm.!default {
-            type hw
-            card 0
-            device 0
-            format S16_LE
-            channels 2
-            rate 16000
+            type plug
+            slave.pcm {
+                type hw
+                card 0
+                device 0
+            }
+            slave.format S16_LE
+            slave.channels 2
+            slave.rate 16000
         }
-        
+
         ctl.!default {
             type hw
             card 0

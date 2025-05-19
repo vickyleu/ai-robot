@@ -52,6 +52,12 @@ fun initSignalHandler() {
  */
 fun runVoiceDemo() {
     logger.info("启动语音助手Demo...")
+    // 全局一次性初始化所有底层资源
+    try {
+        AudioApplication.initialize()
+    } catch (e: Exception) {
+        logger.warn("AudioApplication.initialize() 失败: ${e.message}")
+    }
     println("启动中，请稍候...")
     
     // 创建主协程作用域
@@ -93,47 +99,29 @@ fun runVoiceDemo() {
                 
                 // 启动语音助手
                 logger.info("正在启动语音助手...")
-                try {
-                    withTimeout(10000) { // 最多等待10秒
-                        val result = globalVoiceAssistant.start()
-                        if (result) {
-                            logger.info("语音助手启动成功")
-                        } else {
-                            logger.error("语音助手启动失败")
-                            return@withTimeout
-                        }
-                    }
-                } catch (e: TimeoutCancellationException) {
-                    logger.error("语音助手启动超时")
+                println("正在启动语音助手...")
+                if (!globalVoiceAssistant.start()) {
+                    logger.error("语音助手启动失败")
+                    println("语音助手启动失败")
                     return@runBlocking
                 }
+                logger.info("语音助手启动成功，当前状态: ${globalVoiceAssistant.assistantState.value}")
                 
-                // 启动诊断监控任务
-                job = mainScope?.launch {
-                    while (isActive) {
-                        delay(30000) // 每30秒生成一次诊断报告
-                        if (isRunning) {
-                            try {
-                                val diagnostics = globalVoiceAssistant.generateDiagnostics()
-                                logger.info("===== 周期性诊断报告 =====\n$diagnostics")
-                            } catch (e: Exception) {
-                                logger.error("生成诊断报告失败: ${e.message}")
-                            }
-                        }
-                    }
+                // 添加延迟确保助手完全启动
+                delay(1000)
+                
+                // 确认助手状态
+                if (globalVoiceAssistant.assistantState.value == AssistantState.LISTENING_KEYWORD) {
+                    logger.info("语音助手已成功进入关键词监听状态")
+                    println("语音助手已启动并正在监听，请说\"小样\"来唤醒")
+                } else {
+                    logger.warn("语音助手未进入关键词监听状态，当前状态: ${globalVoiceAssistant.assistantState.value}")
+                    println("注意：语音助手可能未正确启动，当前状态: ${globalVoiceAssistant.assistantState.value}")
                 }
                 
-                // 提示准备就绪
-                logger.info("语音助手已准备就绪，正在监听...")
-                println("语音助手已准备就绪，说\"小样\"或\"嘿小样\"来激活，按Ctrl+C退出")
-                
-                // 使用更细粒度的状态检查循环
+                // --- 阻塞主协程保持程序运行，直到收到 SIGINT ---
                 while (isRunning) {
                     delay(1000)
-                    if (globalVoiceAssistant.assistantState.value == AssistantState.IDLE) {
-                        logger.warn("检测到语音助手已停止运行，尝试重新启动...")
-                        globalVoiceAssistant.start()
-                    }
                 }
             }
         } catch (e: Exception) {

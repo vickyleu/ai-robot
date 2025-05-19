@@ -2,6 +2,7 @@
 
 package voice.acquisition.portaudio
 
+import com.airobot.core.utils.FormatUtil
 import com.airobot.core.utils.format
 import kotlinx.cinterop.CPointer
 import kotlinx.cinterop.ExperimentalForeignApi
@@ -27,6 +28,7 @@ import voice.util.AudioUtils
 import voice.util.LogManager
 import kotlin.concurrent.Volatile
 import kotlin.coroutines.cancellation.CancellationException
+import kotlin.experimental.and
 import kotlin.time.ExperimentalTime
 
 /**
@@ -54,8 +56,12 @@ class PortAudioAcquisition(
 
     // 原生缓冲区 - 根据config.channels调整
     private val frameSize = 256  // 每次读取的帧数
-    // Buffer size needs to be dynamic based on channels or always assume max (e.g., 2)
-    private val buffer = nativeHeap.allocArray<ShortVar>(frameSize * 2) // Max 2 channels for buffer allocation
+    // 增大缓冲区大小，避免 PortAudio 返回超出预期帧数时的越界问题
+    // 使用 frameSize * channels * 安全系数(4)，确保足够大
+    private val bufferSize = frameSize * 2 * 4 // 2048 shorts
+    private val buffer = nativeHeap.allocArray<ShortVar>(bufferSize)
+    // 添加日志记录每次实际读取的帧数
+    private var maxFramesEverRead = 0
 
     // 状态标志和统计
     @Volatile
@@ -86,12 +92,14 @@ class PortAudioAcquisition(
 
     // 启动音频采集任务，并通过回调传递数据
     fun startCapture(onData: (ByteArray, Int) -> Unit) {
+        logger.info("⭐⭐⭐ startCapture 被调用，开始采集音频 ⭐⭐⭐")
+        
         if (isCapturing) {
             logger.warn("音频采集已经在运行中")
             return
         }
         if (_deviceState.value != AudioDevice.AudioDeviceState.READY && _deviceState.value != AudioDevice.AudioDeviceState.ACTIVE) {
-             logger.warn("采集设备未就绪: ${_deviceState.value}, 尝试启动底层设备")
+             logger.info("采集设备未就绪: ${_deviceState.value}, 尝试启动底层设备")
              if (!audioDevice.start()) {
                  logger.error("底层音频设备启动失败，无法开始采集")
                  return
@@ -109,61 +117,101 @@ class PortAudioAcquisition(
             totalBytesRead = 0L
             lastLogTime = startTime
 
-            logger.info("音频采集中... Channels: ${config.channels}, SampleRate: ${config.sampleRate}")
+            logger.info("音频采集中... Channels: ${config.channels}, SampleRate: ${config.sampleRate}, 缓冲区大小: $bufferSize")
 
             try {
                 while (isActive && isCapturing) { // Use isActive to respect coroutine cancellation
                     // 确保输入流已打开，否则尝试打开
-                    if (PortAudioDevice.getInstance().deviceState.value != AudioDevice.AudioDeviceState.ACTIVE || !PortAudioDevice.isInputStreamActive()) {
+                    if (PortAudioDevice.getInstance().deviceState.value != AudioDevice.AudioDeviceState.ACTIVE || 
+                       !PortAudioDevice.isInputStreamActive()) {
+                         logger.info("输入流未打开，尝试打开输入流...")
                          if (!PortAudioDevice.getInstance().openInputStream(-1, config.sampleRate, config.channels)) {
                             logger.error("采集循环：无法打开输入流，延迟后重试")
                             delay(1000) // Wait before retrying
                             continue
                          }
+                         logger.info("输入流已成功打开")
                     }
                     
-                    // 调用PortAudioDevice的suspend版本readAudio
-                    val framesRead = audioDevice.readAudioSuspend(buffer, frameSize)
-
-                    if (framesRead > 0) {
-                        frameCounter++
-                        val bytesReadCurrentFrame = framesRead * config.channels * (config.bitsPerSample / 8)
-                        totalBytesRead += bytesReadCurrentFrame
-
-                        // 将ShortVar CPointer转换为ShortArray，然后转为ByteArray
-                        val shortArray = ShortArray(framesRead * config.channels)
-                        for (i in 0 until (framesRead * config.channels)) {
-                            shortArray[i] = buffer[i]
-                        }
-                        val byteData = AudioUtils.shortArrayToByteArray(shortArray)
+                    try {
+                        // 读取音频数据
+                        logger.info("⭐⭐⭐ 准备调用readAudioSuspend读取音频数据")
+                        val framesRead = audioDevice.readAudioSuspend(buffer, frameSize)
+                        logger.info("⭐⭐⭐ readAudioSuspend返回：读取了 $framesRead 帧")
                         
-                        onAudioDataReceived?.invoke(byteData, byteData.size)
-
-                        val now = Clock.System.now().toEpochMilliseconds()
-                        if (now - lastLogTime >= 5000) { // 每5秒记录一次
-                            val durationSeconds = (now - startTime) / 1000.0
-                            if (durationSeconds > 0) {
-                                val bytesPerSecond = totalBytesRead / durationSeconds
-                                logger.info("音频采集性能: %.2f KB/s, 帧数: $frameCounter, 已采集: %.2f KB".format(bytesPerSecond / 1024.0, totalBytesRead / 1024.0))
-                            }
-                            lastLogTime = now
+                        // 更新最大帧数统计
+                        if (framesRead > maxFramesEverRead) {
+                            maxFramesEverRead = framesRead
+                            logger.info("新的最大帧数记录: $maxFramesEverRead")
                         }
-                    } else if (framesRead < 0) {
-                        logger.error("读取音频数据失败，错误码: $framesRead. 延迟后重试...")
-                        delay(200) // 错误后短暂延迟
-                    } else {
-                        // framesRead == 0, 可能表示没有数据，可以短暂延迟避免忙等待
-                        delay(10) // Short delay if no data
+                        
+                        // 如果读取到数据
+                        if (framesRead > 0) {
+                            // 安全检查 - 确保framesRead不超过缓冲区大小的一半
+                            val safeFramesRead = if (framesRead <= bufferSize/2) framesRead else bufferSize/2
+                            if (framesRead > bufferSize/2) {
+                                logger.warn("⚠️ 帧数 $framesRead 超过安全限制 ${bufferSize/2}，将被截断")
+                            }
+                            
+                            // 将short数组转换为byte数组
+                            logger.info("⭐⭐⭐ 准备处理和回调音频数据，帧数: $safeFramesRead")
+                            val byteData = ByteArray(safeFramesRead * 2) // 每个short占用2个byte
+                            
+                            for (i in 0 until safeFramesRead) {
+                                val shortVal = buffer[i]
+                                // Little endian
+                                byteData[i * 2] = (shortVal and 0xFF).toByte()
+                                byteData[i * 2 + 1] = (shortVal.toInt() shr 8).toByte()
+                            }
+                            
+                            // 更新统计
+                            frameCounter++
+                            totalBytesRead += byteData.size.toLong()
+                            
+                            // 每5秒或1000帧记录一次统计
+                            val currentTime = Clock.System.now().toEpochMilliseconds()
+                            if (frameCounter % 1000 == 0 || currentTime - lastLogTime > 5000) {
+                                val elapsedSeconds = (currentTime - startTime) / 1000.0
+                                logger.info("采集中: ${frameCounter}帧, ${FormatUtil.formatDouble(totalBytesRead / 1024.0).format(2)}KB, " +
+                                           "${FormatUtil.formatDouble(elapsedSeconds).format(1)}秒, " +
+                                           "${FormatUtil.formatDouble(totalBytesRead / 1024.0 / elapsedSeconds).format(2)}KB/s")
+                                lastLogTime = currentTime
+                            }
+                            
+                            // 回调通知
+                            logger.info("⭐⭐⭐ 准备执行onAudioDataReceived回调")
+                            onAudioDataReceived?.invoke(byteData, byteData.size)
+                            logger.info("⭐⭐⭐ onAudioDataReceived回调完成")
+                        } else if (framesRead < 0) {
+                            // 读取错误
+                            logger.error("音频读取错误: $framesRead")
+                            delay(100) // 短延迟避免过度记录错误
+                        } else {
+                            // 没有读取到数据
+                            delay(10) // 短延迟避免CPU满载
+                        }
+                    } catch (e: Exception) {
+                        // 捕获异常但不中断循环
+                        logger.error("采集循环出现异常: ${e.message}, 继续尝试...")
+                        if (e is CancellationException) throw e // 重新抛出取消异常
+                        delay(500) // 较长延迟，给系统恢复时间
                     }
+                    
+                    // 周期性短延迟，防止过度消耗CPU
+                    delay(5)
                 }
             } catch (e: CancellationException) {
-                logger.info("音频采集协程被取消")
+                logger.info("采集任务被取消")
+                throw e // 重新抛出以正确完成协程
             } catch (e: Exception) {
-                logger.error("音频采集异常: ${e.message}")
+                logger.error("采集任务异常结束: ${e.message}")
+                e.printStackTrace()
             } finally {
-                logger.info("音频采集循环结束")
+                logger.info("采集任务结束，更新状态")
                 isCapturing = false
-                _deviceState.value = AudioDevice.AudioDeviceState.READY
+                if (_deviceState.value == AudioDevice.AudioDeviceState.ACTIVE) {
+                    _deviceState.value = AudioDevice.AudioDeviceState.READY
+                }
             }
         }
         logger.info("音频采集任务已启动")
@@ -242,10 +290,26 @@ class PortAudioAcquisition(
     override fun release() {
         logger.info("释放 PortAudioAcquisition 资源...")
         stopCapture()
-        nativeHeap.free(buffer)
-        // audioDevice的release由其单例管理或外部管理，这里不直接调用
-        // audioDevice.release() // 通常不在这里释放单例
-        _deviceState.value = AudioDevice.AudioDeviceState.IDLE
-        logger.info("PortAudioAcquisition 资源已释放")
+        try {
+            // 确保安全释放 buffer
+            try {
+                nativeHeap.free(buffer)
+                logger.info("已释放音频采集缓冲区")
+            } catch (e: Exception) {
+                logger.error("释放缓冲区时发生异常: ${e.message}")
+            }
+        } catch (e: Exception) {
+            logger.error("释放资源时发生异常: ${e.message}")
+        } finally {
+            // 重置所有状态
+            maxFramesEverRead = 0
+            frameCounter = 0
+            totalBytesRead = 0L
+            isCapturing = false
+            captureScope = null
+            captureJob = null
+            _deviceState.value = AudioDevice.AudioDeviceState.IDLE
+            logger.info("PortAudioAcquisition 资源已释放")
+        }
     }
 } 
