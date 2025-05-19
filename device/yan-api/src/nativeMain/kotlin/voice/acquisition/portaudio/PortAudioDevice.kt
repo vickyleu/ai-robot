@@ -75,8 +75,9 @@ class PortAudioDevice private constructor() : SynchronizedObject(), AudioDevice 
         @Volatile
         private var instance: PortAudioDevice? = null
 
-        // 添加全局标志以防止多个组件打开音频流
-        private var globalStreamActive = false
+        // 将单一标志拆分为两个独立标志
+        private var inputStreamActive = false
+        private var outputStreamActive = false
 
         // 全局静态互斥锁，保护所有PortAudio调用
         private val portAudioLock = SynchronizedObject()
@@ -85,15 +86,25 @@ class PortAudioDevice private constructor() : SynchronizedObject(), AudioDevice 
             return instance ?: PortAudioDevice().also { instance = it }
         }
 
-        // 添加全局方法检查是否已有音频流运行
-        fun isGlobalStreamActive(): Boolean {
-            return globalStreamActive
+        // 修改检查方法，分别检查输入和输出流
+        fun isInputStreamActive(): Boolean {
+            return inputStreamActive
+        }
+        
+        fun isOutputStreamActive(): Boolean {
+            return outputStreamActive
         }
 
-        // 设置全局音频流状态
-        fun setGlobalStreamActive(active: Boolean) {
+        // 设置流状态的方法也拆分为两个
+        fun setInputStreamActive(active: Boolean) {
             synchronized(portAudioLock) {
-                globalStreamActive = active
+                inputStreamActive = active
+            }
+        }
+        
+        fun setOutputStreamActive(active: Boolean) {
+            synchronized(portAudioLock) {
+                outputStreamActive = active
             }
         }
     }
@@ -190,7 +201,7 @@ class PortAudioDevice private constructor() : SynchronizedObject(), AudioDevice 
         val currentTimeMs = System.now().toEpochMilliseconds()
 
         // 如果全局流标志激活但流指针为null，直接返回静音数据
-        if (globalStreamActive && inputStreamPtr.value == null) {
+        if (inputStreamActive && inputStreamPtr.value == null) {
             // 填充静音数据
             for (i in 0 until frameCount) {
                 buffer[i] = 0
@@ -790,10 +801,10 @@ class PortAudioDevice private constructor() : SynchronizedObject(), AudioDevice 
         channels: Int
     ): Boolean {
         synchronized(portAudioLock) {
-            // 检查全局标志，如果已有流运行，禁止打开新流，以防止资源冲突
-            if (globalStreamActive) {
-                logger.warn("◆◆◆◆◆ 全局音频流已存在，强制阻止打开新流 ◆◆◆◆◆")
-                println("◆◆◆◆◆ 全局音频流已存在，强制阻止打开新流 ◆◆◆◆◆")
+            // 现在只检查输入流的状态，允许同时存在输出流
+            if (inputStreamActive) {
+                logger.warn("◆◆◆◆◆ 输入流已存在，无法打开新的输入流 ◆◆◆◆◆")
+                println("◆◆◆◆◆ 输入流已存在，无法打开新的输入流 ◆◆◆◆◆")
 
                 // 强制设置设备状态为活跃，以便允许播放
                 if (_deviceState.value != AudioDevice.AudioDeviceState.ACTIVE) {
@@ -801,7 +812,7 @@ class PortAudioDevice private constructor() : SynchronizedObject(), AudioDevice 
                     logger.info("强制设置设备状态为ACTIVE以支持播放")
                 }
 
-                // 立即返回，完全不做任何流操作，以避免内存冲突
+                // 立即返回，不做任何流操作
                 return true
             }
 
@@ -828,7 +839,7 @@ class PortAudioDevice private constructor() : SynchronizedObject(), AudioDevice 
             }
 
             // 再次检查全局标志（可能在资源清理后被其他线程设置）
-            if (globalStreamActive) {
+            if (inputStreamActive) {
                 logger.warn("◆◆◆◆◆ 资源清理后检测到全局流已激活，阻止打开新流 ◆◆◆◆◆")
                 return true
             }
@@ -983,10 +994,10 @@ class PortAudioDevice private constructor() : SynchronizedObject(), AudioDevice 
                         return@withLock false
                     }
 
-                    // 成功打开流后设置全局标志
-                    globalStreamActive = true
-                    logger.info("========== 音频输入流打开完成，设置全局标志 ==========")
-                    println("========== 音频输入流打开完成，设置全局标志 ==========")
+                    // 成功打开流后设置输入流标志
+                    inputStreamActive = true
+                    logger.info("========== 音频输入流打开完成，设置输入流标志 ==========")
+                    println("========== 音频输入流打开完成，设置输入流标志 ==========")
                     return@withLock true
                 }
             } catch (e: Exception) {
@@ -1003,13 +1014,10 @@ class PortAudioDevice private constructor() : SynchronizedObject(), AudioDevice 
         channels: Int
     ): Boolean {
         return synchronized(portAudioLock) {
-            // ⚠️⚠️⚠️ 修复内存崩溃核心逻辑 ⚠️⚠️⚠️
-            // 问题根源：当全局音频流激活时，不能创建新的流，即使是输出流
-            // 当任何类型的流已经存在时，必须阻止所有新的流操作
-            if (globalStreamActive) {
-                logger.warn("⛔⛔⛔ 全局音频流已存在，不允许创建任何新流 (tid=${threadId()}) ⛔⛔⛔")
-                // 当全局标志激活时，直接返回失败，完全不尝试创建新流
-                // 通过禁止所有并发音频流访问，避免内存崩溃
+            // 现在只检查输出流状态，允许同时存在输入流
+            if (outputStreamActive) {
+                logger.warn("⛔⛔⛔ 输出流已存在，无法创建新的输出流 (tid=${threadId()}) ⛔⛔⛔")
+                // 当输出流标志激活时，直接返回失败
                 return@synchronized false
             }
 
@@ -1243,8 +1251,8 @@ class PortAudioDevice private constructor() : SynchronizedObject(), AudioDevice 
                         Pa_StopStream(inputStreamPtr.value)
                         Pa_CloseStream(inputStreamPtr.value)
                         logger.info("输入音频流已关闭")
-                        // 重置全局标志
-                        globalStreamActive = false
+                        // 重置输入流标志
+                        inputStreamActive = false
                     } catch (e: Exception) {
                         logger.warn("关闭输入流时出错: ${e.message}")
                     }
@@ -1285,6 +1293,8 @@ class PortAudioDevice private constructor() : SynchronizedObject(), AudioDevice 
                         Pa_StopStream(outputStreamPtr.value)
                         Pa_CloseStream(outputStreamPtr.value)
                         logger.info("输出音频流已关闭")
+                        // 重置输出流标志
+                        outputStreamActive = false
                     } catch (e: Exception) {
                         logger.warn("关闭输出流时出错: ${e.message}")
                     }
@@ -1296,7 +1306,7 @@ class PortAudioDevice private constructor() : SynchronizedObject(), AudioDevice 
 
     override fun play(audioData: ByteArray, length: Int): Boolean {
         synchronized(portAudioLock) {
-            if (globalStreamActive) {
+            if (inputStreamActive) {
                 if (_deviceState.value != AudioDevice.AudioDeviceState.ACTIVE) {
                     _deviceState.value = AudioDevice.AudioDeviceState.ACTIVE
                 }
@@ -1309,7 +1319,7 @@ class PortAudioDevice private constructor() : SynchronizedObject(), AudioDevice 
             // 若输出流未打开，主线程同步打开一次，避免并发冲突
             if (outputStreamPtr.value == null) {
                 // 全局流激活标志检查 - 安全处理
-                if (globalStreamActive) {
+                if (inputStreamActive) {
                     logger.warn("⛔⛔⛔ 全局音频流活跃中，暂时无法播放音频 ⛔⛔⛔")
                     // 此时不应尝试打开新流，否则会导致崩溃
                     return false
@@ -1352,7 +1362,7 @@ class PortAudioDevice private constructor() : SynchronizedObject(), AudioDevice 
 
         // 全局流激活标志检查 - 安全处理
         synchronized(portAudioLock) {
-            if (globalStreamActive && outputStreamPtr.value == null) {
+            if (inputStreamActive && outputStreamPtr.value == null) {
                 logger.warn("⛔⛔⛔ 全局音频流活跃中，暂时无法播放音频 ⛔⛔⛔")
                 // 调用完成回调，但报告播放失败
                 scope.launch { onComplete() }
@@ -1365,7 +1375,7 @@ class PortAudioDevice private constructor() : SynchronizedObject(), AudioDevice 
             if (outputStreamPtr.value == null) {
                 // 再次安全检查，协程内可能状态已变
                 synchronized(portAudioLock) {
-                    if (globalStreamActive) {
+                    if (inputStreamActive) {
                         logger.warn("⛔⛔⛔ 协程内检测到全局音频流活跃，跳过播放 ⛔⛔⛔")
                         _playbackState.value = PlaybackState.IDLE
                         onComplete()
@@ -1480,7 +1490,8 @@ class PortAudioDevice private constructor() : SynchronizedObject(), AudioDevice 
             outputStreamPtr.value = null
 
             // 重置所有标志
-            globalStreamActive = false
+            inputStreamActive = false
+            outputStreamActive = false
 
             // 终止PortAudio
             if (portAudioInitialized) {

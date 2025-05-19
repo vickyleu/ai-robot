@@ -114,7 +114,7 @@ class PortAudioAcquisition(
             try {
                 while (isActive && isCapturing) { // Use isActive to respect coroutine cancellation
                     // 确保输入流已打开，否则尝试打开
-                    if (PortAudioDevice.getInstance().deviceState.value != AudioDevice.AudioDeviceState.ACTIVE || !PortAudioDevice.isGlobalStreamActive()) {
+                    if (PortAudioDevice.getInstance().deviceState.value != AudioDevice.AudioDeviceState.ACTIVE || !PortAudioDevice.isInputStreamActive()) {
                          if (!PortAudioDevice.getInstance().openInputStream(-1, config.sampleRate, config.channels)) {
                             logger.error("采集循环：无法打开输入流，延迟后重试")
                             delay(1000) // Wait before retrying
