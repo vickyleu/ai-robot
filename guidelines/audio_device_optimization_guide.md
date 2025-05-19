@@ -111,4 +111,184 @@
 这些措施旨在最大程度上保证在嵌入式Linux环境（特别是使用Microsemi DAC）下音频功能的稳定运行。
 
 ## 四、调试与诊断
-// ... (以下部分待更新) ...
+
+### 代码层诊断方法
+
+1.  **添加标准输出与日志**
+    ```kotlin
+    // 在关键逻辑点添加日志
+    logger.info("步骤X: 描述当前操作和状态，变量值: $someVariable")
+    // 对于非常关键、即使日志系统失效也希望看到的调试信息，可以使用println
+    println("CRITICAL DEBUG: Step Y, Value: $criticalValue")
+    ```
+
+2.  **保存设备与系统状态信息 (通过 `system` 调用)**
+    ```kotlin
+    // 在PortAudioDevice.kt或相关调试函数中，可以保存以下信息以供分析：
+    platform.posix.system("arecord -l > /tmp/arecord_devices_list.txt 2>&1")
+    platform.posix.system("aplay -l > /tmp/aplay_devices_list.txt 2>&1")
+    platform.posix.system("cat /proc/asound/cards > /tmp/asound_cards.txt 2>&1")
+    platform.posix.system("cat /proc/asound/pcm > /tmp/asound_pcm.txt 2>&1")
+    platform.posix.system("ls -la /dev/snd > /tmp/snd_devices.txt 2>&1")
+    platform.posix.system("dmesg | grep -i -E 'alsa|snd|audio|sound|pcm' > /tmp/dmesg_audio.txt 2>&1")
+    platform.posix.system("ps aux | grep -E 'arecord|aplay|pulseaudio' > /tmp/audio_processes.txt 2>&1")
+    platform.posix.system("cat /etc/asound.conf > /tmp/asound_conf.txt 2>&1") // 查看系统全局ALSA配置
+    platform.posix.system("cat ~/.asoundrc > /tmp/user_asoundrc.txt 2>&1") // 查看用户ALSA配置
+    ```
+
+3.  **直接ALSA设备测试 (通过 `system` 调用)**
+    ```kotlin
+    // 在PortAudioDevice.kt的初始化或恢复逻辑中，用于预检设备硬件层面是否可用
+    // 录音测试 (针对 hw:0,0，即通常的第一个声卡的第一个设备)
+    val recordTestCmd = "arecord -d 3 -f S16_LE -r 16000 -c 2 -D hw:0,0 /tmp/test_record.wav 2>/tmp/arecord_test.log"
+    val recordTestResult = platform.posix.system(recordTestCmd)
+    logger.info("ALSA录音测试 (hw:0,0) 结果: $recordTestResult")
+
+    // 播放测试 (如果需要)
+    // val playTestCmd = "aplay -D hw:0,0 /tmp/test_record.wav 2>/tmp/aplay_test.log"
+    // val playTestResult = platform.posix.system(playTestCmd)
+    // logger.info("ALSA播放测试 (hw:0,0) 结果: $playTestResult")
+    ```
+
+### 关键点日志 (通过 `LogManager.getLogger(...)`)
+
+确保在以下关键操作点添加详细日志，使用 `PortAudioDevice`、`PortAudioAcquisition`、`AudioProcessingManager` 等类中的 `logger` 实例：
+
+1.  **`PortAudioDevice`**: 
+    *   `initialize()`: 开始、各阶段（资源释放、ALSA配置、`Pa_Initialize`尝试及结果）。
+    *   `openInputStream()`, `openOutputStream()`: 开始尝试、参数组合、`Pa_OpenStream`及`Pa_StartStream`结果、错误信息。
+    *   `readAudioSuspend()`: 读取成功/失败、错误码、恢复尝试、静音填充。
+    *   `writeAudioSuspend()`/`play()`/`playAsync()`: 写入/播放成功/失败、错误码。
+    *   `attemptStreamRecovery()`: 各恢复阶段的尝试和结果。
+    *   `closeStreams()`: 关闭操作。
+    *   `release()`: 资源释放。
+    *   `globalStreamActive` 标志的状态变化。
+
+2.  **`PortAudioAcquisition`**: 
+    *   `initialize()`: 调用 `audioDevice.initialize` 的结果。
+    *   `startCapture()`: 采集循环开始、结束、异常。
+    *   音频数据回调 (`onAudioDataReceived`) 调用情况，可以定期记录帧数和数据大小。
+    *   `stopCapture()`: 停止操作。
+
+3.  **`AudioProcessingManager`**: 
+    *   `initialize()`: 各组件（`acquisition`, `recognizer`, `preprocessor`）初始化结果。
+    *   `start()`/`stop()`: 流水线启停。
+    *   `processAudioFrame()` (或等效的内部处理循环): VAD结果、识别结果、关键词检测结果。
+
+4.  **`DiagnosticsCollector`**: 
+    *   `recordXxxMetrics()`: 定期记录收集到的指标概要，例如每N次调用。
+    *   `generateReport()`: 报告生成事件。
+
+## 五、执行步骤参考
+
+以下步骤是基于当前代码结构和关键实现的一般性指导：
+
+1.  **确保`PortAudioDevice.kt`的健壮性**:
+    *   `initialize()`: 严格执行资源释放、ALSA配置（通过`LinuxAudioDeviceSelector`）、`Pa_Initialize()`重试逻辑。
+    *   `openInputStream()`: 强制使用立体声，尝试多种参数组合，并在打开流之前进行ALSA设备预测试。
+    *   `readAudioSuspend()`: 实现完善的错误检测、恢复机制（`attemptStreamRecovery`），并在错误时填充静音。
+    *   严格管理 `globalStreamActive` 标志，防止并发流操作。
+
+2.  **配置`PortAudioAcquisition.kt`**:
+    *   确保其 `AudioConfig` 默认或实际使用2通道进行采集。
+    *   其 `startCapture()` 中的采集循环应正确调用 `PortAudioDevice` 的 `readAudioSuspend()`。
+    *   将采集到的数据通过回调正确传递给 `AudioProcessingManager`。
+
+3.  **简化`LinuxAudioDeviceSelector.kt`**:
+    *   `isRaspberryPi()`: 根据实际部署环境判断是否需要特定逻辑（当前可能直接返回true）。
+    *   `fixAlsaConfig()`: 确保生成的ALSA配置是针对Microsemi DAC优化的最简配置（如 `pcm.!default { type hw card 0 device 0 }`）。
+    *   `killOtherAudioProcesses()`: 确保能有效终止冲突进程。
+
+4.  **检查导入声明**:
+    确保所有相关Kotlin文件都有正确的导入声明，例如：
+    ```kotlin
+    import kotlinx.cinterop.* 
+    import platform.posix.* // for system, fopen, etc.
+    import kotlinx.coroutines.*
+    import voice.hal.AudioDevice
+    import voice.acquisition.portaudio.PortAudioDevice
+    // ... 其他必要的 com.airobot.portaudiointerop.* 等
+    ```
+
+## 六、最终验证
+// ... (以下部分暂时不变) ...
+
+## 七、语音助手架构与回调设计 (`VoiceAssistant.kt`)
+
+### 1. 语音助手回调概览
+
+当前的 `VoiceAssistant` (`voice.core.service.VoiceAssistant.kt`) 主要通过以下方式与外部组件交互和处理回调：
+
+*   **关键词检测**: 
+    *   内部使用 `KeywordDetector` (`voice.detector.keyword.KeywordDetector.kt`) 进行关键词检测。
+    *   `VoiceAssistant` 在其主循环 (`start()` 方法内) 中调用 `keywordDetector.detect()`。
+    *   检测到关键词后，会调用内部的 `onKeywordDetected()` 方法。
+*   **外部回调**: 
+    *   `VoiceAssistant` 提供了一个可设置的 `onKeywordDetectedCallback: ((String) -> Unit)?` 属性。
+    *   可以通过 `setKeywordDetectedCallback(callback: (String) -> Unit)` 方法来设置这个回调。
+*   **内部响应与外部回调的选择**: 
+    *   在 `onKeywordDetected()` 方法中，会根据 `config.useInternalResponse` 的布尔值以及 `onKeywordDetectedCallback` 是否被设置来决定行为：
+        *   如果 `config.useInternalResponse` 为 `true`，助手会执行内部响应（例如，调用 `speak("我在听")`）。
+        *   如果 `config.useInternalResponse` 为 `false` **且** `onKeywordDetectedCallback` 已设置，则会调用外部的 `onKeywordDetectedCallback`。
+        *   如果 `config.useInternalResponse` 为 `false` **且** `onKeywordDetectedCallback` **未**设置，则默认行为也是执行内部响应（`speak("我在听")`）。
+
+### 2. 避免重复响应的关键点
+
+根据当前 `VoiceAssistant` 的实现，避免重复响应（即同时执行内部`speak`和外部回调中的类似`speak`）的机制依赖于 `config.useInternalResponse` 的正确配置以及外部调用者是否设置了 `onKeywordDetectedCallback`。
+
+*   **场景1：优先内部响应**
+    *   设置 `config.useInternalResponse = true`。
+    *   此时，即使设置了 `onKeywordDetectedCallback`，它也不会在 `onKeywordDetected()` 中被直接调用（但外部仍然持有其引用，可以在其他逻辑中使用）。
+*   **场景2：优先外部回调**
+    *   设置 `config.useInternalResponse = false`。
+    *   **并且**通过 `voiceAssistant.setKeywordDetectedCallback { keyword -> ... }` 设置一个回调函数。
+    *   此时，`onKeywordDetected()` 会调用此外部回调，而不会执行内部的 `speak("我在听")`。
+*   **场景3：默认内部响应 (无外部回调)**
+    *   设置 `config.useInternalResponse = false`。
+    *   **但是不**设置 `onKeywordDetectedCallback` (保持为 `null`)。
+    *   此时，`onKeywordDetected()` 会执行内部的 `speak("我在听")`。
+
+### 3. 当前回调实现示例 (`VoiceAssistant.kt` 内)
+
+```kotlin
+// 在 VoiceAssistant 类中：
+
+// 可选的外部回调属性
+var onKeywordDetectedCallback: ((String) -> Unit)? = null
+
+// 设置外部回调的方法
+fun setKeywordDetectedCallback(callback: (String) -> Unit) {
+    onKeywordDetectedCallback = callback
+    logger.info("已设置关键词检测回调")
+}
+
+// 内部处理关键词检测的函数
+private suspend fun onKeywordDetected() {
+    logger.info("关键词被检测到，进入命令识别状态")
+    _assistantState.value = VoiceAssistantApi.AssistantState.LISTENING_COMMAND
+
+    // 根据配置决定使用内部响应还是外部回调
+    if (config.useInternalResponse) {
+        // 使用内部响应
+        speak("我在听")
+    } else if (onKeywordDetectedCallback != null) {
+        // 使用外部回调处理响应
+        onKeywordDetectedCallback?.invoke("小样") // 示例中固定传递"小样"，实际应为检测到的关键词
+    } else {
+        // 默认行为：如果没有配置useInternalResponse=false且没有回调，使用内部响应
+        speak("我在听")
+    }
+
+    // ... 后续逻辑，例如等待命令、超时返回等 ...
+    delay(5000) // 示例：等待5秒
+    _assistantState.value = VoiceAssistantApi.AssistantState.LISTENING_KEYWORD
+    logger.info("回到关键词监听状态")
+}
+```
+
+**指导建议**：
+
+为了清晰地控制响应行为，建议：
+1.  明确 `config.useInternalResponse` 的用途。如果主要依赖外部回调进行响应，应将其设置为 `false`。
+2.  外部调用者（如 `VoiceDemoMain`）在初始化 `VoiceAssistant` 后，如果需要自定义响应逻辑，应通过 `setKeywordDetectedCallback` 提供回调函数。
+3.  如果 `VoiceAssistant` 的设计目标是完全由外部控制响应，可以考虑移除 `config.useInternalResponse`，并让 `onKeywordDetected()` 总是尝试调用 `onKeywordDetectedCallback` (如果已设置)，否则不执行任何默认响应或只执行最基础的状态转换。但当前实现提供了更大的灵活性。
