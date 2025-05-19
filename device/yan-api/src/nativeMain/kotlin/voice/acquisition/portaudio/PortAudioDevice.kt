@@ -67,7 +67,7 @@ import kotlin.time.ExperimentalTime
  * PortAudio音频设备实现类
  * 提供基于PortAudio的音频设备功能
  */
-class PortAudioDevice private constructor() : SynchronizedObject(), AudioDevice {
+class PortAudioDevice private constructor() : AudioDevice {
     private val logger = LogManager.getLogger("PortAudioDevice")
 
     // 单例实现
@@ -135,6 +135,8 @@ class PortAudioDevice private constructor() : SynchronizedObject(), AudioDevice 
     private val audioMutex = Mutex()
     // 添加专门的读取锁，避免多线程并发访问
     private val readLock = Mutex()
+    // 添加专门的写入锁，避免多线程并发访问输出流
+    private val writeLock = Mutex()
     private var inputStreamPtr = nativeHeap.alloc<COpaquePointerVar>()
     private var outputStreamPtr = nativeHeap.alloc<COpaquePointerVar>()
 
@@ -1101,7 +1103,7 @@ class PortAudioDevice private constructor() : SynchronizedObject(), AudioDevice 
                 e.printStackTrace()
                 false
             }
-        } // End of synchronized block
+        }
     }
 
     // 非suspend版本的writeAudio
@@ -1121,8 +1123,15 @@ class PortAudioDevice private constructor() : SynchronizedObject(), AudioDevice 
         }
     }
 
-    // suspend版本的writeAudio (之前的内容，重命名以避免冲突)
+    // suspend版本的writeAudio (改名为writeAudioSuspend)
     suspend fun writeAudioSuspend(buffer: CPointer<ShortVar>, frameCount: Int): Int {
+        return writeLock.withLock {
+            performActualWrite(buffer, frameCount)
+        }
+    }
+
+    // 实际的写入实现
+    private suspend fun performActualWrite(buffer: CPointer<ShortVar>, frameCount: Int): Int {
         synchronized(portAudioLock) {
             if (outputStreamPtr.value == null) {
                 logger.error("音频输出流未打开")
@@ -1253,7 +1262,8 @@ class PortAudioDevice private constructor() : SynchronizedObject(), AudioDevice 
     }
 
     override fun play(audioData: ByteArray, length: Int): Boolean {
-        synchronized(portAudioLock) {
+        // 确保所有播放操作都在synchronized块内
+        return synchronized(portAudioLock) {
             if (inputStreamActive) {
                 if (_deviceState.value != AudioDevice.AudioDeviceState.ACTIVE) {
                     _deviceState.value = AudioDevice.AudioDeviceState.ACTIVE
@@ -1261,16 +1271,15 @@ class PortAudioDevice private constructor() : SynchronizedObject(), AudioDevice 
             }
             if (_deviceState.value != AudioDevice.AudioDeviceState.ACTIVE) {
                 logger.warn("音频设备未处于活动状态，无法播放音频数据")
-                return false
+                return@synchronized false
             }
 
             // 若输出流未打开，主线程同步打开一次，避免并发冲突
             if (outputStreamPtr.value == null) {
-                // 全局流激活标志检查 - 安全处理
-                if (inputStreamActive) {
-                    logger.warn("⛔⛔⛔ 全局音频流活跃中，暂时无法播放音频 ⛔⛔⛔")
-                    // 此时不应尝试打开新流，否则会导致崩溃
-                    return false
+                // 安全检查：确保不在打开输出流时尝试播放
+                if (outputStreamActive) {
+                    logger.warn("⛔⛔⛔ 输出流正在打开中，暂时无法播放音频 ⛔⛔⛔")
+                    return@synchronized false
                 }
 
                 val success = runBlocking {
@@ -1278,12 +1287,12 @@ class PortAudioDevice private constructor() : SynchronizedObject(), AudioDevice 
                 }
                 if (!success) {
                     logger.error("无法打开输出流，播放失败")
-                    return false
+                    return@synchronized false
                 }
             }
 
             // 写入数据
-            return try {
+            try {
                 // byteArrayToShortArray then writeAudio (non-suspend)
                 val shortArray =
                     voice.util.AudioUtils.byteArrayToShortArray(audioData.copyOfRange(0, length))
@@ -1308,53 +1317,68 @@ class PortAudioDevice private constructor() : SynchronizedObject(), AudioDevice 
             return false
         }
 
-        // 全局流激活标志检查 - 安全处理
-        synchronized(portAudioLock) {
-            if (inputStreamActive && outputStreamPtr.value == null) {
-                logger.warn("⛔⛔⛔ 全局音频流活跃中，暂时无法播放音频 ⛔⛔⛔")
-                // 调用完成回调，但报告播放失败
-                scope.launch { onComplete() }
-                return false
+        // 先同步检查流状态 - 避免多个playAsync竞争
+        val canPlay = synchronized(portAudioLock) {
+            if (outputStreamActive && outputStreamPtr.value == null) {
+                logger.warn("⛔⛔⛔ 输出流正在处理中，暂时无法播放音频 ⛔⛔⛔")
+                false
+            } else {
+                true
             }
         }
+        
+        if (!canPlay) {
+            // 调用完成回调，但报告播放失败
+            scope.launch { onComplete() }
+            return false
+        }
 
-        // 确保输出流已打开
+        // 在协程中确保线程安全地访问输出流
         scope.launch {
-            if (outputStreamPtr.value == null) {
-                // 再次安全检查，协程内可能状态已变
-                synchronized(portAudioLock) {
-                    if (inputStreamActive) {
-                        logger.warn("⛔⛔⛔ 协程内检测到全局音频流活跃，跳过播放 ⛔⛔⛔")
-                        _playbackState.value = PlaybackState.IDLE
-                        onComplete()
-                        return@launch
-                    }
-                }
+            // 对整个播放过程应用锁保护
+            writeLock.withLock {
+                try {
+                    if (outputStreamPtr.value == null) {
+                        // 再次安全检查，协程内可能状态已变
+                        synchronized(portAudioLock) {
+                            if (outputStreamActive) {
+                                logger.warn("⛔⛔⛔ 协程内检测到输出流正在处理中，跳过播放 ⛔⛔⛔")
+                                _playbackState.value = PlaybackState.IDLE
+                                onComplete()
+                                return@launch
+                            }
+                        }
 
-                val success = openOutputStream(selectedOutputDeviceIndex, currentSampleRate, 2)
-                if (!success) {
-                    logger.error("播放音频数据失败：无法打开输出流")
+                        val success = openOutputStream(selectedOutputDeviceIndex, currentSampleRate, 2)
+                        if (!success) {
+                            logger.error("播放音频数据失败：无法打开输出流")
+                            _playbackState.value = PlaybackState.ERROR
+                            onComplete()
+                            return@launch
+                        }
+                    }
+
+                    _playbackState.value = PlaybackState.LOADING
+
+                    // 将ByteArray转换为ShortArray
+                    val shortArray = voice.util.AudioUtils.byteArrayToShortArray(audioData.copyOf(length))
+
+                    // 播放音频数据
+                    _playbackState.value = PlaybackState.PLAYING
+
+                    playShortArray(shortArray) // This internal method uses writeAudioSuspend
+
+                    // 播放完成
+                    _playbackState.value = PlaybackState.IDLE
+                } catch (e: Exception) {
+                    logger.error("异步播放过程发生异常: ${e.message}")
+                    e.printStackTrace()
                     _playbackState.value = PlaybackState.ERROR
+                } finally {
+                    // 确保回调被调用
                     onComplete()
-                    return@launch
                 }
             }
-
-            _playbackState.value = PlaybackState.LOADING
-
-            // 将ByteArray转换为ShortArray
-            val shortArray = voice.util.AudioUtils.byteArrayToShortArray(audioData.copyOf(length))
-
-            // 播放音频数据
-            _playbackState.value = PlaybackState.PLAYING
-
-            playShortArray(shortArray) // This internal method uses writeAudioSuspend
-
-            // 播放完成
-            _playbackState.value = PlaybackState.IDLE
-
-            // 调用完成回调
-            onComplete()
         }
         return true
     }
@@ -1376,7 +1400,7 @@ class PortAudioDevice private constructor() : SynchronizedObject(), AudioDevice 
                     tempBuffer[i] = buffer[offset + i]
                 }
 
-                // 写入音频数据 (使用 suspend 版本)
+                // 使用受保护的writeAudioSuspend
                 val framesWritten = writeAudioSuspend(tempBuffer, framesToPlay)
                 if (framesWritten < 0) {
                     logger.error("播放音频数据失败")
