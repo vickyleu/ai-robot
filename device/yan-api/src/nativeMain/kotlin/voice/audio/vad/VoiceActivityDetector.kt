@@ -61,7 +61,7 @@ class VoiceActivityDetector : VoiceActivityDetection {
      */
     override fun detect(audio: ByteArray, length: Int): VoiceActivityDetection.DetectionResult {
         if (audio.isEmpty() || length <= 0) {
-            logger.warn("VAD: 输入的音频数据为空")
+            logger.debug("VAD: 空音频帧，跳过检测")
             return VoiceActivityDetection.DetectionResult(false, 0.0f, createEmptyMetrics())
         }
 
@@ -91,28 +91,36 @@ class VoiceActivityDetector : VoiceActivityDetection {
                 0.0f
             }
 
-            // 创建指标对象
-            val metrics = createMetrics(energy, noiseFloor, snr, hasSpeech, confidence)
-
-            // 如果检测到语音，记录详细日志
+            // 更新连续计数器实现脉冲噪声过滤
             if (hasSpeech) {
-                logger.info("VAD: 检测到语音活动! 能量=$energy, 阈值=$energyThreshold, 信噪比=$snr, 置信度=$confidence")
+                consecutiveSpeechFrames++
+                consecutiveSilenceFrames = 0
+            } else {
+                consecutiveSilenceFrames++
+                consecutiveSpeechFrames = 0
+            }
 
-                // 每10次活动帧记录一次详细的帧数据
-                if (speechFrameCount++ % 10 == 0) {
-                    val dataInfo = audio.take(20).joinToString(", ") { it.toString() } + "..."
-                    logger.info("VAD: 语音数据样本: $dataInfo")
+            val stableSpeech = consecutiveSpeechFrames >= config.minConsecutiveSpeechFrames
+
+            // 创建指标对象（保持原能量/置信度，但最终 hasVoice 用 stableSpeech）
+            val metrics = createMetrics(energy, noiseFloor, snr, stableSpeech, confidence)
+
+            // 降低日志噪声：只有在检测到稳定语音或定期输出时记录 INFO，其余用DEBUG
+            if (stableSpeech) {
+                if (consecutiveSpeechFrames == config.minConsecutiveSpeechFrames) {
+                    logger.info("VAD: 检测到稳定语音! 能量=$energy, 阈值=$energyThreshold, 信噪比=$snr, 置信度=$confidence")
+                } else {
+                    logger.debug("VAD: 语音中 (连续=${consecutiveSpeechFrames}) e=$energy thr=$energyThreshold snr=$snr")
                 }
-            } else if (frameCount % 50 == 0) {
-                // 偶尔记录一下无语音的帧信息
-                logger.info("VAD: 无语音活动 (能量=$energy, 阈值=$energyThreshold, 噪声基线=$noiseFloor)")
+            } else if (frameCount % 100 == 0) {
+                logger.debug("VAD: 静音/噪声 e=$energy thr=$energyThreshold noiseFloor=$noiseFloor")
             }
 
             // 更新帧计数
             frameCount++
 
             return VoiceActivityDetection.DetectionResult(
-                hasSpeech = hasSpeech,
+                hasSpeech = stableSpeech,
                 confidence = confidence,
                 metrics = metrics
             )

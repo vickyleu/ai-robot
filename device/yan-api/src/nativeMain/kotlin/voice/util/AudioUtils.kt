@@ -143,4 +143,21 @@ object AudioUtils {
         }
         return out
     }
+
+    /**
+     * 将 ShortArray 转为 ByteArray，写入复用的 dst，避免每帧重新分配。
+     * dst 必须至少有 samples*2 的空间。
+     * @return 实际写入的字节数
+     */
+    fun shortArrayToByteArray(src: ShortArray, srcLen: Int, dst: ByteArray): Int {
+        val bytes = srcLen * 2
+        if (dst.size < bytes) throw IllegalArgumentException("dst too small")
+        var j = 0
+        for (i in 0 until srcLen) {
+            val v = src[i]
+            dst[j++] = (v and 0xFF).toByte()
+            dst[j++] = (v.toInt() shr 8).toByte()
+        }
+        return bytes
+    }
 } 

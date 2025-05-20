@@ -58,10 +58,20 @@ class AudioProcessingManager(private val modelPath: String) : AudioProcessingPip
 
     // 识别控制
     private var lastRecognitionTime = 0L
+    private var lastKeywordDetectedTime = 0L
     private val recognitionCooldownMs = 300L
+    private val keywordCooldownMs = 1500L
 
     // VAD阈值调整
     private var adaptiveVadThreshold = 0.8f
+
+    // 关键词识别最低置信度阈值（0-1）
+    private val minKeywordConfidence = 0.92f
+
+    // 连续重复检测要求
+    private var lastDetectedCandidate: String? = null
+    private var repeatCount = 0
+    private val requiredRepeat = 2
 
     // 处理状态
     private var isProcessing = false
@@ -191,15 +201,32 @@ class AudioProcessingManager(private val modelPath: String) : AudioProcessingPip
                             recognitionCallCount++
                             
                             // 检查是否检测到关键词
-                            if (recognitionResult.success && recognitionResult.text.isNotBlank()) {
+                            if (recognitionResult.success && recognitionResult.confidence >= minKeywordConfidence) {
                                 val keywords = recognizer.getCurrentKeywords()
-                                val detectedKeyword = keywords.find { keyword ->
-                                    recognitionResult.text.contains(keyword, ignoreCase = true)
+                                val matched = keywords.firstOrNull { kw ->
+                                    recognitionResult.text.contains(kw, ignoreCase = true)
                                 }
-                                
-                                if (detectedKeyword != null) {
-                                    logger.info("检测到关键词: $detectedKeyword")
-                                    keywordDetectedCallback?.invoke(detectedKeyword)
+
+                                if (matched != null) {
+                                    if (matched == lastDetectedCandidate) {
+                                        repeatCount++
+                                    } else {
+                                        lastDetectedCandidate = matched
+                                        repeatCount = 1
+                                    }
+
+                                    if (repeatCount >= requiredRepeat && (lastFrameTime - lastKeywordDetectedTime) >= keywordCooldownMs) {
+                                        logger.info("✅ 关键词确认: $matched (conf=${recognitionResult.confidence})")
+                                        lastKeywordDetectedTime = lastFrameTime
+                                        repeatCount = 0
+                                        lastDetectedCandidate = null
+                                        keywordDetectedCallback?.invoke(matched)
+                                    } else {
+                                        logger.debug("候选关键词 $matched 第 $repeatCount 次，等待确认…")
+                                    }
+                                } else {
+                                    lastDetectedCandidate = null
+                                    repeatCount = 0
                                 }
                             }
                         }
@@ -241,6 +268,7 @@ class AudioProcessingManager(private val modelPath: String) : AudioProcessingPip
         lastFrameTime = 0L
         processingStartTime = 0L
         lastRecognitionTime = 0L
+        lastKeywordDetectedTime = 0L
         adaptiveVadThreshold = 0.8f
     }
 
@@ -330,25 +358,38 @@ class AudioProcessingManager(private val modelPath: String) : AudioProcessingPip
             // 记录识别指标
             diagnostics.recordRecognitionMetrics(recognitionResult.metrics, timestamp)
 
-            // 4. 处理识别结果
-            if (recognitionResult.success && !recognitionResult.text.isBlank()) {
-                // 检查是否包含关键词
+            // 4. 处理识别结果（添加置信度与冷却过滤）
+            if (recognitionResult.success && recognitionResult.confidence >= minKeywordConfidence) {
                 val keywords = recognizer.getCurrentKeywords()
-                if (keywords.isEmpty()) {
-                    return false
-                }
+                if (keywords.isNotEmpty()) {
+                    val matched = keywords.firstOrNull { kw ->
+                        recognitionResult.text.contains(kw, ignoreCase = true)
+                    }
 
-                val detectedKeywords = findKeywordsInText(recognitionResult.text, keywords)
-                if (detectedKeywords.isNotEmpty()) {
-                    // 找到关键词，触发回调
-                    logger.info("检测到关键词: ${detectedKeywords.joinToString(", ")}")
+                    if (matched != null) {
+                        if (matched == lastDetectedCandidate) {
+                            repeatCount++
+                        } else {
+                            lastDetectedCandidate = matched
+                            repeatCount = 1
+                        }
 
-                    // 回放识别的音频片段
-                    playRecognizedAudio(audioToRecognize)
+                        if (repeatCount >= requiredRepeat && (timestamp - lastKeywordDetectedTime) >= keywordCooldownMs) {
+                            logger.info("✅ 关键词确认: $matched (conf=${recognitionResult.confidence})")
+                            lastKeywordDetectedTime = timestamp
+                            repeatCount = 0
+                            lastDetectedCandidate = null
 
-                    // 调用回调
-                    keywordDetectedCallback?.invoke(detectedKeywords.first())
-                    return true
+                            playRecognizedAudio(audioToRecognize)
+                            keywordDetectedCallback?.invoke(matched)
+                            return true
+                        } else {
+                            logger.debug("候选关键词 $matched 第 $repeatCount 次 (conf=${recognitionResult.confidence})")
+                        }
+                    } else {
+                        lastDetectedCandidate = null
+                        repeatCount = 0
+                    }
                 }
             }
 

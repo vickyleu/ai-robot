@@ -209,7 +209,7 @@ class VoskSpeechRecognizer : SpeechRecognizerApi {
             )
             
             // 释放临时缓冲区
-            nativeHeap.free(samples)
+            nativeHeap.free(samples.rawValue)
             
             // 获取并解析JSON结果
             return if (processResult == 0) {
@@ -303,6 +303,9 @@ class VoskSpeechRecognizer : SpeechRecognizerApi {
         val jsonConfidence = json["confidence"]?.jsonPrimitive?.floatOrNull
         if (jsonConfidence != null) {
             return jsonConfidence
+        } else {
+            // 未提供置信度时视为 0，避免误判
+            return 0.0f
         }
         
         // 2. 检查是否有替代结果的置信度数组
@@ -314,25 +317,11 @@ class VoskSpeechRecognizer : SpeechRecognizerApi {
         }
         
         if (confidenceArray.isNotEmpty()) {
-            return confidenceArray.average().toFloat() // 使用平均值
+            return confidenceArray.average().toFloat()
         }
         
-        // 3. 基于文本长度和单词数量计算置信度
-        if (text.isNotBlank()) {
-            val words = text.split(Regex("\\s+"))
-            // 考虑单词数量和长度 - 长度越长，单词越多，通常置信度越高
-            val lengthFactor = minOf(text.length / 20.0f, 1.0f) // 最长考虑20个字符
-            val wordsFactor = minOf(words.size / 5.0f, 1.0f)    // 最多考虑5个单词
-            
-            // 使用两个因素的加权平均
-            val baseConfidence = (lengthFactor * 0.3f + wordsFactor * 0.5f).coerceIn(0.1f, 0.95f)
-            
-            // 部分结果的置信度打折
-            return if (isPartial) baseConfidence * 0.7f else baseConfidence
-        }
-        
-        // 4. 默认值
-        return if (isPartial) 0.3f else 0.0f
+        // 3. 如果仍无法得到置信度，返回极低值
+        return 0.0f
     }
     
     /**

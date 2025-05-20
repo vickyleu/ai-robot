@@ -206,10 +206,12 @@ class VoiceAssistant(
                                 logger.info("已开始监听关键词，等待唤醒...")
 
                                 // 音频帧读取缓冲区 - 分配一次重复使用
-                                val frameSize = 1024
+                                val frameSize = 512 // 每批读取帧数 (16ms@32kHz 或32ms@16kHz)
+                                val channels = 2
+                                val sampleSize = frameSize * channels
                                 logger.info("准备分配音频缓冲区...")
-                                val buffer = nativeHeap.allocArray<ShortVar>(frameSize)
-                                val audioData = ShortArray(frameSize) // 预分配，避免频繁创建对象
+                                val buffer = nativeHeap.allocArray<ShortVar>(sampleSize)
+                                val audioData = ShortArray(sampleSize) // 预分配，避免频繁创建对象
                                 logger.info("音频缓冲区分配完成")
 
                                 logger.info("进入主检测循环...")
@@ -239,15 +241,19 @@ class VoiceAssistant(
                                         }
 
                                         // 复制数据以便处理
-                                        for (i in 0 until framesRead) {
+                                        val samplesToCopy = framesRead * channels
+                                        for (i in 0 until samplesToCopy) {
                                             audioData[i] = buffer[i]
                                         }
+
+                                        // 如果帧数不足 sampleSize，后续处理只使用有效部分
+                                        val validShortArray = audioData.copyOfRange(0, samplesToCopy)
 
                                         // 关键词检测
                                         if (frameCounter == 1 || frameCounter % 100 == 0) {
                                             logger.info("准备调用keywordDetector.detect进行检测...")
                                         }
-                                        val detected = keywordDetector.detect(audioData.copyOfRange(0, framesRead))
+                                        val detected = keywordDetector.detect(validShortArray)
                                         
                                         // 如果检测到关键词
                                         if (detected) {
@@ -271,7 +277,7 @@ class VoiceAssistant(
                                 
                                 // 清理资源
                                 logger.info("主循环结束，释放资源")
-                                nativeHeap.free(buffer)
+                                nativeHeap.free(buffer.rawValue)
                                 deferred.complete(true)
                             } catch (e: Exception) {
                                 logger.error("协程内 withContext 块发生异常: ${e.message}")
