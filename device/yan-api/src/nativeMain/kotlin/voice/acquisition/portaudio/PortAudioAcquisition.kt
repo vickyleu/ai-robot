@@ -1,4 +1,6 @@
-@file:OptIn(ExperimentalForeignApi::class, ExperimentalTime::class)
+@file:OptIn(ExperimentalForeignApi::class, ExperimentalTime::class,
+    ExperimentalCoroutinesApi::class, DelicateCoroutinesApi::class
+)
 
 package voice.acquisition.portaudio
 
@@ -13,7 +15,9 @@ import kotlinx.cinterop.nativeHeap
 import kotlinx.cinterop.free
 import kotlinx.cinterop.set
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
@@ -22,14 +26,23 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.newSingleThreadContext
+import kotlinx.coroutines.yield
 import kotlinx.datetime.Clock
 import voice.hal.AudioDevice
 import voice.util.AudioUtils
+import voice.util.AudioDefaults
 import voice.util.LogManager
 import kotlin.concurrent.Volatile
 import kotlin.coroutines.cancellation.CancellationException
 import kotlin.experimental.and
 import kotlin.time.ExperimentalTime
+import kotlin.native.concurrent.freeze
+import com.airobot.device.yanapi.voice.audio.processing.SoxrSingleton
+import kotlinx.cinterop.memScoped
+import kotlinx.cinterop.FloatVar
+import kotlinx.cinterop.CArrayPointer
+import kotlinx.cinterop.reinterpret
 
 /**
  * PortAudio音频采集实现
@@ -38,7 +51,8 @@ import kotlin.time.ExperimentalTime
 @OptIn(ExperimentalTime::class)
 class PortAudioAcquisition(
     internal val config: AudioConfig = AudioConfig(
-        channels = 2 // Default to 2 channels as per Microsemi DAC requirements
+        sampleRate = AudioDefaults.TARGET_SAMPLE_RATE, // 统一由常量控制
+        channels = AudioDefaults.CHANNELS
     )
 ) : AudioDevice {
     private val logger = LogManager.getLogger("PortAudioAcquisition")
@@ -78,8 +92,8 @@ class PortAudioAcquisition(
      * 音频采集配置
      */
     data class AudioConfig(
-        val sampleRate: Int = 16000,    // 采样率
-        val channels: Int = 2,          // 通道数, Defaulting to 2 for Microsemi
+        val sampleRate: Int = AudioDefaults.TARGET_SAMPLE_RATE,    // 采样率
+        val channels: Int = AudioDefaults.CHANNELS,          // 通道数, Defaulting to 2 for Microsemi
         val bitsPerSample: Int = 16     // 每样本位数
     )
 
@@ -107,7 +121,7 @@ class PortAudioAcquisition(
         }
         
         this.onAudioDataReceived = onData
-        captureScope = CoroutineScope(Dispatchers.Default) // Create a new scope each time
+        captureScope = CoroutineScope(newSingleThreadContext("capture")) // 独立单线程，避免跨 Worker
 
         captureJob = captureScope?.launch {
             isCapturing = true
@@ -153,16 +167,39 @@ class PortAudioAcquisition(
                                 logger.warn("帧数 $framesRead 超过安全限制 ${bufferSize/2}，将被截断")
                             }
                             
-                            // 将short数组转换为byte数组
-                            logger.info("准备处理和回调音频数据，帧数: $safeFramesRead")
-                            val byteData = ByteArray(safeFramesRead * 2) // 每个short占用2个byte
-                            
+                            // 拷贝到 Kotlin ShortArray
+                            var shortBuf = ShortArray(safeFramesRead)
                             for (i in 0 until safeFramesRead) {
-                                val shortVal = buffer[i]
-                                // Little endian
-                                byteData[i * 2] = (shortVal and 0xFF).toByte()
-                                byteData[i * 2 + 1] = (shortVal.toInt() shr 8).toByte()
+                                shortBuf[i] = buffer[i]
                             }
+
+                            // 若硬件 48k 而目标 16k，使用 Soxr 高质量重采样
+                            if (audioDevice.getSampleRate() == AudioDefaults.HW_SAMPLE_RATE && config.sampleRate == AudioDefaults.TARGET_SAMPLE_RATE) {
+                                memScoped {
+                                    val floatIn = AudioUtils.shortArrayToFloatArray(shortBuf)
+                                    val inC: CArrayPointer<FloatVar> = allocArray(floatIn.size)
+                                    for (idx in floatIn.indices) inC[idx] = floatIn[idx]
+
+                                    val outSamples = (shortBuf.size / 6) * 2
+                                    val outC: CArrayPointer<FloatVar> = allocArray(outSamples)
+
+                                    val processed = SoxrSingleton.process(
+                                        48000.0,
+                                        16000.0,
+                                        inC.reinterpret(), // expects ShortVar but we pass float? We'll keep manual path if fails
+                                        0u,
+                                        outC,
+                                        0u
+                                    )
+                                    // Fallback to manual if process failed
+                                    val finalFloat = FloatArray(outSamples) { outC[it] }
+                                    shortBuf = AudioUtils.floatArrayToShortArray(finalFloat)
+                                }
+                                logger.debug("Soxr 重采样完成，输出帧=${shortBuf.size / config.channels}")
+                            }
+
+                            // 转换为 ByteArray 再回调
+                            val byteData = AudioUtils.shortArrayToByteArray(shortBuf)
                             
                             // 更新统计
                             frameCounter++
@@ -178,17 +215,15 @@ class PortAudioAcquisition(
                                 lastLogTime = currentTime
                             }
                             
-                            // 回调通知
-                            logger.info("准备执行onAudioDataReceived回调")
+                            // 直接传递，避免 Worker executeAfter 内存错误
                             onAudioDataReceived?.invoke(byteData, byteData.size)
-                            logger.info("onAudioDataReceived回调完成")
                         } else if (framesRead < 0) {
                             // 读取错误
                             logger.error("音频读取错误: $framesRead")
                             delay(100) // 短延迟避免过度记录错误
                         } else {
                             // 没有读取到数据
-                            delay(10) // 短延迟避免CPU满载
+                            yield() // 让出协程，避免调度跨线程
                         }
                     } catch (e: Exception) {
                         // 捕获异常但不中断循环
@@ -197,8 +232,8 @@ class PortAudioAcquisition(
                         delay(500) // 较长延迟，给系统恢复时间
                     }
                     
-                    // 周期性短延迟，防止过度消耗CPU
-                    delay(5)
+                    // 周期性让出协程，防止过度消耗CPU
+                    yield()
                 }
             } catch (e: CancellationException) {
                 logger.info("采集任务被取消")

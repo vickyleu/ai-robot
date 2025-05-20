@@ -267,9 +267,9 @@ class KeywordDetector : KeywordDetectorApi {
             // 计算音频能量，用于诊断
             val energy = calculateEnergy(audioData)
             
-            // 每50帧记录一次音频能量信息
-            if (detectCallCount++ % 50 == 0) {
-                logger.info("KeywordDetector: 帧#$detectCallCount, 能量=$energy, 状态=${_detectorState.value}")
+            // 每500帧记录一次能量信息（DEBUG级别），减少日志噪声
+            if (detectCallCount++ % 500 == 0) {
+                logger.debug("KeywordDetector: frame=$detectCallCount, energy=$energy, state=${_detectorState.value}")
             }
             
             // 只有在音频能量超过阈值时才进行进一步处理
@@ -277,9 +277,9 @@ class KeywordDetector : KeywordDetectorApi {
                 return false
             }
             
-            // 记录具有足够能量的音频
-            logger.info("KeywordDetector: 检测到高能量音频! 能量=$energy, 长度=${audioData.size}")
-            
+            // DEBUG 记录高能量音频
+                logger.debug("KeywordDetector: high energy detected, energy=$energy, len=${audioData.size}")
+
             // 检查当前状态，确认是否已经检测到关键词
             try {
                 if (audioManager == null) {
@@ -287,8 +287,8 @@ class KeywordDetector : KeywordDetectorApi {
                     return false
                 }
                 
-                logger.info("KeywordDetector: 将音频发送给AudioProcessingManager进行关键词检测...")
-                
+                    logger.debug("KeywordDetector: forwarding audio to AudioProcessingManager for keyword detection…")
+
                 // 直接传递ShortArray到audioManager的processAudio方法
                 val result = audioManager?.processAudio(audioData) ?: false
                 

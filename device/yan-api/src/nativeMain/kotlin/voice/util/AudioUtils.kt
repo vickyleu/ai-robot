@@ -101,4 +101,46 @@ object AudioUtils {
         }
         return mono
     }
+    
+    /**
+     * 将 48 kHz 立体声 PCM (16-bit) 降采样到 16 kHz，保持立体声。
+     * 由于二者为 3:1 的整数倍关系，可用简单均值抽取，性能开销极低。
+     *
+     * @param src 48 kHz 立体声 short 数组（L R L R …）
+     * @return 16 kHz 立体声 short 数组
+     */
+    fun downsample48kTo16kStereo(src: ShortArray): ShortArray {
+        // 3 个 48k 立体声帧 (6 shorts) -> 1 个 16k 立体声帧 (2 shorts)
+        val frames = src.size / 6                   // 可整除的帧数
+        val out = ShortArray(frames * 2)
+        var j = 0
+        var i = 0
+        repeat(frames) {
+            val l = ((src[i].toInt() + src[i + 2] + src[i + 4]) / 3).toShort()
+            val r = ((src[i + 1] + src[i + 3] + src[i + 5]) / 3).toShort()
+            out[j++] = l
+            out[j++] = r
+            i += 6
+        }
+        return out
+    }
+
+    /** FloatArray [-1,1] → ShortArray (16-bit PCM) */
+    fun floatArrayToShortArray(src: FloatArray): ShortArray {
+        val out = ShortArray(src.size)
+        for (i in src.indices) {
+            val v = (src[i] * 32767f).toInt().coerceIn(-32768, 32767)
+            out[i] = v.toShort()
+        }
+        return out
+    }
+
+    /** ShortArray (16-bit PCM) → FloatArray [-1,1] */
+    fun shortArrayToFloatArray(src: ShortArray): FloatArray {
+        val out = FloatArray(src.size)
+        for (i in src.indices) {
+            out[i] = src[i] / 32768f
+        }
+        return out
+    }
 } 
