@@ -38,8 +38,9 @@ import kotlinx.cinterop.set
 import voice.util.LogManager
 
 // SOXR常量定义
-private const val SOXR_INT16_I = 0u  // 16位整型输入
-private const val SOXR_HQ = 2u       // 高质量重采样
+private const val SOXR_INT16_I = 0u       // 16-bit PCM
+private const val SOXR_FLOAT32_I = 1u     // 32-bit float PCM
+private const val SOXR_HQ = 2u            // 高质量重采样
 
 /**
  * WebRTC AudioProcessing Module 的 Kotlin 封装
@@ -172,8 +173,8 @@ class WebRtcApm {
             // 创建SOXR包装器
             soxrWrapper = soxr_wrapper_create() ?: throw Exception("Failed to create soxr wrapper")
             
-            // 设置IO规格 - 使用short类型
-            soxr_io_spec_create(SOXR_INT16_I, SOXR_INT16_I, soxrWrapper)
+            // 设置IO规格 - 输入 16-bit PCM，输出 float32 PCM
+            soxr_io_spec_create(SOXR_INT16_I, SOXR_FLOAT32_I, soxrWrapper)
             
             // 设置运行时规格 - 使用1个线程
             soxr_runtime_spec_create(1u, soxrWrapper)
@@ -256,9 +257,9 @@ class WebRtcApm {
                 // 计算需要送入 APM 的帧数（10 ms）
                 val processSize = minOf(done.toInt(), frameSize)
 
-                // 1) 将重采样后的 float32 PCM (假设幅度范围为 -32768~32767) 归一化到 [-1,1]
+                // 1) 将重采样后的 float32 PCM 归一化到 [-1,1]
                 for (i in 0 until processSize) {
-                    inputFloatBuffer!![i] = resampledBuffer[i] / 32768f
+                    inputFloatBuffer!![i] = resampledBuffer[i]
                 }
 
                 // 2) 调用 WebRTC APM 处理
