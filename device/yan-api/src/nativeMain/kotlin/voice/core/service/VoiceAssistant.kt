@@ -111,8 +111,9 @@ class VoiceAssistant(
             
             // 初始化WebRTC APM
             try {
-                // 默认启用回声消除和瞬时噪声抑制
-                WebRtcApmSingleton.getInstance(config.sampleRate, 1, true)
+                // 使用实际的音频设备采样率
+                val actualSampleRate = audioDevice.getSampleRate()
+                WebRtcApmSingleton.getInstance(actualSampleRate, 1, true)
                 setEchoCancellationEnabled(true)
                 isEchoCancellationEnabled = true
                 isTransientSuppressionEnabled = true
@@ -147,6 +148,7 @@ class VoiceAssistant(
             keywordDetector.detectorState.collectLatest { state ->
                 when (state) {
                     KeywordDetectorApi.DetectorState.DETECTED -> {
+                        logger.info("监控到关键词检测器状态变为DETECTED - 激活助手")
                         if (_assistantState.value == VoiceAssistantApi.AssistantState.LISTENING_FOR_KEYWORD) {
                             activateAssistant()
                         }
@@ -211,6 +213,14 @@ class VoiceAssistant(
             _assistantState.value = VoiceAssistantApi.AssistantState.LISTENING_FOR_SPEECH
             stateChangeCallback?.invoke(_assistantState.value)
             isActivated = true
+
+            // 播放反馈
+            logger.info("播放激活提示音")
+            try {
+                speak("我在听")
+            } catch (e: Exception) {
+                logger.error("播放激活提示音失败: ${e.message}")
+            }
 
             // 启动超时任务
             startTimeout()
@@ -326,13 +336,13 @@ class VoiceAssistant(
         try {
             keywordDetector.stopListening()
             audioDevice.stop()
-        } catch (e: Exception) {
+                    } catch (e: Exception) {
             logger.error("停止组件时出错: ${e.message}")
         }
 
         isActivated = false
-        isRunning = false
-        _assistantState.value = VoiceAssistantApi.AssistantState.IDLE
+                        isRunning = false
+                        _assistantState.value = VoiceAssistantApi.AssistantState.IDLE
         stateChangeCallback?.invoke(_assistantState.value)
         logger.info("语音助手已停止")
     }
@@ -361,7 +371,7 @@ class VoiceAssistant(
             keywordDetector.release()
             speechSynthesizer.release()
             // 不释放全局的audioDevice，它可能被其他组件使用
-        } catch (e: Exception) {
+            } catch (e: Exception) {
             logger.error("清理资源时出错: ${e.message}")
         }
     }
@@ -401,6 +411,7 @@ class VoiceAssistant(
      * @return 诊断文本
      */
     fun generateDiagnosis(): String {
+        logger
         val sb = StringBuilder()
         sb.appendLine("==== 语音助手诊断 ====")
         sb.appendLine("初始化状态: $isInitialized")
@@ -412,11 +423,9 @@ class VoiceAssistant(
         sb.appendLine("关键词: ${keywords.joinToString(", ")}")
 
         // 添加关键词检测器诊断
-        if (keywordDetector is KeywordDetector) {
-            sb.appendLine("\n--- 关键词检测器诊断 ---")
-            sb.appendLine(keywordDetector.generateDiagnostics())
-        }
-
+        sb.appendLine("\n--- 关键词检测器诊断 ---")
+        sb.appendLine(keywordDetector.generateDiagnostics())
+        
         return sb.toString()
     }
 
@@ -428,7 +437,7 @@ class VoiceAssistant(
 
         // 检查输入流状态
         val inputStreamActive = PortAudioDevice.isInputStreamActive()
-
+        
         if (inputStreamActive) {
             // 输入流活动，使用系统命令播放嘟嘟声
             val beepCmd = "echo -e \"\\007\\007\" > /dev/console || echo 'beep' > /dev/null"
@@ -511,18 +520,18 @@ class VoiceAssistant(
         try {
             // 检查输入流状态
             val inputStreamActive = PortAudioDevice.isInputStreamActive()
-
+            
             if (inputStreamActive) {
                 // 输入流活动时，直接使用系统命令合成和播放
                 logger.info("检测到输入流活动，使用系统命令播放音频...")
-
+                
                 // 使用系统命令合成并直接播放
                 val cmd =
                     "echo \"$text\" | piper --model ${config.piperModelPath} --config ${config.piperConfigPath} --output-raw | aplay -f S16_LE -r 16000 -c 1 -D hw:0,0 2>/dev/null"
                 try {
                     val result = platform.posix.system(cmd)
                     logger.info("使用系统命令合成并播放完成，结果: $result")
-
+                    
                     _assistantState.value = VoiceAssistantApi.AssistantState.LISTENING_FOR_KEYWORD
                     return result == 0
                 } catch (e: Exception) {
@@ -539,16 +548,16 @@ class VoiceAssistant(
 
                 while (!success && attempts < maxAttempts) {
                     attempts++
-
+                    
                     // 再次检查输入流状态
                     if (PortAudioDevice.isInputStreamActive()) {
                         logger.warn("尝试播放时检测到输入流已变为活动状态，取消播放")
                         break
                     }
-
+                    
                     // 尝试检查输出流
                     val outputStreamActive = PortAudioDevice.isOutputStreamActive()
-
+                    
                     if (!outputStreamActive) {
                         // 尝试打开输出流
                         val outputStreamOpened = audioDevice.openOutputStream(
@@ -556,14 +565,14 @@ class VoiceAssistant(
                             sampleRate = config.sampleRate,
                             channels = 2
                         )
-
+                        
                         if (!outputStreamOpened) {
                             logger.warn("无法打开输出流（尝试 #$attempts），等待后重试")
                             delay(500) // 等待一段时间再重试
                             continue
                         }
                     }
-
+                    
                     // 合成并播放
                     try {
                         success = speechSynthesizer.speak(text)
@@ -580,7 +589,7 @@ class VoiceAssistant(
                 if (!success) {
                     logger.error("多次尝试后语音合成仍然失败")
                 }
-
+                
                 _assistantState.value = VoiceAssistantApi.AssistantState.LISTENING_FOR_KEYWORD
                 return success
             }
@@ -599,7 +608,7 @@ class VoiceAssistant(
 
         // 检查输入流状态
         val inputStreamActive = PortAudioDevice.isInputStreamActive()
-
+        
         if (inputStreamActive) {
             // 输入流活动，使用系统命令播放嘟嘟声
             val beepCmd = "echo -e \"\\007\" > /dev/console || echo 'beep' > /dev/null"

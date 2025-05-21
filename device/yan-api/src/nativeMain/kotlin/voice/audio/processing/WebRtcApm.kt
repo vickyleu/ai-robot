@@ -3,6 +3,7 @@
 package voice.audio.processing
 
 import com.airobot.webrtcapminterop.APMConfig
+import com.airobot.webrtcapminterop.SoxWrapper
 import com.airobot.webrtcapminterop.kAgcAdaptiveDigital
 import com.airobot.webrtcapminterop.kNsHigh
 import com.airobot.webrtcapminterop.my_webrtc_apm_voice_detected
@@ -12,10 +13,18 @@ import com.airobot.webrtcapminterop.webrtc_apm_destroy
 import com.airobot.webrtcapminterop.webrtc_apm_prepare
 import com.airobot.webrtcapminterop.webrtc_apm_process_stream
 import com.airobot.webrtcapminterop.my_webrtc_apm_enable_aec
+import com.airobot.webrtcapminterop.soxr_io_spec_create
+import com.airobot.webrtcapminterop.soxr_quality_spec_create
+import com.airobot.webrtcapminterop.soxr_runtime_spec_create
+import com.airobot.webrtcapminterop.soxr_wrapper_create
+import com.airobot.webrtcapminterop.soxr_wrapper_create_resampler
+import com.airobot.webrtcapminterop.soxr_wrapper_destroy
+import com.airobot.webrtcapminterop.soxr_wrapper_process
 import kotlinx.cinterop.CPointer
 import kotlinx.cinterop.CPointerVar
 import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.cinterop.FloatVar
+import kotlinx.cinterop.ShortVar
 import kotlinx.cinterop.alloc
 import kotlinx.cinterop.allocArray
 import kotlinx.cinterop.free
@@ -23,8 +32,14 @@ import kotlinx.cinterop.get
 import kotlinx.cinterop.memScoped
 import kotlinx.cinterop.nativeHeap
 import kotlinx.cinterop.ptr
+import kotlinx.cinterop.rawValue
+import kotlinx.cinterop.refTo
 import kotlinx.cinterop.set
 import voice.util.LogManager
+
+// SOXR常量定义
+private const val SOXR_INT16_I = 0u  // 16位整型输入
+private const val SOXR_HQ = 2u       // 高质量重采样
 
 /**
  * WebRTC AudioProcessing Module 的 Kotlin 封装
@@ -43,6 +58,10 @@ class WebRtcApm {
     private var outputFloatBuffer: CPointer<FloatVar>? = null
     private var inputArrayPointer: CPointer<CPointerVar<FloatVar>>? = null
     private var outputArrayPointer: CPointer<CPointerVar<FloatVar>>? = null
+
+    private var soxrWrapper: CPointer<SoxWrapper>? = null
+    private var resamplerInitialized = false
+    private var currentInputRate: Int = 0
 
     /**
      * 初始化 WebRTC APM 处理器
@@ -139,6 +158,57 @@ class WebRtcApm {
         outputArrayPointer!![0] = outputFloatBuffer
     }
 
+    private fun initializeResampler() {
+        if (resamplerInitialized) {
+            // 如果采样率改变了，需要重新初始化
+            if (soxrWrapper != null && currentInputRate != sampleRate) {
+                releaseResampler()
+            } else {
+                return
+            }
+        }
+        
+        try {
+            // 创建SOXR包装器
+            soxrWrapper = soxr_wrapper_create() ?: throw Exception("Failed to create soxr wrapper")
+            
+            // 设置IO规格 - 使用short类型
+            soxr_io_spec_create(SOXR_INT16_I, SOXR_INT16_I, soxrWrapper)
+            
+            // 设置运行时规格 - 使用1个线程
+            soxr_runtime_spec_create(1u, soxrWrapper)
+            
+            // 设置质量规格 - 使用高质量
+            soxr_quality_spec_create(SOXR_HQ, soxrWrapper)
+            
+            // 创建重采样器
+            val result = soxr_wrapper_create_resampler(
+                soxrWrapper,
+                sampleRate.toDouble(),  // 实际输入采样率
+                16000.0  // WebRTC内部处理采样率
+            )
+            
+            if (result != 0) {
+                throw Exception("Failed to create resampler")
+            }
+            
+            currentInputRate = sampleRate
+            resamplerInitialized = true
+            logger.info("SOXR重采样器初始化成功: ${sampleRate}Hz -> 16000Hz")
+        } catch (e: Exception) {
+            logger.error("初始化SOXR重采样器失败: ${e.message}")
+            releaseResampler()
+        }
+    }
+    
+    private fun releaseResampler() {
+        soxrWrapper?.let {
+            soxr_wrapper_destroy(it)
+            soxrWrapper = null
+        }
+        resamplerInitialized = false
+    }
+
     /**
      * 处理音频帧
      * @param audioData 短整型音频数据
@@ -150,31 +220,72 @@ class WebRtcApm {
             return audioData
         }
 
-        if (audioData.size < frameSize) {
-            logger.warn("音频数据过短，跳过处理: ${audioData.size} < ${frameSize}")
+        if (audioData.isEmpty()) {
+            logger.warn("音频数据为空")
             return audioData
         }
 
         try {
-            // 将短整型数据转换为浮点型
-            for (i in 0 until frameSize) {
-                inputFloatBuffer!![i] = audioData[i].toFloat() / 32768.0f
+            // 确保重采样器已初始化
+            initializeResampler()
+            
+            // 如果重采样器初始化失败，直接返回原始数据
+            if (!resamplerInitialized || soxrWrapper == null) {
+                return audioData
             }
-
-            // 处理音频数据
-            webrtc_apm_process_stream(apmHandle, inputArrayPointer, outputArrayPointer)
-
-            // 将浮点型数据转换回短整型
-            val result = ShortArray(frameSize) { i ->
-                val sample = (outputFloatBuffer!![i] * 32768.0f).toInt()
-                when {
-                    sample > Short.MAX_VALUE -> Short.MAX_VALUE
-                    sample < Short.MIN_VALUE -> Short.MIN_VALUE
-                    else -> sample.toShort()
+            
+            // 分配输出缓冲区 - 16kHz采样率对应的大小
+            val resampledSize = (audioData.size * 16000) / sampleRate
+            val resampledBuffer = nativeHeap.allocArray<FloatVar>(resampledSize)
+            
+            try {
+                // 执行重采样
+                val done = soxr_wrapper_process(
+                    wrapper = soxrWrapper,
+                    in_data = audioData.refTo(0),
+                    in_size = audioData.size.toUInt(),  // 输入帧数
+                    out_data = resampledBuffer,
+                    out_size = resampledSize.toUInt()    // 输出帧数
+                )
+                
+                if (done == 0U) {
+                    logger.error("重采样失败")
+                    return audioData
                 }
+                
+                // 将重采样后的数据转换为float并进行WebRTC处理
+                val processSize = minOf(done.toInt(), frameSize)
+                
+                // 找到最大值用于归一化
+                var maxAbs = 0.0f
+                for (i in 0 until processSize) {
+                    val abs = kotlin.math.abs(resampledBuffer[i])
+                    if (abs > maxAbs) maxAbs = abs
+                }
+                
+                // 避免除以0，同时保持合理的增益
+                val scale = if (maxAbs < 0.001f) 1.0f else 1.0f / maxAbs
+                
+                // 归一化数据送入WebRTC处理
+                for (i in 0 until processSize) {
+                    inputFloatBuffer!![i] = resampledBuffer[i] * scale
+                }
+                
+                webrtc_apm_process_stream(apmHandle, inputArrayPointer, outputArrayPointer)
+                
+                // 将浮点型数据转换回短整型，恢复原始幅度
+                return ShortArray(processSize) { i ->
+                    val sample = (outputFloatBuffer!![i] / scale * 32768.0f).toInt()
+                    when {
+                        sample > Short.MAX_VALUE -> Short.MAX_VALUE
+                        sample < Short.MIN_VALUE -> Short.MIN_VALUE
+                        else -> sample.toShort()
+                    }
+                }
+            } finally {
+                // 释放临时缓冲区
+                nativeHeap.free(resampledBuffer.rawValue)
             }
-
-            return result
         } catch (e: Exception) {
             logger.error("WebRTC APM 处理音频帧失败: ${e.message}")
             return audioData
@@ -219,21 +330,24 @@ class WebRtcApm {
                 apmHandle = null
             }
 
+            // 释放重采样器
+            releaseResampler()
+
             // 释放音频缓冲区
             inputFloatBuffer?.let {
-                nativeHeap.free(it)
+                nativeHeap.free(it.rawValue)
                 inputFloatBuffer = null
             }
             outputFloatBuffer?.let {
-                nativeHeap.free(it)
+                nativeHeap.free(it.rawValue)
                 outputFloatBuffer = null
             }
             inputArrayPointer?.let {
-                nativeHeap.free(it)
+                nativeHeap.free(it.rawValue)
                 inputArrayPointer = null
             }
             outputArrayPointer?.let {
-                nativeHeap.free(it)
+                nativeHeap.free(it.rawValue)
                 outputArrayPointer = null
             }
 

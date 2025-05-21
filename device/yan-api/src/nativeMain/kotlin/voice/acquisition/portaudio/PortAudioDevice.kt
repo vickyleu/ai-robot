@@ -235,9 +235,15 @@ class PortAudioDevice private constructor() : AudioDevice {
             }
 
             if (result == paNoError || result == paInputOverflowed) {
+                // paInputOverflowed只是表示部分数据被丢弃，不是真正的错误
                 // 正常返回，重置连续错误计数
                 if (consecutiveErrors > 0) {
                     consecutiveErrors = 0
+                }
+                
+                // 对于paInputOverflowed，只记录低频日志，不要把它当做严重错误
+                if (result == paInputOverflowed && audioReadCounter % 1000 == 0) {
+                    logger.debug("输入缓冲区溢出 (paInputOverflowed)，部分数据可能丢失")
                 }
 
                 return frameCount
@@ -315,34 +321,22 @@ class PortAudioDevice private constructor() : AudioDevice {
         // 同步检查流状态
         val isActive = synchronized(streamStateLock) { inputStreamActive }
 
-        // 如果全局流标志激活但流指针为null，直接返回静音数据
+        // 如果全局流标志激活但流指针为null，直接返回0
         if (isActive && inputStreamPtr.value == null) {
-            // 填充静音数据
-            for (i in 0 until frameCount) {
-                buffer[i] = 0
-            }
-
             // 每隔一定次数尝试恢复一次
             if (audioReadCounter++ % 200 == 0) {
-                logger.info("全局音频流已激活但流指针为null，自动填充静音")
+                logger.info("全局音频流已激活但流指针为null")
             }
-
-            return frameCount
+            return 0
         }
 
         // 检查输入流是否为null或不活跃
         if (!isActive || inputStreamPtr.value == null) {
-            // 输入流不可用，返回静音数据
+            // 输入流不可用
             if (audioReadCounter++ % 100 == 0) {
                 logger.warn("输入流不可用 (active=$isActive, ptr=${inputStreamPtr.value})")
             }
-
-            // 填充静音
-            for (i in 0 until frameCount) {
-                buffer[i] = 0
-            }
-
-            return frameCount
+            return 0
         }
 
         // 检查是否需要重置音频流
@@ -355,12 +349,7 @@ class PortAudioDevice private constructor() : AudioDevice {
             val recoverySuccess = attemptStreamRecovery()
             val elapsed = System.now().toEpochMilliseconds() - startRecover
             if (!recoverySuccess) logger.warn("attemptStreamRecovery 用时 ${elapsed}ms, 未成功")
-
-            // 无论恢复结果如何，这一帧都返回静音
-            for (i in 0 until frameCount) {
-                buffer[i] = 0
-            }
-            return frameCount
+            return 0
         }
 
         // 正常执行读取操作，但增加超时保护
@@ -383,10 +372,8 @@ class PortAudioDevice private constructor() : AudioDevice {
                 }
 
                 if (System.now().toEpochMilliseconds() >= deadline) {
-                    logger.error("Pa_ReadStream 超时 (>2s)，返回静音")
-                    for (i in 0 until frameCount) buffer[i] = 0
-                    audioReadResetNeeded = true
-                    return frameCount
+                    logger.error("Pa_ReadStream 超时 (>2s)")
+                    return 0
                 }
 
                 // 让出协程，避免忙等
@@ -399,23 +386,34 @@ class PortAudioDevice private constructor() : AudioDevice {
                 logger.error("读取音频数据失败 (err=$result)")
                 consecutiveErrors++
 
-                // 填充静音
-                for (i in 0 until frameCount) {
-                    buffer[i] = 0
-                }
-
                 // 连续错误过多，触发恢复
                 if (consecutiveErrors >= maxConsecutiveErrors) {
                     audioReadResetNeeded = true
                 }
-
-                return frameCount
+                return 0
             } else {
                 // 读取成功 (result == paNoError 或 paInputOverflowed)
                 consecutiveErrors = 0
-                // 当 result==paNoError 时，它只是错误码并非帧数，返回请求的 frameCount
-                val framesToReturn = frameCount
-                return framesToReturn
+
+                // 检查是否为静音数据
+                var isAllSilence = true
+                var maxAbs = 0
+                for (i in 0 until frameCount) {
+                    val abs = kotlin.math.abs(buffer[i].toInt())
+                    if (abs > maxAbs) maxAbs = abs
+                    if (abs > 2) {  // 允许极小的噪声
+                        isAllSilence = false
+                        break
+                    }
+                }
+
+                // 音频能量验证，每1000帧检查一次，帮助排查设备未捕获声音的问题
+                if (audioReadCounter++ % 1000 == 0) {
+                    logger.debug("readAudio: maxAbs=$maxAbs, isAllSilence=$isAllSilence")
+                }
+
+                // 如果是完全静音，返回0表示没有有效数据
+                return if (isAllSilence) 0 else frameCount
             }
         } catch (e: Exception) {
             logger.error("读取音频时发生异常: ${e.message}")
@@ -424,12 +422,7 @@ class PortAudioDevice private constructor() : AudioDevice {
             // 标记流需要重建
             audioReadResetNeeded = true
             consecutiveErrors++
-
-            // 返回静音数据
-            for (i in 0 until frameCount) {
-                buffer[i] = 0
-            }
-            return frameCount
+            return 0
         }
     }
 
@@ -552,11 +545,9 @@ class PortAudioDevice private constructor() : AudioDevice {
                 try {
                     // 树莓派上的特殊处理
                     logger.info("开始音频设备初始化")
-                    println("开始音频设备初始化 - 直接打印到标准输出")
 
                     // 优化：温和地释放音频资源
                     logger.info("步骤1: 释放音频资源...")
-                    println("步骤1: 释放音频资源...")
 
                     // 完全重置所有流和标志
                     synchronized(streamStateLock) {
@@ -593,12 +584,10 @@ class PortAudioDevice private constructor() : AudioDevice {
                     platform.posix.system("pkill aplay 2>/dev/null || true")
                     platform.posix.system("sudo fuser -k /dev/snd/* 2>/dev/null || true")
                     logger.info("已终止音频相关进程")
-                    println("已终止音频相关进程")
 
                     // 设置设备权限
                     platform.posix.system("sudo chmod -R 777 /dev/snd/* 2>/dev/null || true")
                     logger.info("已设置音频设备权限为777")
-                    println("已设置音频设备权限为777")
 
                     // 优化：只在未初始化时终止PortAudio
                     if (!portAudioInitialized) {
@@ -615,30 +604,24 @@ class PortAudioDevice private constructor() : AudioDevice {
 
                     // 创建优化的ALSA配置
                     logger.info("步骤2: 创建优化的ALSA配置文件...")
-                    println("步骤2: 创建优化的ALSA配置文件...")
                     deviceSelector.fixAlsaConfig()
 
                     // 直接测试设备可用性但不重复测试
                     logger.info("步骤3: 检查设备状态...")
-                    println("步骤3: 检查设备状态...")
 
                     // 测试设备是否可用
                     logger.info("试图直接访问音频设备...")
-                    println("试图直接访问音频设备...")
                     val testCmd =
                         "arecord -d 1 -f S16_LE -r 16000 -c 2 -D hw:0,0 /dev/null 2>/tmp/arecord_init_test.log"
                     val testResult = platform.posix.system(testCmd)
                     if (testResult == 0) {
                         logger.info("成功: 直接ALSA测试通过")
-                        println("成功: 直接ALSA测试通过")
                     } else {
                         // 只在测试失败时进行额外的重置尝试
                         logger.warn("警告: 直接ALSA测试失败，但仍将继续")
-                        println("警告: 直接ALSA测试失败，但仍将继续")
 
                         // 优化：重新加载模块的延迟更合理
                         logger.info("尝试卸载并重新加载声卡模块...")
-                        println("尝试卸载并重新加载声卡模块...")
                         platform.posix.system("sudo modprobe -r snd_microsemi 2>/dev/null || true")
                         delay(1000) // 增加卸载后的等待时间
                         platform.posix.system("sudo modprobe snd_microsemi 2>/dev/null || true")
@@ -647,7 +630,6 @@ class PortAudioDevice private constructor() : AudioDevice {
 
                     // 初始化PortAudio，不超过2次尝试
                     logger.info("步骤4: 初始化PortAudio...")
-                    println("步骤4: 初始化PortAudio...")
                     var initSuccess = false
                     var initAttempt = 0
                     val maxInitAttempts = 2
@@ -655,7 +637,6 @@ class PortAudioDevice private constructor() : AudioDevice {
                     while (!initSuccess && initAttempt < maxInitAttempts) {
                         initAttempt++
                         logger.info("正在执行Pa_Initialize()...尝试 #$initAttempt")
-                        println("正在执行Pa_Initialize()...尝试 #$initAttempt")
 
                         // 第二次尝试前等待
                         if (initAttempt > 1) {
@@ -666,34 +647,28 @@ class PortAudioDevice private constructor() : AudioDevice {
 
                         if (result == paNoError) {
                             logger.info("✅ PortAudio初始化成功")
-                            println("✅ PortAudio初始化成功")
                             initSuccess = true
                             portAudioInitialized = true
                         } else {
                             val errorMsg = Pa_GetErrorText(result)?.toKString() ?: "未知错误"
                             logger.error("初始化PortAudio失败 (尝试 #$initAttempt): $errorMsg (错误码: $result)")
-                            println("初始化PortAudio失败 (尝试 #$initAttempt): $errorMsg (错误码: $result)")
 
                             if (initAttempt < maxInitAttempts) {
                                 logger.info("将在1秒后重试...")
-                                println("将在1秒后重试...")
                             }
                         }
                     }
 
                     if (!initSuccess) {
                         logger.error("❌ 初始化尝试失败")
-                        println("❌ 初始化尝试失败")
                         _deviceState.value = AudioDeviceState.IDLE
                         return@withLock false
                     }
 
                     // 列举设备
                     logger.info("步骤5: 列举音频设备...")
-                    println("步骤5: 列举音频设备...")
                     val (inputIdx, outputIdx) = listAudioDevices()
                     logger.info("选择的音频设备: 输入=$inputIdx, 输出=$outputIdx")
-                    println("选择的音频设备: 输入=$inputIdx, 输出=$outputIdx")
                     logger.info("音频播放器初始化，使用自身作为音频设备")
                     _deviceState.value = AudioDeviceState.READY
 
@@ -701,11 +676,9 @@ class PortAudioDevice private constructor() : AudioDevice {
                     _deviceState.value = AudioDeviceState.READY
 
                     logger.info("✅ 音频设备初始化完成")
-                    println("✅ 音频设备初始化完成")
                     return@withLock true
                 } catch (e: Exception) {
                     logger.error("初始化音频设备失败: ${e.message}")
-                    println("初始化音频设备失败: ${e.message}")
                     e.printStackTrace()
 
                     _deviceState.value = AudioDeviceState.IDLE
@@ -804,12 +777,10 @@ class PortAudioDevice private constructor() : AudioDevice {
                     if (inputStreamPtr.value == null) {
                         // 状态和实际情况不符，重置为READY并尝试开启流
                         logger.warn("⚠️ 设备状态为ACTIVE但流不存在，重置为READY状态")
-                        println("⚠️ 设备状态为ACTIVE但流不存在，重置为READY状态")
                         _deviceState.value = AudioDeviceState.READY
                     } else {
                         // 一切正常，设备已激活且有有效流
                         logger.info("✅ 设备已在ACTIVE状态且流存在")
-                        println("✅ 设备已在ACTIVE状态且流存在")
 
                         // 执行健康检查 - 测试流是否能读取数据
                         val isActive = synchronized(streamStateLock) { inputStreamActive }
@@ -826,26 +797,21 @@ class PortAudioDevice private constructor() : AudioDevice {
 
                 if (_deviceState.value != AudioDeviceState.READY) {
                     logger.warn("⚠️ 音频设备未就绪，尝试初始化。当前状态: ${_deviceState.value}")
-                    println("⚠️ 音频设备未就绪，尝试初始化。当前状态: ${_deviceState.value}")
 
                     // 强制初始化再试一次，但不中断操作
                     logger.info("🔄 尝试强制初始化设备...")
-                    println("🔄 尝试强制初始化设备...")
 
                     if (!initialize("default", 16000)) {
                         logger.error("❌ 强制初始化失败，但仍将尝试启动")
-                        println("❌ 强制初始化失败，但仍将尝试启动")
                         // 即使初始化失败，也继续尝试设置状态和打开流
                     } else {
                         logger.info("✅ 强制初始化成功，设备状态: ${_deviceState.value}")
-                        println("✅ 强制初始化成功，设备状态: ${_deviceState.value}")
                     }
                 }
 
                 // 设置状态为ACTIVE
                 _deviceState.value = AudioDeviceState.ACTIVE
                 logger.info("✅ 设备状态已设置为ACTIVE")
-                println("✅ 设备状态已设置为ACTIVE")
             }
         }
 
@@ -897,58 +863,48 @@ class PortAudioDevice private constructor() : AudioDevice {
 
     override fun listAudioDevices(): Pair<Int, Int> {
         logger.info("列举设备: portAudioInitialized=$portAudioInitialized")
-        println("列举设备: portAudioInitialized=$portAudioInitialized")
 
         // 先确保系统中没有其他进程占用音频设备
         try {
             logger.info("强制释放音频资源...")
-            println("强制释放音频资源...")
             logger.info("killOtherAudioProcesses 之前")
             deviceSelector.killOtherAudioProcesses()
             logger.info("killOtherAudioProcesses 之后")   // ← 如果看不到这行，就说明 pkill 卡死
 
         } catch (e: Exception) {
             logger.warn("释放音频资源失败: ${e.message}")
-            println("释放音频资源失败: ${e.message}")
         }
 
         // 如果PortAudio未初始化，直接尝试重新初始化一次
         if (!portAudioInitialized) {
             logger.warn("PortAudio未初始化，尝试立即初始化")
-            println("PortAudio未初始化，尝试立即初始化")
             // 直接调用Pa_Initialize，不依赖完整的initialize方法
             val result = Pa_Initialize()
             if (result == paNoError) {
                 logger.info("直接Pa_Initialize成功")
-                println("直接Pa_Initialize成功")
                 portAudioInitialized = true
 
                 // 初始化后等待一点时间让系统稳定
                 runBlocking { delay(500) }
             } else {
                 logger.error("Pa_Initialize失败: ${Pa_GetErrorText(result)?.toKString()}")
-                println("Pa_Initialize失败: ${Pa_GetErrorText(result)?.toKString()}")
 
                 // 尝试终止并重新初始化
                 try {
                     Pa_Terminate()
                     logger.info("已终止PortAudio，再次尝试初始化")
-                    println("已终止PortAudio，再次尝试初始化")
                     runBlocking { delay(1000) }
 
                     val reinitResult = Pa_Initialize()
                     if (reinitResult == paNoError) {
                         logger.info("第二次Pa_Initialize成功")
-                        println("第二次Pa_Initialize成功")
                         portAudioInitialized = true
                     } else {
                         logger.error("第二次Pa_Initialize失败: ${Pa_GetErrorText(reinitResult)?.toKString()}")
-                        println("第二次Pa_Initialize失败: ${Pa_GetErrorText(reinitResult)?.toKString()}")
                         // 仍然继续，返回默认设备
                     }
                 } catch (e: Exception) {
                     logger.error("终止并重新初始化出错: ${e.message}")
-                    println("终止并重新初始化出错: ${e.message}")
                 }
             }
         }

@@ -125,6 +125,7 @@ class VoskSpeechRecognizer : SpeechRecognizerApi {
             
             // 处理音频数据
             val voskResult = processAudioWithVosk(accumulatedAudio)
+            logger.warn("识别结果: ${voskResult.text}, 置信度: ${voskResult.confidence}")
             val endTime = LogManager.getCurrentTimeMillis()
             lastRecognitionTime = endTime
             
@@ -495,6 +496,7 @@ class VoskSpeechRecognizer : SpeechRecognizerApi {
     private fun calculateEnergy(audio: ByteArray, length: Int): Double {
         if (length < 2) return 0.0
         
+        // 直接计算RMS能量，不再调用WebRTC（由KeywordDetector负责VAD）
         var sum = 0.0
         for (i in 0 until length step 2) {
             if (i + 1 < length) {
@@ -504,6 +506,7 @@ class VoskSpeechRecognizer : SpeechRecognizerApi {
             }
         }
         
+        // 计算RMS值，用于质量检测而非VAD（VAD由WebRTC在KeywordDetector中完成）
         return sqrt(sum / (length / 2))
     }
     

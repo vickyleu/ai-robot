@@ -8,6 +8,7 @@ import voice.util.LogManager
 import voice.audio.recognition.VoskSpeechRecognizer
 import kotlinx.serialization.json.*
 import kotlin.time.ExperimentalTime
+import voice.util.AudioUtils
 
 /**
  * Vosk 关键词检测器
@@ -110,29 +111,50 @@ class VoskKeywordDetector {
     /**
      * 检测音频中是否含有关键词
      * @param audioData 音频数据
+     * @param hasVoiceActivity 是否已检测到语音活动(可选，null表示未预先检测)
      * @return 是否检测到关键词
      */
-    fun detect(audioData: ShortArray): Boolean {
+    fun detect(audioData: ShortArray, hasVoiceActivity: Boolean? = null): Boolean {
+
         if (!isInitialized) {
             return false
         }
         
+        // 如果明确指定无语音活动，直接返回false，节省处理资源
+        if (hasVoiceActivity != null && !hasVoiceActivity) {
+            return false
+        }
+        
         try {
-            // 短整型数组转字节数组
-            val audioBytes = ByteArray(audioData.size * 2)
-            for (i in audioData.indices) {
-                val value = audioData[i]
-                audioBytes[i * 2] = (value.toInt() and 0xFF).toByte()
-                audioBytes[i * 2 + 1] = (value.toInt() shr 8).toByte()
-            }
-            
-            // 积累音频数据
-            accumulateAudio(audioBytes)
-            
             // 检查冷却时间
             val now = Clock.System.now().toEpochMilliseconds()
             if (now - lastDetectionTime < detectionCooldownMs) {
                 return false
+            }
+            
+            // 使用AudioUtils进行数据转换
+            val tempBuffer = ByteArray(audioData.size * 2)
+            val audioBytes = AudioUtils.shortArrayToByteArray(audioData, audioData.size, tempBuffer)
+            
+            // 积累音频数据
+            accumulateAudio(tempBuffer.copyOf(audioBytes))
+            
+            // 只有音频缓冲区有足够数据时才进行处理
+            if (audioBuffer.size < 1000) {
+                return false
+            }
+            
+            // 计算能量值，帮助诊断
+            var energy = 0.0
+            for (i in 0 until audioData.size) {
+                energy += audioData[i] * audioData[i]
+            }
+            if (energy > 0 && audioData.size > 0) {
+                energy = kotlin.math.sqrt(energy / audioData.size)
+                // 每100帧记录一次能量值，帮助调试
+                if (Clock.System.now().toEpochMilliseconds() % 100 == 0L) {
+                    logger.debug("当前音频帧能量: $energy")
+                }
             }
             
             // 处理音频数据
@@ -144,16 +166,25 @@ class VoskKeywordDetector {
                 val detectedKeyword = findKeyword(result.text)
                 
                 if (detectedKeyword != null) {
-                    logger.info("检测到关键词: $detectedKeyword, 置信度: ${result.confidence}")
+                    logger.info("检测到关键词: '$detectedKeyword', 置信度: ${result.confidence}")
                     
                     // 只有置信度达到阈值时才触发回调
                     if (result.confidence >= sensitivity) {
+                        logger.info("✓✓✓ 关键词检测通过阈值检查! 触发回调")
                         keywordCallback?.invoke(detectedKeyword)
                         lastDetectionTime = now
                         resetBuffer() // 重置缓冲区
                         return true
+                    } else {
+                        logger.debug("关键词 '$detectedKeyword' 置信度不足: ${result.confidence} < $sensitivity")
                     }
+                } else {
+                    // 有结果但不包含关键词时使用 DEBUG 级别，减少日志噪音
+                    logger.debug("识别到非关键词文本: \"${result.text}\", 置信度: ${result.confidence}")
                 }
+            } else if (result.confidence > 0.0f) {
+                // 只在置信度不为0时才输出日志
+                logger.debug("Vosk结果置信度: ${result.confidence}")
             }
             
             return false

@@ -13,6 +13,7 @@ import kotlinx.cinterop.ShortVar
 import kotlinx.cinterop.allocArray
 import kotlinx.cinterop.get
 import kotlinx.cinterop.nativeHeap
+import kotlinx.cinterop.rawValue
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.Dispatchers
@@ -59,11 +60,11 @@ class PortAudioAcquisition(
     private var captureJob: Job? = null
 
     // 原生缓冲区 - 根据config.channels调整
-    private val frameSize = 256  // 每次读取的帧数
+    private val frameSize = 512  // 增加每次读取的帧数，提高效率
 
     // 增大缓冲区大小，避免 PortAudio 返回超出预期帧数时的越界问题
     // 使用 frameSize * channels * 安全系数(8)，确保足够大
-    private val bufferSize = frameSize * 2 * 8 // 4096 shorts
+    private val bufferSize = frameSize * 2 * 8 // 8192 shorts
     private val buffer = nativeHeap.allocArray<ShortVar>(bufferSize)
 
     // 添加日志记录每次实际读取的帧数
@@ -79,6 +80,10 @@ class PortAudioAcquisition(
     private var totalBytesRead = 0L
     private var startTime = 0L
     private var lastLogTime = 0L
+    
+    // 错误计数器，用于重试逻辑
+    private var errorCounter = 0
+    private val maxConsecutiveErrors = 5
 
     // 回调函数，用于传递采集到的音频数据
     var onAudioDataReceived: ((ByteArray, Int) -> Unit)? = null
@@ -114,6 +119,7 @@ class PortAudioAcquisition(
         isCapturing = true
         frameCounter = 0
         totalBytesRead = 0L
+        errorCounter = 0
         startTime = Clock.System.now().toEpochMilliseconds()
         lastLogTime = startTime
 
@@ -128,9 +134,8 @@ class PortAudioAcquisition(
                 logger.info("音频设备未激活，尝试启动...")
                 val success = audioDevice.start()
                 if (!success) {
-                    logger.error("无法启动音频设备，采集终止")
-                    isCapturing = false
-                    return@launch
+                    logger.warn("audioDevice.start() 返回 false，但仍将继续尝试打开输入流。")
+                    // 即使start()返回false，也继续尝试打开流
                 }
                 // 等待设备稳定
                 delay(300)
@@ -141,9 +146,8 @@ class PortAudioAcquisition(
                 logger.info("输入流未打开，尝试打开输入流 ...")
                 val opened = audioDevice.openInputStream(-1, config.sampleRate, config.channels)
                 if (!opened) {
-                    logger.error("打开输入流失败，采集终止")
-                    isCapturing = false
-                    return@launch
+                    logger.error("打开输入流失败，将继续尝试采集")
+                    // 即使打开失败也不立即终止，继续采集循环，等待后续自动恢复
                 }
                 // 等待流稳定
                 delay(200)
@@ -167,60 +171,76 @@ class PortAudioAcquisition(
 
                     // 读取音频数据
                     val framesRead = audioDevice.readAudioSuspend(buffer, frameSize)
+                    
+                    // 检查是否读取成功
+                    if (framesRead <= 0) {
+                        errorCounter++
+                        if (errorCounter % 20 == 0) { // 定期报告错误，避免日志过多
+                            logger.warn("读取音频数据失败 (连续错误次数: $errorCounter)")
+                        }
+                        
+                        // 连续错误过多，尝试重新打开流
+                        if (errorCounter >= maxConsecutiveErrors) {
+                            logger.error("连续错误次数过多，尝试重启流...")
+                            audioDevice.closeStreams()
+                            delay(500)
+                            audioDevice.openInputStream(-1, config.sampleRate, config.channels)
+                            errorCounter = 0
+                            delay(200)
+                        } else {
+                            delay(10) // 短暂延迟
+                        }
+                        continue
+                    }
+                    
+                    // 读取成功，重置错误计数器
+                    errorCounter = 0
+                    
                     // 更新最大帧数统计
                     if (framesRead > maxFramesEverRead) {
                         maxFramesEverRead = framesRead
                         logger.info("新的最大帧数记录: $maxFramesEverRead")
                     }
 
-                    // 如果读取到数据
-                    if (framesRead > 0) {
-                        val totalSamples = framesRead * config.channels
-                        val maxSamplesAllowed = bufferSize
-                        val safeSamples =
-                            if (totalSamples <= maxSamplesAllowed) totalSamples else maxSamplesAllowed
-                        if (totalSamples > maxSamplesAllowed) {
-                            logger.warn("样本数 $totalSamples 超过缓冲区限制 $maxSamplesAllowed，将被截断")
-                        }
+                    // 处理读取到的数据
+                    val totalSamples = framesRead * config.channels
+                    val maxSamplesAllowed = bufferSize
+                    val safeSamples =
+                        if (totalSamples <= maxSamplesAllowed) totalSamples else maxSamplesAllowed
+                    if (totalSamples > maxSamplesAllowed) {
+                        logger.warn("样本数 $totalSamples 超过缓冲区限制 $maxSamplesAllowed，将被截断")
+                    }
 
-                        // 拷贝到 Kotlin ShortArray
-                        val shortBuf = ShortArray(safeSamples)
-                        for (i in 0 until safeSamples) {
-                            shortBuf[i] = buffer[i]
-                        }
+                    // 拷贝到 Kotlin ShortArray
+                    val shortBuf = ShortArray(safeSamples)
+                    for (i in 0 until safeSamples) {
+                        shortBuf[i] = buffer[i]
+                    }
 
-                        // 转换为ByteArray并回调 (Little-Endian)
-                        val bytesWritten =
-                            AudioUtils.shortArrayToByteArray(shortBuf, safeSamples, byteBuffer)
-                        onAudioDataReceived?.invoke(byteBuffer, bytesWritten)
+                    // 转换为ByteArray并回调 (Little-Endian)
+                    val bytesWritten =
+                        AudioUtils.shortArrayToByteArray(shortBuf, safeSamples, byteBuffer)
+                    onAudioDataReceived?.invoke(byteBuffer, bytesWritten)
 
-                        // 更新统计
-                        frameCounter++
-                        totalBytesRead += bytesWritten.toLong()
+                    // 更新统计
+                    frameCounter++
+                    totalBytesRead += bytesWritten.toLong()
 
-                        // 定期记录统计信息
-                        val currentTime = Clock.System.now().toEpochMilliseconds()
-                        if (currentTime - lastLogTime > 5000) { // 每5秒记录一次
-                            val duration = (currentTime - startTime) / 1000.0
-                            val framesPerSecond = frameCounter / duration
-                            val bytesPerSecond = totalBytesRead / duration
-                            logger.info(
-                                "采集统计: ${
-                                    FormatUtil.formatDouble(
-                                        framesPerSecond,
-                                        1
-                                    )
-                                } 帧/秒, ${FormatUtil.formatDouble(bytesPerSecond, 1)} 字节/秒"
-                            )
-                            lastLogTime = currentTime
-                        }
-
-                        if (frameCounter % 50 == 0) {
-                            logger.debug("readAudioSuspend返回 $framesRead 帧")
-                        }
-                    } else {
-                        // 如果没有读取到数据，等待一小段时间
-                        delay(10)
+                    // 定期记录统计信息
+                    val currentTime = Clock.System.now().toEpochMilliseconds()
+                    if (currentTime - lastLogTime > 5000) { // 每5秒记录一次
+                        val duration = (currentTime - startTime) / 1000.0
+                        val framesPerSecond = frameCounter / duration
+                        val bytesPerSecond = totalBytesRead / duration
+                        logger.info(
+                            "采集统计: ${
+                                FormatUtil.formatDouble(
+                                    framesPerSecond,
+                                    1
+                                )
+                            } 帧/秒, ${FormatUtil.formatDouble(bytesPerSecond, 1)} 字节/秒"
+                        )
+                        lastLogTime = currentTime
                     }
                 } catch (e: Exception) {
                     if (e is CancellationException) {

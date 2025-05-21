@@ -4,6 +4,7 @@ package voice.core.app
 
 import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.cinterop.staticCFunction
+import kotlinx.cinterop.toKString
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -17,6 +18,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import platform.posix.SIGINT
+import platform.posix.getenv
 import platform.posix.signal
 import voice.api.VoiceAssistantApi
 import voice.api.VoiceAssistantApi.AssistantState
@@ -74,8 +76,18 @@ fun runVoiceDemo() {
         
         try {
             runBlocking {
+                // 决定 Vosk 模型路径优先级：环境变量 > 配置默认值 > 旧的相对路径
+                val envModelPath = getenv("VOSK_MODEL_PATH")?.toKString()
+                val modelPathToUse = when {
+                    !envModelPath.isNullOrBlank() -> envModelPath
+                    config.voskModelPath.isNotBlank() -> config.voskModelPath
+                    else -> "models/vosk"
+                }
+
+                logger.info("尝试加载 Vosk 模型路径: $modelPathToUse")
+
                 // 初始化并添加关键词
-                if (!globalVoiceAssistant.initialize("models/vosk")) {
+                if (!globalVoiceAssistant.initialize(modelPathToUse)) {
                     logger.error("语音助手初始化失败")
                     return@runBlocking
                 }

@@ -8,12 +8,14 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import platform.posix.log
 import voice.api.KeywordDetectorApi
 import voice.audio.processing.WebRtcApmSingleton
 import voice.util.LogManager
 import voice.util.AudioDefaults
 import voice.util.AudioUtils
 import voice.audio.recognition.VoskSpeechRecognizer
+import voice.acquisition.portaudio.PortAudioAcquisition
 
 /**
  * 关键词检测器
@@ -40,8 +42,21 @@ class KeywordDetector : KeywordDetectorApi {
     // 关键词列表
     private val keywords = mutableListOf<String>()
     
+    // 音频采集器
+    private val acquisition = PortAudioAcquisition()
+    
     // 协程作用域
     private val scope = CoroutineScope(Dispatchers.Default)
+    
+    // VAD参数 - 使用WebRTC提供的VAD功能
+    private val vadDebounceFrames = 5   // 从10降低到5，减少所需的连续帧数
+    private var consecutiveVoiceFrames = 0
+    
+    // 音频质量判断参数
+    private val minValidRms = 200.0  // 从300.0降低到200.0，降低最小能量要求
+    
+    // 添加计数器以限制日志
+    private var audioReadCounter = 0
     
     /**
      * 初始化关键词检测器
@@ -116,6 +131,17 @@ class KeywordDetector : KeywordDetectorApi {
             return true
         }
         
+        // 启动底层音频采集
+        try {
+            acquisition.startCapture { byteArray, length ->
+                // 将原始PCM字节发送到检测逻辑
+                detect(byteArray, length)
+            }
+        } catch (e: Exception) {
+            logger.error("启动音频采集失败: ${e.message}")
+            return false
+        }
+
         isListening = true
         _detectorState.value = KeywordDetectorApi.DetectorState.LISTENING
         logger.info("startListening流程结束，状态: LISTENING")
@@ -133,6 +159,9 @@ class KeywordDetector : KeywordDetectorApi {
             return
         }
         
+        // 停止采集
+        acquisition.stopCapture()
+
         isListening = false
         _detectorState.value = KeywordDetectorApi.DetectorState.IDLE
         logger.info("关键词检测器已停止监听")
@@ -163,30 +192,85 @@ class KeywordDetector : KeywordDetectorApi {
     }
     
     /**
+     * 计算音频能量(RMS)
+     */
+    private fun calculateRmsEnergy(audio: ShortArray): Double {
+        if (audio.isEmpty()) return 0.0
+        
+        var sum = 0.0
+        for (sample in audio) {
+            // 直接计算平方和，不做归一化
+            sum += (sample * sample).toDouble()
+        }
+        
+        // 计算RMS并归一化到[0,1]范围
+        val rms = kotlin.math.sqrt(sum / audio.size)
+        return rms / Short.MAX_VALUE
+    }
+    
+    /**
      * 处理音频帧 - 短整型数组版本
      * @param audioFrame 音频数据(短整型数组)
      * @param frameSize 帧大小
      * @return 是否检测到关键词
      */
     override fun processAudioFrame(audioFrame: ShortArray, frameSize: Int): Boolean {
-        if (!isInitialized || !isListening) {
+        if (!isInitialized) {
             return false
         }
         
         try {
-            // 使用 WebRTC APM 进行音频预处理
+            // 使用 WebRTC APM 进行音频预处理和VAD检测
             val processedData = WebRtcApmSingleton.processFrame(audioFrame)
             
-            // 使用 Vosk 检测关键词
-            val detected = voskDetector.detect(processedData)
+            // 使用WebRTC内置VAD进行语音检测
+            val hasVoiceActivity = WebRtcApmSingleton.isVoiceDetected()
             
-            if (detected) {
-                _detectorState.value = KeywordDetectorApi.DetectorState.DETECTED
+            // 计算音频能量，作为额外过滤条件
+            val rms = calculateRmsEnergy(processedData)
+            
+            // 只有VAD和能量都满足条件才认为有语音活动
+            val isRealVoice = hasVoiceActivity && rms > minValidRms
+            
+            // 每100帧记录一次状态，帮助调试
+            if (audioReadCounter++ % 100 == 0) {
+                // 添加最大值信息到日志
+                var maxValue = 0.0
+                for (sample in processedData) {
+                    val abs = kotlin.math.abs(sample.toDouble())
+                    if (abs > maxValue) maxValue = abs
+                }
+                logger.debug("当前音频能量: $rms, 最大值: $maxValue, VAD状态: $hasVoiceActivity isRealVoice:$isRealVoice")
             }
             
-            return detected
+            if (isRealVoice) {
+                consecutiveVoiceFrames++
+                
+                // 稳定检测 - 至少连续N帧有语音才认为是语音段
+                if (consecutiveVoiceFrames >= vadDebounceFrames) {
+                    // 使用 Vosk 检测关键词
+                    // 传递VAD结果为true，避免重复计算
+                    val detected = voskDetector.detect(processedData, true)
+                    
+                    if (detected) {
+                        logger.info("✓ 检测到关键词!")
+                        _detectorState.value = KeywordDetectorApi.DetectorState.DETECTED
+                        // 重置语音帧计数器
+                        consecutiveVoiceFrames = 0
+                        return true
+                    }
+                }
+            } else {
+                // 如果当前帧没有语音活动，重置连续计数
+                if (consecutiveVoiceFrames > 0) {
+                    consecutiveVoiceFrames = 0
+                }
+            }
+            
+            return false
         } catch (e: Exception) {
             logger.error("关键词处理出错: ${e.message}")
+            e.printStackTrace()
             return false
         }
     }
@@ -221,6 +305,7 @@ class KeywordDetector : KeywordDetectorApi {
         
         if (isInitialized) {
             voskDetector.release()
+            acquisition.release()
             isInitialized = false
         }
         
