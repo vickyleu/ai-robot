@@ -27,7 +27,6 @@ import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.cinterop.ShortVar
 import kotlinx.cinterop.alloc
 import kotlinx.cinterop.allocArray
-import kotlinx.cinterop.free
 import kotlinx.cinterop.get
 import kotlinx.cinterop.nativeHeap
 import kotlinx.cinterop.pointed
@@ -55,19 +54,16 @@ import platform.posix.fopen
 import platform.posix.fread
 import platform.posix.fseek
 import platform.posix.ftell
-import platform.posix.log
 import platform.posix.pthread_self
-import platform.posix.random
 import platform.posix.rewind
-import voice.audio.vad.VoiceActivityDetector
 import voice.hal.AudioDevice
 import voice.hal.AudioDevice.AudioDeviceState
 import voice.hal.LinuxAudioDeviceSelector
+import voice.util.AudioDefaults
 import voice.util.LogManager
 import kotlin.concurrent.Volatile
 import kotlin.math.sqrt
 import kotlin.time.ExperimentalTime
-import voice.util.AudioDefaults
 
 /**
  * PortAudio音频设备实现类
@@ -87,10 +83,10 @@ class PortAudioDevice private constructor() : AudioDevice {
 
         // 全局静态互斥锁，保护所有PortAudio调用
         private val portAudioLock = SynchronizedObject()
-        
+
         // 添加一个专门的流状态互斥锁，解决状态竞争问题
         private val streamStateLock = SynchronizedObject()
-        
+
         // 添加一个设备级别的互斥锁，完全序列化所有设备操作
         private val deviceMutex = Mutex()
 
@@ -100,14 +96,14 @@ class PortAudioDevice private constructor() : AudioDevice {
 
         // 修改检查方法，分别检查输入和输出流
         fun isInputStreamActive(): Boolean {
-            return synchronized(streamStateLock) { 
-                inputStreamActive 
+            return synchronized(streamStateLock) {
+                inputStreamActive
             }
         }
-        
+
         fun isOutputStreamActive(): Boolean {
-            return synchronized(streamStateLock) { 
-                outputStreamActive 
+            return synchronized(streamStateLock) {
+                outputStreamActive
             }
         }
 
@@ -117,7 +113,7 @@ class PortAudioDevice private constructor() : AudioDevice {
                 inputStreamActive = active
             }
         }
-        
+
         fun setOutputStreamActive(active: Boolean) {
             synchronized(streamStateLock) {
                 outputStreamActive = active
@@ -149,8 +145,10 @@ class PortAudioDevice private constructor() : AudioDevice {
 
     // 音频流管理
     private val audioMutex = Mutex()
+
     // 添加专门的读取锁，避免多线程并发访问
     private val readLock = Mutex()
+
     // 添加专门的写入锁，避免多线程并发访问输出流
     private val writeLock = Mutex()
     private var inputStreamPtr = nativeHeap.alloc<COpaquePointerVar>()
@@ -167,8 +165,6 @@ class PortAudioDevice private constructor() : AudioDevice {
     private var audioPlayBufferPos = 0
     private val minPlayFrames = 512  // 较小的最小播放帧数，减少延迟
 
-    // 语音活动检测器
-    private val voiceDetector = VoiceActivityDetector()
 
     // 错误恢复计数器
     private var consecutiveErrors = 0
@@ -205,10 +201,10 @@ class PortAudioDevice private constructor() : AudioDevice {
                 logger.error("⚠️ readAudio: 无效的帧数要求: $frameCount")
                 return 0
             }
-            
+
             // 先检查输入流是否活跃
             val isActive = synchronized(streamStateLock) { inputStreamActive }
-            
+
             // 检查流状态
             if (!isActive || inputStreamPtr.value == null) {
                 if (audioReadCounter++ % 500 == 0) {
@@ -220,10 +216,10 @@ class PortAudioDevice private constructor() : AudioDevice {
                 }
                 return frameCount // 返回读取的帧数（静音）
             }
-            
+
             // 直接调用PortAudio，不涉及协程
             val result = Pa_ReadStream(inputStreamPtr.value, buffer, frameCount.toUInt())
-            
+
             // 音频能量验证，每200帧检查一次，帮助排查设备未捕获声音的问题
             if (audioReadCounter++ % 1000 == 0) {
                 var energy = 0.0
@@ -237,27 +233,27 @@ class PortAudioDevice private constructor() : AudioDevice {
                     logger.debug("readAudio: silence (energy=0)")
                 }
             }
-            
+
             if (result == paNoError || result == paInputOverflowed) {
                 // 正常返回，重置连续错误计数
                 if (consecutiveErrors > 0) {
                     consecutiveErrors = 0
                 }
-                
+
                 return frameCount
             } else {
                 // 增加连续错误计数
                 consecutiveErrors++
-                
+
                 if (audioReadCounter % 20 == 0 || consecutiveErrors >= 3) {  // 更频繁地报告错误
                     logger.warn("⚠️ readAudio失败: ${Pa_GetErrorText(result)?.toKString()} (错误码: $result, 连续错误: $consecutiveErrors)")
                 }
-                
+
                 // 连续错误过多，触发自动恢复机制
                 if (consecutiveErrors >= 5) {
                     logger.error("❌ 连续错误达到阈值，设置重置标记")
                     audioReadResetNeeded = true
-                    
+
                     // 在全局标记恢复需求
                     val currentTimeMs = System.now().toEpochMilliseconds()
                     if (currentTimeMs - lastRecoveryTime > recoveryIntervalMs) {
@@ -265,7 +261,7 @@ class PortAudioDevice private constructor() : AudioDevice {
                         logger.info("标记需要恢复音频流")
                     }
                 }
-                
+
                 // 填充静音
                 for (i in 0 until frameCount) {
                     buffer[i] = 0
@@ -318,7 +314,7 @@ class PortAudioDevice private constructor() : AudioDevice {
 
         // 同步检查流状态
         val isActive = synchronized(streamStateLock) { inputStreamActive }
-        
+
         // 如果全局流标志激活但流指针为null，直接返回静音数据
         if (isActive && inputStreamPtr.value == null) {
             // 填充静音数据
@@ -352,14 +348,14 @@ class PortAudioDevice private constructor() : AudioDevice {
         // 检查是否需要重置音频流
         if (audioReadResetNeeded) {
             audioReadResetNeeded = false // 重置状态标志
-            
+
             // 尝试恢复，但在协程上下文中安全执行
             // 确保恢复操作不会阻塞太久
             val startRecover = System.now().toEpochMilliseconds()
             val recoverySuccess = attemptStreamRecovery()
             val elapsed = System.now().toEpochMilliseconds() - startRecover
             if (!recoverySuccess) logger.warn("attemptStreamRecovery 用时 ${elapsed}ms, 未成功")
-            
+
             // 无论恢复结果如何，这一帧都返回静音
             for (i in 0 until frameCount) {
                 buffer[i] = 0
@@ -396,23 +392,23 @@ class PortAudioDevice private constructor() : AudioDevice {
                 // 让出协程，避免忙等
                 yield()
             }
-            
+
             // 处理读取结果
             if (result < 0) {
                 // 读取错误
                 logger.error("读取音频数据失败 (err=$result)")
                 consecutiveErrors++
-                
+
                 // 填充静音
                 for (i in 0 until frameCount) {
                     buffer[i] = 0
                 }
-                
+
                 // 连续错误过多，触发恢复
                 if (consecutiveErrors >= maxConsecutiveErrors) {
                     audioReadResetNeeded = true
                 }
-                
+
                 return frameCount
             } else {
                 // 读取成功 (result == paNoError 或 paInputOverflowed)
@@ -443,27 +439,27 @@ class PortAudioDevice private constructor() : AudioDevice {
             logger.warn("流已在恢复过程中，跳过重复恢复尝试")
             return false
         }
-        
+
         logger.warn("尝试恢复音频输入流...")
         isStreamRecovering = true // 设置恢复状态标志
         lastRecoveryTime = System.now().toEpochMilliseconds() // 更新恢复时间
-        
+
         try {
             // 1. 首先尝试关闭并重新打开流
             logger.info("恢复步骤1: 尝试关闭并重新打开流")
             closeStreams()
             delay(500) // 等待资源释放
-            
+
             // 2. 检查设备权限
             logger.info("恢复步骤2: 检查设备权限")
             platform.posix.system("sudo chmod 666 /dev/snd/*")
             delay(100)
-            
+
             // 3. 清理其他音频进程
             logger.info("恢复步骤3: 清理其他音频进程")
             platform.posix.system("pkill -9 pulseaudio arecord aplay 2>/dev/null || true")
             delay(100)
-            
+
             // 4. 尝试重新初始化PortAudio
             logger.info("恢复步骤4: 重新初始化PortAudio")
             if (portAudioInitialized) {
@@ -475,7 +471,7 @@ class PortAudioDevice private constructor() : AudioDevice {
                     logger.warn("终止PortAudio时出错: ${e.message}")
                 }
             }
-            
+
             // 5. 重新初始化PortAudio
             var initResult = Pa_Initialize()
             if (initResult != paNoError) {
@@ -487,31 +483,31 @@ class PortAudioDevice private constructor() : AudioDevice {
                 }
             }
             portAudioInitialized = true
-            
+
             // 6. 尝试重新打开输入流
             logger.info("恢复步骤5: 重新打开输入流")
             val success = openInputStream(selectedInputDeviceIndex, currentSampleRate, 2)
             if (!success) {
                 throw Exception("无法重新打开输入流")
             }
-            
+
             // 7. 重置错误计数
             consecutiveErrors = 0
             audioReadResetNeeded = false
-            
+
             logger.info("✅ 音频流恢复成功")
             return true
-            
+
         } catch (e: Exception) {
             logger.error("❌ 音频流恢复失败: ${e.message}")
             e.printStackTrace()
-            
+
             // 8. 如果恢复失败，尝试更激进的措施
             try {
                 logger.info("尝试强制重置PortAudio状态...")
                 forceResetPortAudio()
                 delay(1000)
-                
+
                 // 9. 最后尝试重新初始化
                 val initResult = Pa_Initialize()
                 if (initResult == paNoError) {
@@ -523,7 +519,7 @@ class PortAudioDevice private constructor() : AudioDevice {
             } catch (e2: Exception) {
                 logger.error("强制重置失败: ${e2.message}")
             }
-            
+
             return false
         } finally {
             isStreamRecovering = false // 重置恢复状态标志
@@ -536,7 +532,7 @@ class PortAudioDevice private constructor() : AudioDevice {
             deviceMutex.withLock {
                 // 更温和的重置，不全面重置PortAudio
                 // 删除：forceResetPortAudio()
-                
+
                 // 防止重复初始化
                 if (portAudioInitialized) {
                     logger.info("PortAudio已经初始化，不需要重复初始化")
@@ -567,7 +563,7 @@ class PortAudioDevice private constructor() : AudioDevice {
                         inputStreamActive = false
                         outputStreamActive = false
                     }
-                    
+
                     // 关闭现有流
                     if (inputStreamPtr.value != null) {
                         try {
@@ -718,28 +714,28 @@ class PortAudioDevice private constructor() : AudioDevice {
                 }
             }
         }
-        
+
         // 这个函数应该是无条件返回true的，也就是说即使初始化失败这个函数仍然能正常结束
         // 该方法的运行状态通过_deviceState反映
         return true
     }
-    
+
     // 完全重置PortAudio状态的函数
     private suspend fun forceResetPortAudio() {
         logger.info("正在强制重置PortAudio状态...")
-        
+
         // 终止所有活动进程
         platform.posix.system("ps aux | grep -E 'portaudio|Pa_|arecord|aplay' | grep -v grep | awk '{print $2}' | xargs kill -9 2>/dev/null || true")
-        
+
         // 强制卸载并重载音频模块
         platform.posix.system("sudo rmmod snd_microsemi 2>/dev/null || true")
         delay(500)
         platform.posix.system("sudo modprobe snd_microsemi 2>/dev/null || true")
         delay(500)
-        
+
         // 强制关闭所有流
         closeAllStreams()
-        
+
         // 如果PortAudio已初始化，强制终止它
         if (portAudioInitialized) {
             try {
@@ -751,24 +747,24 @@ class PortAudioDevice private constructor() : AudioDevice {
                 logger.warn("强制终止PortAudio时出错: ${e.message}")
             }
         }
-        
+
         // 重置所有状态标志
         synchronized(streamStateLock) {
             inputStreamActive = false
             outputStreamActive = false
         }
-        
+
         // 确保指针已重置
         inputStreamPtr.value = null
         outputStreamPtr.value = null
-        
+
         logger.info("PortAudio状态强制重置完成")
     }
-    
+
     // 强制关闭所有流的函数
     private fun closeAllStreams() {
         logger.info("正在强制关闭所有音频流...")
-        
+
         // 关闭输入流
         if (inputStreamPtr.value != null) {
             try {
@@ -781,7 +777,7 @@ class PortAudioDevice private constructor() : AudioDevice {
                 inputStreamPtr.value = null
             }
         }
-        
+
         // 关闭输出流
         if (outputStreamPtr.value != null) {
             try {
@@ -794,13 +790,13 @@ class PortAudioDevice private constructor() : AudioDevice {
                 outputStreamPtr.value = null
             }
         }
-        
+
         logger.info("所有音频流已强制关闭")
     }
 
     override suspend fun start(): Boolean {
         logger.info("启动音频设备，当前状态: ${_deviceState.value}")
-        
+
         runBlocking {
             deviceMutex.withLock {
                 // 如果已经是ACTIVE状态，检查流是否真的存在，如果不存在则尝试修复
@@ -814,7 +810,7 @@ class PortAudioDevice private constructor() : AudioDevice {
                         // 一切正常，设备已激活且有有效流
                         logger.info("✅ 设备已在ACTIVE状态且流存在")
                         println("✅ 设备已在ACTIVE状态且流存在")
-                        
+
                         // 执行健康检查 - 测试流是否能读取数据
                         val isActive = synchronized(streamStateLock) { inputStreamActive }
                         if (!isActive) {
@@ -823,20 +819,20 @@ class PortAudioDevice private constructor() : AudioDevice {
                                 inputStreamActive = true
                             }
                         }
-                        
+
                         return@withLock true
                     }
                 }
-        
+
                 if (_deviceState.value != AudioDeviceState.READY) {
                     logger.warn("⚠️ 音频设备未就绪，尝试初始化。当前状态: ${_deviceState.value}")
                     println("⚠️ 音频设备未就绪，尝试初始化。当前状态: ${_deviceState.value}")
-                    
+
                     // 强制初始化再试一次，但不中断操作
                     logger.info("🔄 尝试强制初始化设备...")
                     println("🔄 尝试强制初始化设备...")
-                    
-                    if(!initialize("default", 16000)) {
+
+                    if (!initialize("default", 16000)) {
                         logger.error("❌ 强制初始化失败，但仍将尝试启动")
                         println("❌ 强制初始化失败，但仍将尝试启动")
                         // 即使初始化失败，也继续尝试设置状态和打开流
@@ -845,19 +841,19 @@ class PortAudioDevice private constructor() : AudioDevice {
                         println("✅ 强制初始化成功，设备状态: ${_deviceState.value}")
                     }
                 }
-        
+
                 // 设置状态为ACTIVE
                 _deviceState.value = AudioDeviceState.ACTIVE
                 logger.info("✅ 设备状态已设置为ACTIVE")
                 println("✅ 设备状态已设置为ACTIVE")
             }
         }
-        
+
         // 检查最终状态
         val finalState = deviceState.value
         val streamActive = synchronized(streamStateLock) { inputStreamActive }
-        logger.info("音频设备启动完成，最终状态: $finalState, 输入流: ${if(streamActive) "有效" else "无效"}")
-        
+        logger.info("音频设备启动完成，最终状态: $finalState, 输入流: ${if (streamActive) "有效" else "无效"}")
+
         return finalState == AudioDeviceState.ACTIVE && streamActive
     }
 
@@ -969,7 +965,11 @@ class PortAudioDevice private constructor() : AudioDevice {
 
             // 查找首个专用输入（优先 dsnoop 等软插件，以避免硬件采样率限制）
             if (info.maxInputChannels > 0) {
-                if (name.contains("dsnoop", ignoreCase = true) || name.contains("dsnooped", ignoreCase = true)) {
+                if (name.contains("dsnoop", ignoreCase = true) || name.contains(
+                        "dsnooped",
+                        ignoreCase = true
+                    )
+                ) {
                     firstInput = idx
                     logger.info("选择 dsnoop 类输入设备 idx=$idx, name=$name")
                     break
@@ -1054,7 +1054,11 @@ class PortAudioDevice private constructor() : AudioDevice {
                                 streamCallback = null,
                                 userData = null
                             )
-                            logger.info("Pa_OpenStream输入 返回=$result, 耗时=${System.now().toEpochMilliseconds()-t0} ms")
+                            logger.info(
+                                "Pa_OpenStream输入 返回=$result, 耗时=${
+                                    System.now().toEpochMilliseconds() - t0
+                                } ms"
+                            )
                             if (result == paNoError) {
                                 // 存储流指针
                                 inputStreamPtr.value = streamVar.value
@@ -1063,9 +1067,6 @@ class PortAudioDevice private constructor() : AudioDevice {
                                 val startResult = Pa_StartStream(inputStreamPtr.value)
                                 if (startResult == paNoError) {
                                     logger.info("====> [openInputStream] 音频输入流打开并启动成功（参数组合 #$attempts, tid=${threadId()}）, 通道=$attemptChannels, 采样率=$attemptRate")
-
-                                    // 重置语音检测器
-                                    voiceDetector.reset()
 
                                     // 确保设备状态是ACTIVE
                                     if (_deviceState.value != AudioDeviceState.ACTIVE) {
@@ -1076,20 +1077,21 @@ class PortAudioDevice private constructor() : AudioDevice {
                                     // 更新当前采样率
                                     currentSampleRate = attemptRate
                                     logger.info("[openInputStream] 当前采样率已更新为: $currentSampleRate")
-                                    
+
                                     // 设置输入流标志 - 使用专用锁
                                     synchronized(streamStateLock) {
                                         logger.info("[openInputStream] 设置输入流标志为活跃")
                                         inputStreamActive = true
                                     }
-                                    
+
                                     // 等待一小段时间确保流稳定
                                     delay(100)
-                                    
+
                                     success = true
                                     break
                                 } else {
-                                    val errorMsg = Pa_GetErrorText(startResult)?.toKString() ?: "未知错误"
+                                    val errorMsg =
+                                        Pa_GetErrorText(startResult)?.toKString() ?: "未知错误"
                                     logger.error("无法启动音频输入流（尝试 #$attempts）: $errorMsg")
                                     Pa_CloseStream(inputStreamPtr.value)
                                     inputStreamPtr.value = null
@@ -1137,13 +1139,13 @@ class PortAudioDevice private constructor() : AudioDevice {
                 logger.warn("⛔⛔⛔ 输入流处于活动状态，为避免稳定性问题，禁止打开输出流 ⛔⛔⛔")
                 return@withLock false
             }
-            
+
             // 如果输出流已经处于活跃状态
             if (outputStreamActive) {
                 logger.warn("⛔⛔⛔ 输出流已存在，无法创建新的输出流 (tid=${threadId()}) ⛔⛔⛔")
                 return@withLock false
             }
-            
+
             // 现有流可以继续使用
             if (outputStreamPtr.value != null) {
                 logger.info("输出流已存在，直接复用 (tid=${threadId()})")
@@ -1178,7 +1180,7 @@ class PortAudioDevice private constructor() : AudioDevice {
             synchronized(streamStateLock) {
                 outputStreamActive = true
             }
-            
+
             var success = false
             try {
                 // 开始尝试打开流
@@ -1202,7 +1204,7 @@ class PortAudioDevice private constructor() : AudioDevice {
                     // 创建流参数结构体
                     val outputParams =
                         nativeHeap.alloc<PaStreamParameters>()
-                    
+
                     try {
                         outputParams.device = if (actualDeviceIndex >= 0)
                             actualDeviceIndex
@@ -1228,7 +1230,11 @@ class PortAudioDevice private constructor() : AudioDevice {
                                 streamCallback = null,
                                 userData = null
                             )
-                            logger.info("Pa_OpenStream输出 返回=$result, 耗时=${System.now().toEpochMilliseconds()-t0} ms")
+                            logger.info(
+                                "Pa_OpenStream输出 返回=$result, 耗时=${
+                                    System.now().toEpochMilliseconds() - t0
+                                } ms"
+                            )
                             if (result == paNoError) {
                                 // 存储流指针
                                 outputStreamPtr.value = streamVar.value
@@ -1244,7 +1250,8 @@ class PortAudioDevice private constructor() : AudioDevice {
                                     success = true
                                     break
                                 } else {
-                                    val errorMsg = Pa_GetErrorText(startResult)?.toKString() ?: "未知错误"
+                                    val errorMsg =
+                                        Pa_GetErrorText(startResult)?.toKString() ?: "未知错误"
                                     logger.error("无法启动音频输出流（尝试 #$attempts）: $errorMsg")
                                     Pa_CloseStream(outputStreamPtr.value)
                                     outputStreamPtr.value = null
@@ -1283,7 +1290,7 @@ class PortAudioDevice private constructor() : AudioDevice {
         synchronized(portAudioLock) {
             // 先检查输出流是否活跃
             val isActive = synchronized(streamStateLock) { outputStreamActive }
-            
+
             if (!isActive || outputStreamPtr.value == null) {
                 logger.error("Sync writeAudio: Output stream is null or inactive")
                 return -1
@@ -1309,7 +1316,7 @@ class PortAudioDevice private constructor() : AudioDevice {
     private suspend fun performActualWrite(buffer: CPointer<ShortVar>, frameCount: Int): Int {
         // 检查输出流状态
         val isActive = synchronized(streamStateLock) { outputStreamActive }
-        
+
         if (!isActive || outputStreamPtr.value == null) {
             logger.error("音频输出流未打开或不活跃")
             return -1
@@ -1386,10 +1393,10 @@ class PortAudioDevice private constructor() : AudioDevice {
                         Pa_StopStream(inputStreamPtr.value)
                         Pa_CloseStream(inputStreamPtr.value)
                         logger.info("输入音频流已关闭")
-                        
+
                         // 在关闭后重置输入流指针
                         inputStreamPtr.value = null
-                        
+
                         // 重置输入流标志 - 使用专用锁
                         synchronized(streamStateLock) {
                             inputStreamActive = false
@@ -1440,10 +1447,10 @@ class PortAudioDevice private constructor() : AudioDevice {
                         Pa_StopStream(outputStreamPtr.value)
                         Pa_CloseStream(outputStreamPtr.value)
                         logger.info("输出音频流已关闭")
-                        
+
                         // 在关闭后重置输出流指针
                         outputStreamPtr.value = null
-                        
+
                         // 重置输出流标志 - 使用专用锁
                         synchronized(streamStateLock) {
                             outputStreamActive = false
@@ -1457,7 +1464,7 @@ class PortAudioDevice private constructor() : AudioDevice {
                         }
                     }
                 }
-                
+
                 logger.info("所有音频流已关闭")
             } catch (e: Exception) {
                 logger.error("关闭流时发生异常: ${e.message}")
@@ -1537,7 +1544,7 @@ class PortAudioDevice private constructor() : AudioDevice {
                 true
             }
         }
-        
+
         if (!canPlay) {
             // 调用完成回调，但报告播放失败
             scope.launch { onComplete() }
@@ -1560,7 +1567,11 @@ class PortAudioDevice private constructor() : AudioDevice {
                             }
                         }
 
-                        val success = openOutputStream(selectedOutputDeviceIndex, AudioDefaults.HW_SAMPLE_RATE, 2)
+                        val success = openOutputStream(
+                            selectedOutputDeviceIndex,
+                            AudioDefaults.HW_SAMPLE_RATE,
+                            2
+                        )
                         if (!success) {
                             logger.error("播放音频数据失败：无法打开输出流")
                             _playbackState.value = PlaybackState.ERROR
@@ -1572,7 +1583,8 @@ class PortAudioDevice private constructor() : AudioDevice {
                     _playbackState.value = PlaybackState.LOADING
 
                     // 将ByteArray转换为ShortArray
-                    val shortArray = voice.util.AudioUtils.byteArrayToShortArray(audioData.copyOf(length))
+                    val shortArray =
+                        voice.util.AudioUtils.byteArrayToShortArray(audioData.copyOf(length))
 
                     // 播放音频数据
                     _playbackState.value = PlaybackState.PLAYING
@@ -1662,13 +1674,13 @@ class PortAudioDevice private constructor() : AudioDevice {
     override fun release() {
         stop()
         logger.info("释放PortAudioDevice资源")
-        
+
         runBlocking {
             deviceMutex.withLock {
                 try {
                     // 首先强制重置所有状态
                     forceResetPortAudio()
-                    
+
                     // 协程包裹，因为closeStreams是suspend函数
                     closeStreams()
 
@@ -1711,7 +1723,7 @@ class PortAudioDevice private constructor() : AudioDevice {
                     } catch (e: Exception) {
                         logger.error("释放outputStreamPtr内存时出错: ${e.message}")
                     }
-                    
+
                     consecutiveErrors = 0
                     audioReadResetNeeded = false
                     _deviceState.value = AudioDeviceState.IDLE
@@ -1759,7 +1771,13 @@ class PortAudioDevice private constructor() : AudioDevice {
 
             // 确保输出流已打开
             if (outputStreamPtr.value == null) {
-                val success = runBlocking { openOutputStream(selectedOutputDeviceIndex, AudioDefaults.HW_SAMPLE_RATE, 2) }
+                val success = runBlocking {
+                    openOutputStream(
+                        selectedOutputDeviceIndex,
+                        AudioDefaults.HW_SAMPLE_RATE,
+                        2
+                    )
+                }
                 if (!success) {
                     logger.error("无法打开输出流，播放失败")
                     return false

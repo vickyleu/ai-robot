@@ -11,6 +11,7 @@ import com.airobot.webrtcapminterop.webrtc_apm_create
 import com.airobot.webrtcapminterop.webrtc_apm_destroy
 import com.airobot.webrtcapminterop.webrtc_apm_prepare
 import com.airobot.webrtcapminterop.webrtc_apm_process_stream
+import com.airobot.webrtcapminterop.my_webrtc_apm_enable_aec
 import kotlinx.cinterop.CPointer
 import kotlinx.cinterop.CPointerVar
 import kotlinx.cinterop.ExperimentalForeignApi
@@ -91,6 +92,17 @@ class WebRtcApm {
 
                 // 配置VAD
                 config.voice_detection.enabled = true
+                
+                // 配置回声消除
+                config.echo_canceller.enabled = true
+                config.echo_canceller.mobile_mode = false
+                config.echo_canceller.enforce_high_pass_filtering = true
+                
+                // 配置瞬时噪声抑制
+                config.transient_suppression.enabled = true
+                
+                // 配置残余回声检测
+                config.residual_echo_detector.enabled = true
 
                 // 应用配置
                 webrtc_apm_apply_config(apmHandle, config.ptr)
@@ -181,6 +193,19 @@ class WebRtcApm {
         // 调用WebRTC APM的语音活动检测函数
         // 由于bool无法生成CInterop的函数签名，所以在yanshee.h中添加了带bool的转换函数, 统一使用my_开头
         return my_webrtc_apm_voice_detected(apmHandle) == 1
+    }
+    
+    /**
+     * 启用或禁用回声消除功能
+     * @param enable 是否启用回声消除
+     */
+    fun enableEchoCancellation(enable: Boolean) {
+        if (apmHandle == null) {
+            logger.error("WebRTC APM 未初始化")
+            return
+        }
+        my_webrtc_apm_enable_aec(apmHandle, if (enable) 1 else 0)
+        logger.info("回声消除已${if (enable) "启用" else "禁用"}")
     }
 
     /**

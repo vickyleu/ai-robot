@@ -2,40 +2,27 @@
 
 package voice.core.service
 
-import com.airobot.core.utils.thread.getThreadName
 import kotlinx.cinterop.ExperimentalForeignApi
-import kotlinx.cinterop.ShortVar
-import kotlinx.cinterop.allocArray
-import kotlinx.cinterop.free
-import kotlinx.cinterop.get
-import kotlinx.cinterop.nativeHeap
-import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.isActive
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeout
 import kotlinx.datetime.Clock.System
 import voice.acquisition.portaudio.PortAudioDevice
+import voice.api.KeywordDetectorApi
 import voice.api.VoiceAssistantApi
+import voice.audio.processing.WebRtcApmSingleton
 import voice.core.config.VoiceAssistantConfig
 import voice.detector.keyword.KeywordDetector
 import voice.synthesis.PiperSpeechSynthesizer
 import voice.util.LogManager
 import kotlin.time.ExperimentalTime
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.flow.collectLatest
-import voice.api.KeywordDetectorApi
-import voice.audio.processing.AudioProcessingFactory
-import voice.audio.processing.AudioProcessingManager
 
 /**
  * 语音助手实现
@@ -48,24 +35,31 @@ class VoiceAssistant(
 
     // 状态控制
     private val _assistantState = MutableStateFlow(VoiceAssistantApi.AssistantState.IDLE)
-    override val assistantState: StateFlow<VoiceAssistantApi.AssistantState> = _assistantState.asStateFlow()
-    
+    override val assistantState: StateFlow<VoiceAssistantApi.AssistantState> =
+        _assistantState.asStateFlow()
+
     // 内部状态
     private var isInitialized = false
     private var isActivated = false
     private var isRunning = false
+    private var isEchoCancellationEnabled = false
+    private var isTransientSuppressionEnabled = false
 
     // 核心组件
     private val keywordDetector = KeywordDetector()
+    private val audioDevice = PortAudioDevice.getInstance()
+    private val speechSynthesizer = PiperSpeechSynthesizer()
 
     // 协程作用域
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private var stateMonitorJob: Job? = null
     private var timeoutJob: Job? = null
+    private var assistantJob: Job? = null
 
     // 回调
     private var speechCallback: ((String) -> Unit)? = null
     private var stateChangeCallback: ((VoiceAssistantApi.AssistantState) -> Unit)? = null
+    private var onKeywordDetectedCallback: ((String) -> Unit)? = null
 
     // 超时设置 (毫秒)
     private val activeListeningTimeout = 10000L
@@ -76,7 +70,7 @@ class VoiceAssistant(
      * @param modelPath 模型路径，包含Vosk模型
      * @return 初始化是否成功
      */
-    override fun initialize(modelPath: String): Boolean {
+    override suspend fun initialize(modelPath: String): Boolean {
         logger.info("VoiceAssistant.initialize() 被调用")
 
         if (isInitialized) {
@@ -100,6 +94,32 @@ class VoiceAssistant(
             keywords.addAll(config.keywords)
             keywords.forEach { keyword ->
                 keywordDetector.addKeyword(keyword)
+            }
+
+            // 初始化语音合成
+            try {
+                speechSynthesizer.initialize(
+                    modelPath = config.piperModelPath,
+                    configPath = config.piperConfigPath,
+                    espeakDataPath = config.piperESpeakDataPath,
+                    speakerId = 0
+                )
+            } catch (e: Exception) {
+                logger.error("语音合成器初始化失败: ${e.message}")
+                // 语音合成初始化失败不影响整体流程
+            }
+            
+            // 初始化WebRTC APM
+            try {
+                // 默认启用回声消除和瞬时噪声抑制
+                WebRtcApmSingleton.getInstance(config.sampleRate, 1, true)
+                setEchoCancellationEnabled(true)
+                isEchoCancellationEnabled = true
+                isTransientSuppressionEnabled = true
+                logger.info("WebRTC APM 初始化成功，已启用回声消除和瞬时噪声抑制")
+            } catch (e: Exception) {
+                logger.error("WebRTC APM 初始化失败: ${e.message}")
+                // APM初始化失败不影响整体流程
             }
 
             // 启动状态监控
@@ -131,7 +151,9 @@ class VoiceAssistant(
                             activateAssistant()
                         }
                     }
-                    else -> { /* 其他状态不处理 */ }
+
+                    else -> { /* 其他状态不处理 */
+                    }
                 }
             }
         }
@@ -297,10 +319,13 @@ class VoiceAssistant(
         // 取消所有任务
         timeoutJob?.cancel()
         stateMonitorJob?.cancel()
+        assistantJob?.cancel()
+        assistantJob = null
 
         // 停止组件
         try {
             keywordDetector.stopListening()
+            audioDevice.stop()
         } catch (e: Exception) {
             logger.error("停止组件时出错: ${e.message}")
         }
@@ -334,9 +359,41 @@ class VoiceAssistant(
     private fun cleanup() {
         try {
             keywordDetector.release()
+            speechSynthesizer.release()
+            // 不释放全局的audioDevice，它可能被其他组件使用
         } catch (e: Exception) {
             logger.error("清理资源时出错: ${e.message}")
         }
+    }
+
+    /**
+     * 设置回声消除功能开关
+     * @param enabled 是否启用回声消除
+     */
+    fun setEchoCancellationEnabled(enabled: Boolean) {
+        try {
+            WebRtcApmSingleton.enableEchoCancellation(enabled)
+            isEchoCancellationEnabled = enabled
+            logger.info("回声消除功能已${if (enabled) "启用" else "禁用"}")
+        } catch (e: Exception) {
+            logger.error("设置回声消除功能失败: ${e.message}")
+        }
+    }
+    
+    /**
+     * 获取回声消除功能状态
+     * @return 回声消除是否启用
+     */
+    fun isEchoCancellationEnabled(): Boolean {
+        return isEchoCancellationEnabled
+    }
+    
+    /**
+     * 获取瞬时噪声抑制功能状态
+     * @return 瞬时噪声抑制是否启用
+     */
+    fun isTransientSuppressionEnabled(): Boolean {
+        return isTransientSuppressionEnabled
     }
 
     /**
@@ -350,14 +407,16 @@ class VoiceAssistant(
         sb.appendLine("当前状态: ${_assistantState.value}")
         sb.appendLine("已激活: $isActivated")
         sb.appendLine("正在运行: $isRunning")
+        sb.appendLine("回声消除: $isEchoCancellationEnabled")
+        sb.appendLine("瞬时噪声抑制: $isTransientSuppressionEnabled")
         sb.appendLine("关键词: ${keywords.joinToString(", ")}")
-        
+
         // 添加关键词检测器诊断
         if (keywordDetector is KeywordDetector) {
             sb.appendLine("\n--- 关键词检测器诊断 ---")
             sb.appendLine(keywordDetector.generateDiagnostics())
         }
-        
+
         return sb.toString()
     }
 
@@ -369,7 +428,7 @@ class VoiceAssistant(
 
         // 检查输入流状态
         val inputStreamActive = PortAudioDevice.isInputStreamActive()
-        
+
         if (inputStreamActive) {
             // 输入流活动，使用系统命令播放嘟嘟声
             val beepCmd = "echo -e \"\\007\\007\" > /dev/console || echo 'beep' > /dev/null"
@@ -417,27 +476,13 @@ class VoiceAssistant(
     }
 
     /**
-     * 停止语音助手
-     */
-    override suspend fun stop() {
-        logger.info("停止语音助手")
-        assistantJob?.cancel()
-        assistantJob = null
-
-        keywordDetector.stopListening()
-        audioDevice.stop()
-
-        _assistantState.value = VoiceAssistantApi.AssistantState.IDLE
-    }
-
-    /**
      * 提交文本命令
      * @param text 文本命令
      * @return 回复内容
      */
     override suspend fun submitTextCommand(text: String): String {
         logger.info("收到文本命令: $text")
-        _assistantState.value = VoiceAssistantApi.AssistantState.PROCESSING_COMMAND
+        _assistantState.value = VoiceAssistantApi.AssistantState.PROCESSING
 
         // 简单的命令处理
         val response = when {
@@ -466,22 +511,23 @@ class VoiceAssistant(
         try {
             // 检查输入流状态
             val inputStreamActive = PortAudioDevice.isInputStreamActive()
-            
+
             if (inputStreamActive) {
                 // 输入流活动时，直接使用系统命令合成和播放
                 logger.info("检测到输入流活动，使用系统命令播放音频...")
-                
+
                 // 使用系统命令合成并直接播放
-                val cmd = "echo \"$text\" | piper --model ${config.piperModelPath} --config ${config.piperConfigPath} --output-raw | aplay -f S16_LE -r 16000 -c 1 -D hw:0,0 2>/dev/null"
+                val cmd =
+                    "echo \"$text\" | piper --model ${config.piperModelPath} --config ${config.piperConfigPath} --output-raw | aplay -f S16_LE -r 16000 -c 1 -D hw:0,0 2>/dev/null"
                 try {
                     val result = platform.posix.system(cmd)
                     logger.info("使用系统命令合成并播放完成，结果: $result")
-                    
-                    _assistantState.value = VoiceAssistantApi.AssistantState.LISTENING_KEYWORD
+
+                    _assistantState.value = VoiceAssistantApi.AssistantState.LISTENING_FOR_KEYWORD
                     return result == 0
                 } catch (e: Exception) {
                     logger.error("使用系统命令合成播放失败: ${e.message}")
-                    _assistantState.value = VoiceAssistantApi.AssistantState.LISTENING_KEYWORD
+                    _assistantState.value = VoiceAssistantApi.AssistantState.LISTENING_FOR_KEYWORD
                     return false
                 }
             } else {
@@ -493,16 +539,16 @@ class VoiceAssistant(
 
                 while (!success && attempts < maxAttempts) {
                     attempts++
-                    
+
                     // 再次检查输入流状态
                     if (PortAudioDevice.isInputStreamActive()) {
                         logger.warn("尝试播放时检测到输入流已变为活动状态，取消播放")
                         break
                     }
-                    
+
                     // 尝试检查输出流
                     val outputStreamActive = PortAudioDevice.isOutputStreamActive()
-                    
+
                     if (!outputStreamActive) {
                         // 尝试打开输出流
                         val outputStreamOpened = audioDevice.openOutputStream(
@@ -510,14 +556,14 @@ class VoiceAssistant(
                             sampleRate = config.sampleRate,
                             channels = 2
                         )
-                        
+
                         if (!outputStreamOpened) {
                             logger.warn("无法打开输出流（尝试 #$attempts），等待后重试")
                             delay(500) // 等待一段时间再重试
                             continue
                         }
                     }
-                    
+
                     // 合成并播放
                     try {
                         success = speechSynthesizer.speak(text)
@@ -534,30 +580,14 @@ class VoiceAssistant(
                 if (!success) {
                     logger.error("多次尝试后语音合成仍然失败")
                 }
-                
-                _assistantState.value = VoiceAssistantApi.AssistantState.LISTENING_KEYWORD
+
+                _assistantState.value = VoiceAssistantApi.AssistantState.LISTENING_FOR_KEYWORD
                 return success
             }
         } catch (e: Exception) {
             logger.error("语音合成过程中发生异常: ${e.message}")
-            _assistantState.value = VoiceAssistantApi.AssistantState.LISTENING_KEYWORD
+            _assistantState.value = VoiceAssistantApi.AssistantState.LISTENING_FOR_KEYWORD
             return false
-        }
-    }
-
-    /**
-     * 释放资源
-     */
-    override suspend fun release() {
-        logger.info("释放语音助手资源")
-        stop()
-        
-        try {
-            keywordDetector.release()
-            speechSynthesizer.release()
-            // 不释放全局的audioDevice，它可能被其他组件使用
-        } catch (e: Exception) {
-            logger.error("释放资源时发生异常: ${e.message}")
         }
     }
 
@@ -569,7 +599,7 @@ class VoiceAssistant(
 
         // 检查输入流状态
         val inputStreamActive = PortAudioDevice.isInputStreamActive()
-        
+
         if (inputStreamActive) {
             // 输入流活动，使用系统命令播放嘟嘟声
             val beepCmd = "echo -e \"\\007\" > /dev/console || echo 'beep' > /dev/null"
@@ -625,7 +655,7 @@ class VoiceAssistant(
      */
     private suspend fun onKeywordDetected() {
         logger.info("关键词被检测到，进入命令识别状态")
-        _assistantState.value = VoiceAssistantApi.AssistantState.LISTENING_COMMAND
+        _assistantState.value = VoiceAssistantApi.AssistantState.LISTENING_FOR_SPEECH
 
         // 根据配置决定使用内部响应还是外部回调
         if (config.useInternalResponse) {
@@ -644,7 +674,7 @@ class VoiceAssistant(
         delay(5000)
 
         // 回到关键词监听状态
-        _assistantState.value = VoiceAssistantApi.AssistantState.LISTENING_KEYWORD
+        _assistantState.value = VoiceAssistantApi.AssistantState.LISTENING_FOR_KEYWORD
         logger.info("回到关键词监听状态")
     }
 

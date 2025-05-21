@@ -30,7 +30,7 @@ interface VoiceAssistantApi {
      * @param modelPath 模型路径
      * @return 初始化是否成功
      */
-    fun initialize(modelPath: String): Boolean
+    suspend fun initialize(modelPath: String): Boolean
     
     /**
      * 开始监听唤醒词
@@ -59,4 +59,18 @@ interface VoiceAssistantApi {
      * 释放资源
      */
     fun release()
+    
+    /**
+     * 提交文本命令
+     * @param text 文本命令
+     * @return 回复内容
+     */
+    suspend fun submitTextCommand(text: String): String
+    
+    /**
+     * 朗读文本
+     * @param text 要朗读的文本
+     * @return 播放是否成功
+     */
+    suspend fun speak(text: String): Boolean
 } 

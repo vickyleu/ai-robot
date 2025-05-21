@@ -60,7 +60,17 @@ object WebRtcApmSingleton {
     }
     
     /**
-     * 检查是否检测到语音
+     * 启用或禁用回声消除功能
+     * @param enable 是否启用回声消除
+     */
+    fun enableEchoCancellation(enable: Boolean) {
+        val apm = getInstance() ?: return
+        apm.enableEchoCancellation(enable)
+        logger.info("单例模式：回声消除已${if (enable) "启用" else "禁用"}")
+    }
+    
+    /**
+     * 检查当前是否检测到语音
      * @return 是否检测到语音
      */
     fun isVoiceDetected(): Boolean {
