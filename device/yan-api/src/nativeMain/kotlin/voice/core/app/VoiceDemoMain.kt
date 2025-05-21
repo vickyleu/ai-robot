@@ -18,6 +18,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import platform.posix.SIGINT
 import platform.posix.signal
+import voice.api.VoiceAssistantApi
 import voice.api.VoiceAssistantApi.AssistantState
 import voice.core.config.VoiceAssistantConfig
 import voice.core.service.VoiceAssistant
@@ -32,8 +33,6 @@ private lateinit var globalVoiceAssistant: VoiceAssistant
 private val logger = LogManager.getLogger("VoiceDemoMain")
 private var isRunning = true
 private var mainScope: CoroutineScope? = null
-
-
 
 /**
  * 处理信号，用于优雅退出
@@ -76,31 +75,42 @@ fun runVoiceDemo() {
         try {
             runBlocking {
                 // 初始化并添加关键词
-                if (!globalVoiceAssistant.initialize()) {
+                if (!globalVoiceAssistant.initialize("models/vosk")) {
                     logger.error("语音助手初始化失败")
                     return@runBlocking
                 }
                 
-                // 设置关键词检测回调
-                globalVoiceAssistant.setKeywordDetectedCallback { keyword ->
-                    logger.info("✅ 检测到关键词: $keyword")
+                // 设置语音识别结果回调
+                globalVoiceAssistant.setSpeechRecognizedCallback { text ->
+                    logger.info("✅ 识别到语音: $text")
                     
-                    // 语音反馈
+                    // 处理识别到的语音
                     mainScope?.launch {
                         try {
-                            val text = "我在呢，需要什么帮助?"
-                            logger.info("🗣️ 合成并播放: \"$text\"")
-                            globalVoiceAssistant.speak(text)
+                            // 这里是简单的回复，实际应用中可以调用AI生成回复
+                            val response = "我收到了您的指令：$text"
+                            logger.info("🤖 回复: \"$response\"")
+                            // 如果需要语音回复，需要实现speak方法
                         } catch (e: Exception) {
-                            logger.error("语音合成或播放出错: ${e.message}")
+                            logger.error("处理语音命令出错: ${e.message}")
                         }
+                    }
+                }
+                
+                // 设置状态变化回调
+                globalVoiceAssistant.setStateChangeCallback { state ->
+                    logger.info("语音助手状态变化: $state")
+                    if (state == AssistantState.LISTENING_FOR_KEYWORD) {
+                        println("语音助手已就绪，请说\"小度\"或\"你好\"来唤醒我")
+                    } else if (state == AssistantState.LISTENING_FOR_SPEECH) {
+                        println("我在听，请说出您的指令...")
                     }
                 }
                 
                 // 启动语音助手
                 logger.info("正在启动语音助手...")
                 println("正在启动语音助手...")
-                if (!globalVoiceAssistant.start()) {
+                if (!globalVoiceAssistant.startListeningForKeyword()) {
                     logger.error("语音助手启动失败")
                     println("语音助手启动失败")
                     return@runBlocking
@@ -111,9 +121,9 @@ fun runVoiceDemo() {
                 delay(1000)
                 
                 // 确认助手状态
-                if (globalVoiceAssistant.assistantState.value == AssistantState.LISTENING_KEYWORD) {
+                if (globalVoiceAssistant.assistantState.value == AssistantState.LISTENING_FOR_KEYWORD) {
                     logger.info("语音助手已成功进入关键词监听状态")
-                    println("语音助手已启动并正在监听，请说\"小样\"来唤醒")
+                    println("语音助手已启动并正在监听，请说\"小度\"或\"你好\"来唤醒")
                 } else {
                     logger.warn("语音助手未进入关键词监听状态，当前状态: ${globalVoiceAssistant.assistantState.value}")
                     println("注意：语音助手可能未正确启动，当前状态: ${globalVoiceAssistant.assistantState.value}")
@@ -129,9 +139,7 @@ fun runVoiceDemo() {
             e.printStackTrace()
         } finally {
             job?.cancel()
-            runBlocking { 
-                globalVoiceAssistant.stop()
-            }
+            globalVoiceAssistant.stop()
             logger.info("语音助手已停止")
         }
     } catch (e: Exception) {
@@ -140,9 +148,7 @@ fun runVoiceDemo() {
     } finally {
         // 释放所有资源
         try {
-            runBlocking {
-                globalVoiceAssistant.release()
-            }
+            globalVoiceAssistant.release()
             logger.info("已释放所有资源")
         } catch (e: Exception) {
             logger.error("释放资源时发生异常: ${e.message}")

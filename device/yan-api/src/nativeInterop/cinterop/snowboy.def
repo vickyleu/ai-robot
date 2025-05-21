@@ -1,9 +1,0 @@
-language: C++
-# 需要导入stdio.h
-headers:   snowboy_c_api.h
-linkerOpts: -L../cpp/libs/ -lsnowboy
-headerFilter: snowboy_c_api.h
-# 下面是不透明指针的映射
----
-struct SnowboyDetectWrapper {};
-struct SnowboyVadWrapper {};

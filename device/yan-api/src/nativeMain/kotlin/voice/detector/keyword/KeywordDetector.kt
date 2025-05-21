@@ -1,337 +1,244 @@
-@file:OptIn(ExperimentalForeignApi::class, ExperimentalTime::class)
+@file:OptIn(ExperimentalForeignApi::class)
 
 package voice.detector.keyword
 
 import kotlinx.cinterop.ExperimentalForeignApi
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import voice.api.KeywordDetectorApi
-import voice.audio.processing.AudioProcessingManager
+import voice.audio.processing.WebRtcApmSingleton
 import voice.util.LogManager
-import kotlin.time.ExperimentalTime
+import voice.util.AudioDefaults
+import voice.util.AudioUtils
+import voice.audio.recognition.VoskSpeechRecognizer
 
 /**
- * Vosk关键词检测器
- * 负责监听音频中的关键词
+ * 关键词检测器
+ * 使用 Vosk 进行关键词检测，通过 WebRTC APM 进行前处理
  */
 class KeywordDetector : KeywordDetectorApi {
     private val logger = LogManager.getLogger("KeywordDetector")
     
-    // 音频处理管理器
-    private var audioManager: AudioProcessingManager? = null
+    // Vosk 检测器实例
+    private val voskDetector = VoskKeywordDetector()
     
-    // 回调处理
-    private val callbacks = mutableListOf<(String) -> Unit>()
-    
-    // 检测状态
+    // 当前状态
+    private var isListening = false
+    private var isInitialized = false
     private val _detectorState = MutableStateFlow(KeywordDetectorApi.DetectorState.IDLE)
     override val detectorState: StateFlow<KeywordDetectorApi.DetectorState> = _detectorState.asStateFlow()
     
-    // 当前灵敏度
-    private var sensitivity = 0.5f
+    // 检测配置
+    private var sensitivity: Float = 0.75f
+    
+    // 回调
+    private var keywordCallback: ((String) -> Unit)? = null
     
     // 关键词列表
     private val keywords = mutableListOf<String>()
     
-    // 用于计算音频能量的计数器
-    private var detectCallCount = 0
-    
-    // 用于计算检测到的关键词数量
-    private var keywordDetectedCount = 0
+    // 协程作用域
+    private val scope = CoroutineScope(Dispatchers.Default)
     
     /**
-     * 初始化检测器
-     * @param modelPath 模型文件路径
-     * @param sensitivity 灵敏度，0.0-1.0
+     * 初始化关键词检测器
+     * @param modelPath 模型路径
+     * @param sensitivity 敏感度 [0,1]
      * @return 初始化是否成功
      */
     override fun initialize(modelPath: String, sensitivity: Float): Boolean {
-        logger.info("初始化KeywordDetector，模型路径: $modelPath")
-        _detectorState.value = KeywordDetectorApi.DetectorState.IDLE
+        logger.info("KeywordDetector.initialize() 被调用")
+        
+        if (isInitialized) {
+            logger.warn("关键词检测器已经初始化")
+            return true
+        }
         
         this.sensitivity = sensitivity
         
-        try {
-            // 创建并初始化音频处理管理器
-            audioManager = AudioProcessingManager(modelPath)
-            
-            // 设置关键词检测回调
-            audioManager?.setKeywordDetectedCallback { text ->
-                handleKeywordDetected(text)
-            }
-            
-            // 初始化音频处理流水线
-            val result = audioManager?.initialize() ?: false
-            
-            if (!result) {
-                logger.error("初始化音频处理管理器失败")
-                _detectorState.value = KeywordDetectorApi.DetectorState.ERROR
-                return false
-            }
-            
-            // 设置默认关键词
-            addKeyword("小样")
-            addKeyword("嘿小样")
-            addKeyword("你好小样")
-            
-            logger.info("KeywordDetector初始化成功")
-            _detectorState.value = KeywordDetectorApi.DetectorState.IDLE
-            return true
-        } catch (e: Exception) {
-            logger.error("初始化KeywordDetector失败: ${e.message}")
-            _detectorState.value = KeywordDetectorApi.DetectorState.ERROR
+        // 初始化 Vosk 检测器
+        if (!voskDetector.initialize(modelPath, sensitivity)) {
+            logger.error("Vosk 关键词检测器初始化失败")
             return false
+        }
+        
+        // 初始化 WebRTC APM
+        WebRtcApmSingleton.getInstance(
+            sampleRate = AudioDefaults.TARGET_SAMPLE_RATE,
+            channels = 1
+        )
+        
+        isInitialized = true
+        _detectorState.value = KeywordDetectorApi.DetectorState.IDLE
+        logger.info("关键词检测器初始化成功")
+        return true
+    }
+
+    /**
+     * 添加关键词
+     * @param keyword 关键词
+     */
+    override fun addKeyword(keyword: String) {
+        if (!keywords.contains(keyword)) {
+            keywords.add(keyword)
+            voskDetector.addKeyword(keyword)
+            logger.info("添加关键词: $keyword")
         }
     }
     
     /**
-     * 开始监听
-     * @return 是否成功开始监听
+     * 设置检测到关键词时的回调
+     * @param callback 回调函数
+     */
+    fun setKeywordCallback(callback: (String) -> Unit) {
+        this.keywordCallback = callback
+        voskDetector.setKeywordCallback(callback)
+        logger.info("已设置关键词检测回调")
+    }
+    
+    /**
+     * 开始监听关键词
+     * @return 是否成功启动
      */
     override suspend fun startListening(): Boolean {
         logger.info("KeywordDetector.startListening() 被调用")
-        try {
-            if (audioManager == null) {
-                logger.error("音频处理管理器未初始化")
-                return false
-            }
-            _detectorState.value = KeywordDetectorApi.DetectorState.LISTENING
-            
-            // 启动音频处理流水线
-            logger.info("调用 audioManager.start() 启动音频处理流水线 - 开始")
-            audioManager?.start()
-            logger.info("audioManager.start() 已调用成功，下一步操作")
-            
-            logger.info("startListening流程结束，状态: ${_detectorState.value}")
+        
+        if (!isInitialized) {
+            logger.error("关键词检测器未初始化")
+            return false
+        }
+        
+        if (isListening) {
+            logger.warn("关键词检测器已经在监听中")
             return true
+        }
+        
+        isListening = true
+        _detectorState.value = KeywordDetectorApi.DetectorState.LISTENING
+        logger.info("startListening流程结束，状态: LISTENING")
+        return true
+    }
+    
+    /**
+     * 停止监听关键词
+     */
+    override fun stopListening() {
+        logger.info("KeywordDetector.stopListening() 被调用")
+        
+        if (!isListening) {
+            logger.warn("关键词检测器未在监听")
+            return
+        }
+        
+        isListening = false
+        _detectorState.value = KeywordDetectorApi.DetectorState.IDLE
+        logger.info("关键词检测器已停止监听")
+    }
+    
+    /**
+     * 用于API兼容性的检测方法 - 字节数组版本
+     * 此方法不在接口中定义，但为了兼容性提供
+     * @param audioData 音频数据(字节数组)
+     * @param length 数据长度
+     * @return 是否检测到关键词
+     */
+    fun detect(audioData: ByteArray, length: Int): Boolean {
+        if (!isInitialized || !isListening) {
+            return false
+        }
+        
+        try {
+            // 将ByteArray转换为ShortArray
+            val shorts = AudioUtils.byteArrayToShortArray(audioData, length)
+            
+            // 使用ShortArray版本处理
+            return processAudioFrame(shorts, shorts.size)
         } catch (e: Exception) {
-            logger.error("KeywordDetector.startListening() 发生异常: ${e.message}")
-            e.printStackTrace()
-            _detectorState.value = KeywordDetectorApi.DetectorState.ERROR
+            logger.error("关键词检测出错: ${e.message}")
             return false
         }
     }
     
     /**
-     * 停止监听
-     */
-    override fun stopListening() {
-        logger.info("停止关键词监听")
-        audioManager?.stop()
-        _detectorState.value = KeywordDetectorApi.DetectorState.IDLE
-    }
-    
-    /**
-     * 处理音频帧
-     * @param audioFrame 音频数据
+     * 处理音频帧 - 短整型数组版本
+     * @param audioFrame 音频数据(短整型数组)
      * @param frameSize 帧大小
      * @return 是否检测到关键词
      */
     override fun processAudioFrame(audioFrame: ShortArray, frameSize: Int): Boolean {
-        // 由于AudioProcessingManager已经在自己的回调中处理音频数据，
-        // 这里只需检查当前状态是否为已检测到关键词
-        
-        // 检查是否处于已检测状态
-        val isDetected = _detectorState.value == KeywordDetectorApi.DetectorState.DETECTED
-        
-        // 如果检测到关键词，重置状态为监听中
-        if (isDetected) {
-            _detectorState.value = KeywordDetectorApi.DetectorState.LISTENING
+        if (!isInitialized || !isListening) {
+            return false
         }
         
-        return isDetected
+        try {
+            // 使用 WebRTC APM 进行音频预处理
+            val processedData = WebRtcApmSingleton.processFrame(audioFrame)
+            
+            // 使用 Vosk 检测关键词
+            val detected = voskDetector.detect(processedData)
+            
+            if (detected) {
+                _detectorState.value = KeywordDetectorApi.DetectorState.DETECTED
+            }
+            
+            return detected
+        } catch (e: Exception) {
+            logger.error("关键词处理出错: ${e.message}")
+            return false
+        }
     }
     
     /**
-     * 设置灵敏度
-     * @param sensitivity 灵敏度，0.0-1.0
+     * 设置敏感度
+     * @param sensitivity 敏感度值 [0,1]
      */
     override fun setSensitivity(sensitivity: Float) {
-        logger.info("设置关键词检测灵敏度: $sensitivity")
-        this.sensitivity = sensitivity
-        // 实际上，我们可能需要将这个灵敏度传递给底层的AudioProcessingManager
-        // 但目前的AudioProcessingManager没有这个方法
+        this.sensitivity = sensitivity.coerceIn(0f, 1f)
+        voskDetector.setSensitivity(this.sensitivity)
+        logger.info("设置敏感度: $sensitivity")
     }
     
     /**
-     * 获取灵敏度
-     * @return 当前灵敏度
+     * 获取当前敏感度
+     * @return 当前敏感度值
      */
     override fun getSensitivity(): Float {
         return sensitivity
     }
     
     /**
-     * 添加关键词
-     */
-    override fun addKeyword(keyword: String) {
-        keywords.add(keyword)
-        logger.info("添加关键词: $keyword")
-        
-        // 更新Vosk识别器的关键词列表
-        audioManager?.updateKeywords(keywords)
-    }
-    
-    /**
-     * 处理检测到的关键词
-     */
-    private fun handleKeywordDetected(text: String) {
-        logger.info("检测到关键词: \"$text\"")
-        _detectorState.value = KeywordDetectorApi.DetectorState.DETECTED
-        // 触发所有回调
-        callbacks.forEach { callback ->
-            try {
-                logger.info("执行关键词检测回调: $text")
-                callback(text)
-            } catch (e: Exception) {
-                logger.error("执行关键词回调时发生异常: ${e.message}")
-            }
-        }
-    }
-    
-    /**
-     * 添加关键词检测回调
-     * @param callback 要添加的回调函数
-     */
-    fun addCallback(callback: (String) -> Unit) {
-        callbacks.add(callback)
-        logger.info("添加关键词检测回调，当前回调数: ${callbacks.size}")
-    }
-    
-    /**
-     * 移除关键词检测回调
-     * @param callback 要移除的回调函数
-     */
-    fun removeCallback(callback: (String) -> Unit) {
-        // removeIf在Kotlin/Native中不可用，手动实现
-        val iterator = callbacks.iterator()
-        var removed = false
-        while (iterator.hasNext()) {
-            val item = iterator.next()
-            if (item == callback) {
-                iterator.remove()
-                removed = true
-            }
-        }
-        
-        if (removed) {
-            logger.info("移除关键词检测回调，当前回调数: ${callbacks.size}")
-        }
-    }
-    
-    /**
-     * 生成诊断报告
-     * @return 诊断信息字符串
-     */
-    fun generateDiagnostics(): String {
-        val sb = StringBuilder()
-        sb.appendLine("=== 关键词检测器诊断报告 ===")
-        sb.appendLine("检测器状态: ${_detectorState.value}")
-        
-        // 添加音频处理管理器状态
-        if (audioManager != null) {
-            sb.appendLine("音频处理管理器: 已初始化")
-            sb.appendLine("处理管理器诊断:")
-            sb.appendLine(audioManager?.generateDiagnosticReport() ?: "未能获取诊断信息")
-        } else {
-            sb.appendLine("音频处理管理器: 未初始化")
-        }
-        
-        return sb.toString()
-    }
-    
-    /**
      * 释放资源
      */
     override fun release() {
-        logger.info("释放KeywordDetector资源")
-        audioManager?.release()
-        audioManager = null
-        callbacks.clear()
+        logger.info("KeywordDetector.release() 被调用")
+        
+        if (isListening) {
+            stopListening()
+        }
+        
+        if (isInitialized) {
+            voskDetector.release()
+            isInitialized = false
+        }
+        
         _detectorState.value = KeywordDetectorApi.DetectorState.IDLE
+        logger.info("关键词检测器资源已释放")
     }
-    
-    /**
-     * 直接检测给定的音频数据是否包含关键词
-     * @param audioData 音频数据
-     * @return 是否检测到关键词
-     */
-    fun detect(audioData: ShortArray): Boolean {
-        try {
-            // 如果不在监听状态，直接返回false
-            if (_detectorState.value != KeywordDetectorApi.DetectorState.LISTENING) {
-                return false
-            }
-            
-            // 计算音频能量，用于诊断
-            val energy = calculateEnergy(audioData)
-            
-            // 每500帧记录一次能量信息（DEBUG级别），减少日志噪声
-            if (detectCallCount++ % 500 == 0) {
-                logger.debug("KeywordDetector: frame=$detectCallCount, energy=$energy, state=${_detectorState.value}")
-            }
-            
-            // 只有在音频能量超过阈值时才进行进一步处理
-            if (energy < 500.0) {
-                return false
-            }
-            
-            // DEBUG 记录高能量音频
-                logger.debug("KeywordDetector: high energy detected, energy=$energy, len=${audioData.size}")
 
-            // 检查当前状态，确认是否已经检测到关键词
-            try {
-                if (audioManager == null) {
-                    logger.warn("音频处理管理器未初始化")
-                    return false
-                }
-                
-                    logger.debug("KeywordDetector: forwarding audio to AudioProcessingManager for keyword detection…")
-
-                // 直接传递ShortArray到audioManager的processAudio方法
-                val result = audioManager?.processAudio(audioData) ?: false
-                
-                if (result) {
-                    // 检测到关键词
-                    logger.info("KeywordDetector: 成功检测到关键词!")
-                    keywordDetectedCount++
-                    
-                    // 更新检测状态
-                    _detectorState.value = KeywordDetectorApi.DetectorState.DETECTED
-                    
-                    // 调用回调
-                    callbacks.forEach { callback ->
-                        try {
-                            callback("关键词")
-                        } catch (e: Exception) {
-                            logger.error("执行关键词回调时发生异常: ${e.message}")
-                        }
-                    }
-                }
-                return result
-            } catch (e: Exception) {
-                logger.error("audioManager.processAudio() 发生异常: ${e.message}")
-                return false
-            }
-        } catch (e: Exception) {
-            logger.error("KeywordDetector.detect() 发生异常: ${e.message}")
-            return false
-        }
-    }
-    
     /**
-     * 计算音频能量值
+     * 生成诊断报告
      */
-    private fun calculateEnergy(samples: ShortArray): Double {
-        if (samples.isEmpty()) return 0.0
-        
-        var sum = 0.0
-        for (sample in samples) {
-            sum += (sample * sample).toDouble()
-        }
-        
-        val rms = kotlin.math.sqrt(sum / samples.size)
-        return (rms / Short.MAX_VALUE) * 1000.0
+    fun generateDiagnostics(): String {
+        val sb = StringBuilder()
+        sb.appendLine("===== 关键词检测器诊断 =====")
+        sb.appendLine("初始化状态: $isInitialized")
+        sb.appendLine("监听状态: $isListening")
+        sb.appendLine("检测器状态: ${detectorState.value}")
+        sb.appendLine("敏感度: $sensitivity")
+        sb.appendLine("关键词列表: ${keywords.joinToString(", ")}")
+        return sb.toString()
     }
 } 

@@ -1,9 +1,0 @@
-language: C++
-headers:  whisper_wrapper.h
-compilerOpts: -fopenmp
-headerFilter =  whisper.h whisper_wrapper.h whisper_c_api.h
-# whisper_c_api.h
-# 伪代码
----
-struct whisper_context{};
-struct whisper_state{};

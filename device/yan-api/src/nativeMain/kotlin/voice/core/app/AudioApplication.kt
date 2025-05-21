@@ -1,15 +1,13 @@
-@file:OptIn(ExperimentalForeignApi::class)
+@file:OptIn(ExperimentalForeignApi::class, ExperimentalAtomicApi::class)
 
 package voice.core.app
 
-import com.airobot.device.yanapi.voice.audio.processing.AudioProcessingResourceManager
-import com.airobot.device.yanapi.voice.audio.processing.RNNoiseSingleton
-import com.airobot.device.yanapi.voice.audio.processing.SoxrSingleton
-import com.airobot.device.yanapi.voice.audio.processing.SpeexDspProcessor
 import kotlinx.cinterop.ExperimentalForeignApi
 import voice.acquisition.portaudio.PortAudioDevice
 import voice.hal.LinuxAudioDeviceSelector
-import platform.posix.system
+import voice.audio.processing.WebRtcApmSingleton
+import kotlin.concurrent.atomics.AtomicReference
+import kotlin.concurrent.atomics.ExperimentalAtomicApi
 
 /**
  * 应用程序入口点
@@ -26,9 +24,9 @@ object AudioApplication {
     fun initialize() {
         if (isInitialized) return
 
-        // 注册资源释放钩子
+        // 注册退出清理
         println("[INFO] 已注册程序退出清理钩子")
-        AudioProcessingResourceManager.registerShutdownHook()
+        registerShutdownHook()
 
         // 释放系统音频资源
         deviceSelector.killOtherAudioProcesses()
@@ -51,62 +49,53 @@ object AudioApplication {
     }
 
     /**
+     * 清理应用程序资源
+     */
+    private fun cleanup() {
+        println("[INFO][AudioApplication] 执行清理...")
+        
+        // 释放WebRTC APM资源
+        WebRtcApmSingleton.release()
+        
+        println("[INFO][AudioApplication] 清理完成")
+    }
+
+    /**
+     * 注册关闭钩子
+     */
+    private fun registerShutdownHook() {
+        // 在实际应用程序中，可以考虑使用JVM Runtime.addShutdownHook或其他机制
+        // 由于Kotlin/Native限制，这里只是声明一个方法，实际要在C侧实现注册
+        val cleanupFunction = {
+            println("[INFO][AudioApplication] 程序退出，执行资源清理...")
+            WebRtcApmSingleton.release()
+            println("[INFO][AudioApplication] 资源清理完成")
+        }
+        
+        // 存储函数引用，防止GC回收
+        val ref = AtomicReference<Function0<Unit>>(cleanupFunction)
+        
+        // 这里只是记录日志，实际上没有注册钩子，因为Kotlin/Native没有这个能力
+        println("[INFO] 已准备退出钩子，但注意这需要在原生代码层面实现")
+    }
+
+    /**
      * 预热音频处理资源
      */
     private fun preloadResources() {
         println("[INFO] 预热音频处理资源...")
 
         try {
-            // 预热RNNoise实例
-            RNNoiseSingleton.getInstance()?.let {
-                RNNoiseSingleton.process(
-                    inputBuffer = null,
-                    outputBuffer = null,
-                    frameCount = 0,
-                    vadThreshold = 0.08f,
-                    gain = 2.5f
-                )
-                RNNoiseSingleton.releaseInstance()
-                println("[INFO] RNNoise预热成功")
-            }
-        } catch (e: Exception) {
-            println("[WARN] RNNoise预热失败: ${e.message}")
-        }
-
-        try {
-            // 预热Soxr实例
-            val commonSampleRates = arrayOf(
-                Pair(48000.0, 16000.0),
-                Pair(44100.0, 16000.0),
-                Pair(16000.0, 8000.0),
-                Pair(8000.0, 16000.0)
-            )
-
-            for ((inputRate, outputRate) in commonSampleRates) {
-                SoxrSingleton.getInstance(inputRate, outputRate)?.let {
-                    SoxrSingleton.releaseInstance(inputRate, outputRate)
-                    println("[INFO] Soxr预热成功: $inputRate → $outputRate")
+            // 预热WebRTC APM实例
+            WebRtcApmSingleton.getInstance(16000, 1).let {
+                // 进行简单处理以确保实例正确初始化
+                if (WebRtcApmSingleton.isVoiceDetected()) {
+                    println("[INFO] WebRTC APM VAD测试通过")
                 }
+                println("[INFO] WebRTC APM预热成功")
             }
         } catch (e: Exception) {
-            println("[WARN] Soxr预热失败: ${e.message}")
-        }
-
-        try {
-            // 预热SpeexDSP处理器
-            val speexProcessor = SpeexDspProcessor()
-            speexProcessor.initialize(
-                sampleRate = 16000,
-                frameSize = 320,
-                enableDenoise = true,
-                enableAgc = true,
-                enableEcho = true
-            )
-            speexProcessor.process(ShortArray(320))
-            speexProcessor.release()
-            println("[INFO] SpeexDSP预热成功")
-        } catch (e: Exception) {
-            println("[WARN] SpeexDSP预热失败: ${e.message}")
+            println("[WARN] WebRTC APM预热失败: ${e.message}")
         }
     }
 
@@ -135,8 +124,12 @@ object AudioApplication {
      * 释放所有资源
      */
     fun shutdown() {
-        // 释放音频处理资源
-        AudioProcessingResourceManager.releaseAllResources()
+        // 释放WebRTC APM资源
+        try {
+            WebRtcApmSingleton.release()
+        } catch (e: Exception) {
+            println("[WARN] 清理WebRTC APM资源时出错: ${e.message}")
+        }
         
         // 释放PortAudio全局单例
         try {

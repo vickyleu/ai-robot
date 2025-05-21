@@ -74,26 +74,21 @@ kotlin {
                   "-Wl,--allow-multiple-definition",// 允许符号重复定义
 //                     强制链接静态库 START
                     "-Wl,--whole-archive",
-                    "-lsnowboy",
                     "-lyanapi",
                     "-lvosk",
                     "-lportaudio",
-                    "-lspeexdsp",
-                    "-lgomp",
-                    "-lrnnoise",
+                    "-lwebrtc_apm",
                     "-lpiper",
                     "-lopencc",
                     "-latomic",
                     "-Wl,--no-whole-archive",
                     // 强制链接静态库 END
                     // 显式链接顺序
-                    "-l:libsnowboy.a",
                     "-l:libyanapi.a",
                     "-l:libvosk.a",
+                    "-l:libwebrtc_apm.a",
                     "-l:libportaudio.a",
-                    "-l:libspeexdsp.a",
                     "-l:libopencc.a",
-                    "-l:librnnoise.a",
                     "-l:libpiper.a",
                     "-lasound",
                     "-lpython3.5m",
@@ -105,12 +100,6 @@ kotlin {
                     "-lz",
                     "-Wl,--gc-sections",
                     "-Wl,-rpath,/usr/local/lib/$baseName",
-                    // 补丁,替换C23符号
-//                    "-Wl,--wrap=__isoc23_strtol",
-//                    "-Wl,--wrap=__isoc23_strtoll",
-//                    "-Wl,--wrap=__isoc23_strtoull_l",
-//                    "-Wl,--wrap=__isoc23_strtoll_l",
-//                    "-Wl,-T,${file("src/nativeInterop/patch/wrap_symbols.ld").absolutePath}",
                 )
             }
         }
@@ -146,48 +135,30 @@ kotlin {
                         *armhfToolchain.includedDirs.map { "-I$it" }.toTypedArray()
                     )
                 }
+                create("porcupine") {
+                    defFile("src/nativeInterop/cinterop/porcupine.def")
+                    packageName("com.airobot.porcupineinterop")
+                    // 从上面四个目录中查找所有的头文件,添加到headers.files
+                    includeDirs(
+                        file("src/nativeInterop/cpp"),
+                        file("src/nativeInterop/cpp/include/porcupine/"),
+                    )
+                    compilerOpts(
+                        "-fPIC",
+                        "-nostdinc++",
+                        "-std=c++17",
+                        "-D_GLIBCXX_USE_CXX11_ABI=1",
+                        "-ffunction-sections",
+                        "-fdata-sections",
+                        *armhfToolchain.includedDirs.map { "-I$it" }.toTypedArray()
+                    )
+                }
                 create("alsa") {
                     defFile("src/nativeInterop/cinterop/alsa.def")
                     packageName("com.airobot.alsainterop")
                     // 从上面四个目录中查找所有的头文件,添加到headers.files
                     includeDirs(
                         file("src/nativeInterop/cpp/include/"),
-                    )
-                    compilerOpts(
-                        "-fPIC",
-                        "-nostdinc++",
-                        "-std=c++17",
-                        "-D_GLIBCXX_USE_CXX11_ABI=1",
-                        "-ffunction-sections",
-                        "-fdata-sections",
-                        *armhfToolchain.includedDirs.map { "-I$it" }.toTypedArray()
-                    )
-                }
-                create("speexdsp") {
-                    defFile("src/nativeInterop/cinterop/speexdsp.def")
-                    packageName("com.airobot.speexdspinterop")
-                    // 从上面四个目录中查找所有的头文件,添加到headers.files
-                    includeDirs(
-                        file("src/nativeInterop/cpp/include/speex"),
-                    )
-                    compilerOpts(
-                        "-fPIC",
-                        "-nostdinc++",
-                        "-std=c++17",
-                        "-D_GLIBCXX_USE_CXX11_ABI=1",
-                        "-ffunction-sections",
-                        "-fdata-sections",
-                        *armhfToolchain.includedDirs.map { "-I$it" }.toTypedArray()
-                    )
-                }
-                create("rnnoise") {
-                    defFile("src/nativeInterop/cinterop/rnnoise.def")
-                    packageName("com.airobot.rnnoiseinterop")
-                    // 从上面四个目录中查找所有的头文件,添加到headers.files
-                    includeDirs(
-                        file("src/nativeInterop/cpp/include/rnnoise"),
-                        file("src/nativeInterop/cpp/include/piper"),
-                        file("src/nativeInterop/cpp/include"),
                     )
                     compilerOpts(
                         "-fPIC",
@@ -216,14 +187,12 @@ kotlin {
                         *armhfToolchain.includedDirs.map { "-I$it" }.toTypedArray()
                     )
                 }
-                create("snowboy") {
-                    // https://github.com/seasalt-ai/snowboy
-                    defFile("src/nativeInterop/cinterop/snowboy.def")
-                    packageName("com.airobot.snowboyinterop")
-                    // 从上面四个目录中查找所有的头文件,添加到headers.files
+                create("webrtc_apm") {
+                    defFile("src/nativeInterop/cinterop/webrtc_apm.def")
+                    packageName("com.airobot.webrtcapminterop")
                     includeDirs(
-                        file("src/nativeInterop/cpp/include/snowboy/"),
-                        file("src/nativeInterop/cpp/include/snowboy/hack"),
+                        file("src/nativeInterop/cpp/include"),
+                        file("src/nativeInterop/cpp/include/webrtc_apm/wrapper")
                     )
                     compilerOpts(
                         "-fPIC",
@@ -258,9 +227,8 @@ kotlin {
                     packageName("com.airobot.piperinterop")
                     // 从上面四个目录中查找所有的头文件,添加到headers.files
                     includeDirs(
-                        file("src/nativeInterop/cpp/include"),
+                        file("src/nativeInterop/cpp/include/soxr"),
                         file("src/nativeInterop/cpp/include/piper"),
-                        file("src/nativeInterop/cpp/include/piper/soxr"),
                         file("src/nativeInterop/cpp/include/piper/onnxruntime"),
                     )
                     compilerOpts(
@@ -296,27 +264,6 @@ kotlin {
                         *armhfToolchain.includedDirs.map { "-I$it" }.toTypedArray()
                     )
                 }
-//                create("whisper") {
-//                    defFile("src/nativeInterop/cinterop/whisper.def")
-//                    packageName("com.airobot.whisperinterop")
-//                    // 从上面四个目录中查找所有的头文件,添加到headers.files
-//                    includeDirs(
-//                        file("src/nativeInterop/cpp/include/whisper"),
-//                        file("src/nativeInterop/cpp/include/whisper/hack"),
-//                    )
-//                    compilerOpts(
-//                        "-fPIC",
-//                        "-nostdinc++",
-//                        "-fopenmp",
-//                        "-std=c++17",
-//                        "-pthread",
-//                        "-D_GLIBCXX_USE_CXX11_ABI=1",
-//                        "-ffunction-sections",
-//                        "-fdata-sections",
-//                        "-L${file("src/nativeInterop/cpp/libs/").absolutePath}",
-//                        *armhfToolchain.includedDirs.map { "-I$it" }.toTypedArray()
-//                    )
-//                }
             }else{
                 create("fake"){
                     defFile("src/nativeInterop/cinterop/fake.def")

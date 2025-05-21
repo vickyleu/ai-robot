@@ -31,320 +31,332 @@ import voice.detector.keyword.KeywordDetector
 import voice.synthesis.PiperSpeechSynthesizer
 import voice.util.LogManager
 import kotlin.time.ExperimentalTime
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.collectLatest
+import voice.api.KeywordDetectorApi
+import voice.audio.processing.AudioProcessingFactory
+import voice.audio.processing.AudioProcessingManager
 
 /**
- * Vosk和Piper集成的语音助手
+ * 语音助手实现
+ * 使用Vosk进行语音识别
  */
 class VoiceAssistant(
-    private val config: VoiceAssistantConfig
+    private val config: VoiceAssistantConfig = VoiceAssistantConfig()
 ) : VoiceAssistantApi {
-    // 日志
     private val logger = LogManager.getLogger("VoiceAssistant")
 
-    // 组件
-    private val speechSynthesizer = PiperSpeechSynthesizer()
-    private val audioDevice = PortAudioDevice.getInstance() // 使用全局单例
+    // 状态控制
+    private val _assistantState = MutableStateFlow(VoiceAssistantApi.AssistantState.IDLE)
+    override val assistantState: StateFlow<VoiceAssistantApi.AssistantState> = _assistantState.asStateFlow()
+    
+    // 内部状态
+    private var isInitialized = false
+    private var isActivated = false
+    private var isRunning = false
+
+    // 核心组件
     private val keywordDetector = KeywordDetector()
 
-    // 状态管理
-    private val _assistantState = MutableStateFlow(VoiceAssistantApi.AssistantState.IDLE)
-    override val assistantState: StateFlow<VoiceAssistantApi.AssistantState> =
-        _assistantState.asStateFlow()
-
-    // 识别结果
-    private val _recognizedText = MutableStateFlow<String?>(null)
-    override val recognizedText: StateFlow<String?> = _recognizedText.asStateFlow()
-
     // 协程作用域
-    private val scope = CoroutineScope(Dispatchers.Default)
-    private var assistantJob: Job? = null
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private var stateMonitorJob: Job? = null
+    private var timeoutJob: Job? = null
 
-    // 标记是否运行
-    private var isRunning = false
-    
-    // 关键词检测回调
-    var onKeywordDetectedCallback: ((String) -> Unit)? = null
+    // 回调
+    private var speechCallback: ((String) -> Unit)? = null
+    private var stateChangeCallback: ((VoiceAssistantApi.AssistantState) -> Unit)? = null
 
-    init {
-        logger.info("VoiceAssistant 实例化")
-    }
+    // 超时设置 (毫秒)
+    private val activeListeningTimeout = 10000L
+    private val keywords = mutableListOf<String>()
 
     /**
      * 初始化语音助手
+     * @param modelPath 模型路径，包含Vosk模型
      * @return 初始化是否成功
      */
-    override suspend fun initialize(): Boolean {
+    override fun initialize(modelPath: String): Boolean {
         logger.info("VoiceAssistant.initialize() 被调用")
-        _assistantState.value = VoiceAssistantApi.AssistantState.INITIALIZING
+
+        if (isInitialized) {
+            logger.warn("语音助手已经初始化")
+            return true
+        }
 
         try {
             // 初始化关键词检测器
-            logger.info("initKeywordDetector 被调用")
-            if (!initKeywordDetector()) {
-                logger.error("初始化关键词检测器失败")
+            if (!keywordDetector.initialize(modelPath, config.keywordSensitivity)) {
+                logger.error("关键词检测器初始化失败")
                 return false
             }
 
-            // 初始化音频设备（只初始化一次）
-            logger.info("initAudioDevice 被调用")
-            if (!initAudioDevice()) {
-                logger.error("初始化音频设备失败")
-                return false
+            // 设置关键词检测回调
+            (keywordDetector as? KeywordDetector)?.setKeywordCallback { keyword ->
+                handleKeywordDetected(keyword)
             }
 
-            // 初始化语音合成
-            logger.info("initSpeechSynthesizer 被调用")
-            if (!initSpeechSynthesizer()) {
-                logger.warn("初始化语音合成器失败，语音助手将不能语音应答")
-                // 继续初始化，因为语音合成不是必需的
+            // 添加关键词
+            keywords.addAll(config.keywords)
+            keywords.forEach { keyword ->
+                keywordDetector.addKeyword(keyword)
             }
 
-            logger.info("语音助手初始化成功")
+            // 启动状态监控
+            startMonitoring()
+
+            isInitialized = true
             _assistantState.value = VoiceAssistantApi.AssistantState.IDLE
+            logger.info("语音助手初始化成功")
             return true
+
         } catch (e: Exception) {
             logger.error("语音助手初始化异常: ${e.message}")
-            e.printStackTrace()
-            _assistantState.value = VoiceAssistantApi.AssistantState.ERROR
+            cleanup()
             return false
         }
     }
 
     /**
-     * 初始化关键词检测器
+     * 启动状态监控协程
      */
-    private fun initKeywordDetector(): Boolean {
-        // 新版KeywordDetector
-        return keywordDetector.initialize(
-            modelPath = config.voskModelPath,
-            sensitivity = config.sensitivity
-        )
-    }
-
-    /**
-     * 初始化音频设备
-     */
-    private fun initAudioDevice(): Boolean {
-        return audioDevice.initialize(
-            deviceName = "default",
-            sampleRate = config.sampleRate
-        )
-    }
-
-    /**
-     * 初始化语音合成器
-     */
-    private fun initSpeechSynthesizer(): Boolean {
-        return speechSynthesizer.initialize(
-            modelPath = config.piperModelPath,
-            configPath = config.piperConfigPath,
-            espeakDataPath = config.piperESpeakDataPath,
-            speakerId = 0
-        )
-    }
-
-    /**
-     * 启动语音助手
-     */
-    override suspend fun start(): Boolean {
-        logger.info("VoiceAssistant.start() 被调用")
-        
-        try {
-            if (isRunning) {
-                logger.warn("语音助手已经在运行中")
-                return true
-            }
-
-            // 启动音频设备
-            val deviceStarted = audioDevice.start()
-            logger.info("音频设备start()调用成功，继续执行...")
-            
-            // 添加延迟确保设备状态已稳定
-            logger.info("延迟300ms确保音频设备状态稳定...")
-            delay(300)
-            logger.info("延迟结束，当前设备状态: ${audioDevice.deviceState.value}")
-            
-            // 启动关键词检测器
-            logger.info("准备启动关键词监听...")
-            val kwdStartResult = keywordDetector.startListening()
-            logger.info("keywordDetector.startListening() 返回结果: $kwdStartResult")
-            if (!kwdStartResult) {
-                logger.error("无法启动关键词监听")
-                audioDevice.stop()
-                _assistantState.value = VoiceAssistantApi.AssistantState.ERROR
-                return false
-            }
-            logger.info("关键词监听启动成功")
-
-            // 启动助手任务
-            try {
-                logger.info("准备启动助手主循环协程...")
-                assistantJob?.cancel()
-                val deferred = CompletableDeferred<Boolean>()
-                assistantJob = scope.launch {
-                    logger.info("主循环协程已启动")
-                    try {
-                        withContext(Dispatchers.Unconfined) {
-                            try {
-                                logger.info("设置状态为LISTENING_KEYWORD")
-                                _assistantState.value = VoiceAssistantApi.AssistantState.LISTENING_KEYWORD
-                                isRunning = true
-
-                                // 让 KeywordDetector / PortAudioAcquisition 自行打开输入流，避免在这里阻塞
-                                logger.info("跳过 VoiceAssistant 内部打开输入流，交由 KeywordDetector 处理")
-
-                                // 流打开后稍等片刻让系统稳定
-                                logger.info("延迟500ms让音频流稳定...")
-                                delay(500)
-                                logger.info("延迟结束，准备进入主循环")
-
-                                // 确认状态更新
-                                logger.info("语音助手状态: ${_assistantState.value}")
-                                logger.info("开始监听关键词...")
-                                
-                                // 主循环 - 监听唤醒词
-                                logger.info("已开始监听关键词，等待唤醒...")
-
-                                // 音频帧读取缓冲区 - 分配一次重复使用
-                                val frameSize = 512 // 每批读取帧数 (16ms@32kHz 或32ms@16kHz)
-                                val channels = 2
-                                val sampleSize = frameSize * channels
-                                logger.info("准备分配音频缓冲区...")
-                                val buffer = nativeHeap.allocArray<ShortVar>(sampleSize)
-                                val audioData = ShortArray(sampleSize) // 预分配，避免频繁创建对象
-                                logger.info("音频缓冲区分配完成")
-
-                                logger.info("进入主检测循环...")
-                                var frameCounter = 0
-                                while (isActive && isRunning) {
-                                    try {
-                                        frameCounter++
-                                        if (frameCounter == 1 || frameCounter % 100 == 0) {
-                                            logger.info("主循环迭代次数: $frameCounter")
-                                        }
-                                        
-                                        // 从音频设备读取数据 - 使用 suspend 版本
-                                        val framesRead = audioDevice.readAudioSuspend(buffer, frameSize)
-                                        
-                                        // 偶尔记录一次读取状态，避免日志过多
-                                        if (frameCounter == 1 || frameCounter % 100 == 0) {
-                                            logger.info("主循环读取音频: $framesRead 帧")
-                                        }
-
-                                        // 如果没有读取到数据，短暂休眠避免CPU空转
-                                        if (framesRead <= 0) {
-                                            if (frameCounter % 50 == 0) {
-                                                logger.warn("没有读取到音频数据 ($framesRead)")
-                                            }
-                                            delay(5) // 5ms短延迟
-                                            continue
-                                        }
-
-                                        // 复制数据以便处理
-                                        val samplesToCopy = framesRead * channels
-                                        for (i in 0 until samplesToCopy) {
-                                            audioData[i] = buffer[i]
-                                        }
-
-                                        // 如果帧数不足 sampleSize，后续处理只使用有效部分
-                                        val validShortArray = audioData.copyOfRange(0, samplesToCopy)
-
-                                        // 关键词检测
-                                        if (frameCounter == 1 || frameCounter % 100 == 0) {
-                                            logger.info("准备调用keywordDetector.detect进行检测...")
-                                        }
-                                        val detected = keywordDetector.detect(validShortArray)
-                                        
-                                        // 如果检测到关键词
-                                        if (detected) {
-                                            logger.info("检测到关键词!")
-                                            
-                                            // 进入对话状态
-                                            onKeywordDetected()
-                                        }
-                                    } catch (e: CancellationException) {
-                                        // 协程被取消，正常退出
-                                        logger.info("语音助手协程被取消")
-                                        break
-                                    } catch (e: Exception) {
-                                        // 捕获并记录其他异常，但不中断循环
-                                        logger.error("监听唤醒词时发生异常: ${e.message}")
-                                        e.printStackTrace()
-                                        // 短暂延迟后继续
-                                        delay(500)
-                                    }
-                                }
-                                
-                                // 清理资源
-                                logger.info("主循环结束，释放资源")
-                                nativeHeap.free(buffer.rawValue)
-                                deferred.complete(true)
-                            } catch (e: Exception) {
-                                logger.error("协程内 withContext 块发生异常: ${e.message}")
-                                e.printStackTrace()
-                                deferred.complete(false)
-                            }
+    private fun startMonitoring() {
+        stateMonitorJob?.cancel()
+        stateMonitorJob = scope.launch {
+            // 监控关键词检测器状态
+            keywordDetector.detectorState.collectLatest { state ->
+                when (state) {
+                    KeywordDetectorApi.DetectorState.DETECTED -> {
+                        if (_assistantState.value == VoiceAssistantApi.AssistantState.LISTENING_FOR_KEYWORD) {
+                            activateAssistant()
                         }
-                    } catch (e: Exception) {
-                        logger.error("语音助手主循环发生异常: ${e.message}")
-                        e.printStackTrace()
-                        _assistantState.value = VoiceAssistantApi.AssistantState.ERROR
-                        deferred.complete(false)
-                    } finally {
-                        // 确保清理资源
-                        logger.info("主循环finally块: 清理资源")
-                        isRunning = false
-                        _assistantState.value = VoiceAssistantApi.AssistantState.IDLE
                     }
+                    else -> { /* 其他状态不处理 */ }
                 }
-                logger.info("助手主循环协程已创建，等待协程完成初始化")
-                
-                // 等待足够时间让主循环启动
-                logger.info("延迟1000ms等待主循环启动...")
-                delay(1000)
-                logger.info("延迟结束，检查助手状态")
-                
-                // 检查状态并返回结果
-                logger.info("当前助手状态: ${_assistantState.value}")
-                if (_assistantState.value == VoiceAssistantApi.AssistantState.ERROR) {
-                    logger.error("启动过程中出现错误，助手状态为ERROR")
-                    return false
-                }
-                
-                logger.info("语音助手启动完成，状态: ${_assistantState.value}")
-                return true
-            } catch (e: Exception) {
-                logger.error("创建助手主循环协程时发生异常: ${e.message}")
-                e.printStackTrace()
-                audioDevice.stop()
-                keywordDetector.stopListening()
-                _assistantState.value = VoiceAssistantApi.AssistantState.ERROR
+            }
+        }
+    }
+
+    /**
+     * 开始监听关键词
+     * @return 是否成功启动监听
+     */
+    override suspend fun startListeningForKeyword(): Boolean {
+        logger.info("开始监听关键词")
+
+        if (!isInitialized) {
+            logger.error("语音助手未初始化")
+            return false
+        }
+
+        if (_assistantState.value != VoiceAssistantApi.AssistantState.IDLE) {
+            logger.warn("语音助手已在活动状态: ${_assistantState.value}")
+            return false
+        }
+
+        try {
+            // 启动关键词检测
+            if (!keywordDetector.startListening()) {
+                logger.error("无法启动关键词检测")
                 return false
             }
-        } catch (e: Throwable) {
-            logger.error("VoiceAssistant.start() 发生严重错误: ${e::class.simpleName}: ${e.message}")
-            e.printStackTrace()
-            _assistantState.value = VoiceAssistantApi.AssistantState.ERROR
+
+            isRunning = true
+            _assistantState.value = VoiceAssistantApi.AssistantState.LISTENING_FOR_KEYWORD
+            stateChangeCallback?.invoke(_assistantState.value)
+            logger.info("成功开始监听关键词")
+            return true
+
+        } catch (e: Exception) {
+            logger.error("启动关键词监听异常: ${e.message}")
             return false
+        }
+    }
+
+    /**
+     * 激活语音助手开始监听语音命令
+     * @return 是否成功激活
+     */
+    private suspend fun activateAssistant(): Boolean {
+        logger.info("激活语音助手")
+
+        if (_assistantState.value != VoiceAssistantApi.AssistantState.LISTENING_FOR_KEYWORD) {
+            logger.warn("语音助手状态不正确: ${_assistantState.value}")
+            return false
+        }
+
+        try {
+            _assistantState.value = VoiceAssistantApi.AssistantState.LISTENING_FOR_SPEECH
+            stateChangeCallback?.invoke(_assistantState.value)
+            isActivated = true
+
+            // 启动超时任务
+            startTimeout()
+
+            logger.info("语音助手已激活，等待语音输入")
+            return true
+
+        } catch (e: Exception) {
+            logger.error("激活语音助手异常: ${e.message}")
+            return false
+        }
+    }
+
+    /**
+     * 启动监听超时任务
+     */
+    private fun startTimeout() {
+        timeoutJob?.cancel()
+        timeoutJob = scope.launch {
+            delay(activeListeningTimeout)
+            if (_assistantState.value == VoiceAssistantApi.AssistantState.LISTENING_FOR_SPEECH) {
+                logger.info("语音命令监听超时")
+                deactivateAssistant()
+            }
+        }
+    }
+
+    /**
+     * 设置语音识别结果回调
+     * @param callback 回调函数
+     */
+    override fun setSpeechRecognizedCallback(callback: (String) -> Unit) {
+        this.speechCallback = callback
+        logger.info("已设置语音识别回调")
+    }
+
+    /**
+     * 设置状态改变回调
+     * @param callback 回调函数
+     */
+    override fun setStateChangeCallback(callback: (VoiceAssistantApi.AssistantState) -> Unit) {
+        this.stateChangeCallback = callback
+        logger.info("已设置状态改变回调")
+    }
+
+    /**
+     * 关键词检测回调处理
+     * @param keyword 检测到的关键词
+     */
+    private fun handleKeywordDetected(keyword: String) {
+        logger.info("检测到关键词: $keyword")
+        scope.launch {
+            activateAssistant()
+        }
+    }
+
+    /**
+     * 语音处理回调处理
+     * @param text 识别到的文本
+     */
+    private fun handleSpeechProcessed(text: String) {
+        logger.info("识别到语音: $text")
+
+        if (isActivated && _assistantState.value == VoiceAssistantApi.AssistantState.LISTENING_FOR_SPEECH) {
+            // 取消超时任务
+            timeoutJob?.cancel()
+
+            // 调用语音回调
+            speechCallback?.invoke(text)
+
+            // 切换到处理状态
+            _assistantState.value = VoiceAssistantApi.AssistantState.PROCESSING
+            stateChangeCallback?.invoke(_assistantState.value)
+
+            // 处理完成后自动返回关键词监听状态
+            scope.launch {
+                delay(500) // 给系统一点时间处理，避免过快切换状态
+                deactivateAssistant()
+            }
+        }
+    }
+
+    /**
+     * 停用语音助手，返回关键词监听状态
+     */
+    private fun deactivateAssistant() {
+        if (isActivated) {
+            isActivated = false
+            _assistantState.value = VoiceAssistantApi.AssistantState.LISTENING_FOR_KEYWORD
+            stateChangeCallback?.invoke(_assistantState.value)
+            logger.info("语音助手已返回关键词监听状态")
+        }
+    }
+
+    /**
+     * 停止语音助手
+     */
+    override fun stop() {
+        logger.info("VoiceAssistant.stop() 被调用")
+
+        if (!isInitialized) {
+            logger.warn("语音助手未初始化")
+            return
+        }
+
+        // 取消所有任务
+        timeoutJob?.cancel()
+        stateMonitorJob?.cancel()
+
+        // 停止组件
+        try {
+            keywordDetector.stopListening()
+        } catch (e: Exception) {
+            logger.error("停止组件时出错: ${e.message}")
+        }
+
+        isActivated = false
+        isRunning = false
+        _assistantState.value = VoiceAssistantApi.AssistantState.IDLE
+        stateChangeCallback?.invoke(_assistantState.value)
+        logger.info("语音助手已停止")
+    }
+
+    /**
+     * 释放资源
+     */
+    override fun release() {
+        logger.info("VoiceAssistant.release() 被调用")
+
+        // 停止所有运行中的组件
+        stop()
+
+        // 释放资源
+        cleanup()
+
+        isInitialized = false
+        logger.info("语音助手资源已释放")
+    }
+
+    /**
+     * 清理资源
+     */
+    private fun cleanup() {
+        try {
+            keywordDetector.release()
+        } catch (e: Exception) {
+            logger.error("清理资源时出错: ${e.message}")
         }
     }
 
     /**
      * 生成诊断报告
-     * 整合所有组件的诊断信息
+     * @return 诊断文本
      */
-    fun generateDiagnostics(): String {
+    fun generateDiagnosis(): String {
         val sb = StringBuilder()
-        sb.appendLine("========== 语音助手诊断报告 ==========")
-        sb.appendLine("助手状态: ${assistantState.value}")
+        sb.appendLine("==== 语音助手诊断 ====")
+        sb.appendLine("初始化状态: $isInitialized")
+        sb.appendLine("当前状态: ${_assistantState.value}")
+        sb.appendLine("已激活: $isActivated")
+        sb.appendLine("正在运行: $isRunning")
+        sb.appendLine("关键词: ${keywords.joinToString(", ")}")
         
-        // 添加关键词检测器状态
-        sb.appendLine("\n-- 关键词检测器状态 --")
-        sb.appendLine(keywordDetector.generateDiagnostics())
-        
-        // 添加音频设备状态
-        sb.appendLine("\n-- 音频设备状态 --")
-        sb.appendLine("设备状态: ${audioDevice.deviceState.value}")
+        // 添加关键词检测器诊断
+        if (keywordDetector is KeywordDetector) {
+            sb.appendLine("\n--- 关键词检测器诊断 ---")
+            sb.appendLine(keywordDetector.generateDiagnostics())
+        }
         
         return sb.toString()
     }

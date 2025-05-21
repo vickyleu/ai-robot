@@ -7,6 +7,13 @@ import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.cinterop.ShortVar
 import kotlinx.cinterop.get
 import kotlin.experimental.and
+import kotlinx.cinterop.UByteVar
+import kotlinx.cinterop.addressOf
+import kotlinx.cinterop.allocArray
+import kotlinx.cinterop.convert
+import kotlinx.cinterop.memScoped
+import kotlinx.cinterop.set
+import kotlinx.cinterop.usePinned
 
 /**
  * 音频处理工具类
@@ -41,11 +48,7 @@ object AudioUtils {
      */
     fun shortArrayToByteArray(source: ShortArray): ByteArray {
         val result = ByteArray(source.size * 2)
-        for (i in source.indices) {
-            val value = source[i]
-            result[i * 2] = (value and 0xFF).toByte()
-            result[i * 2 + 1] = (value.toInt() shr 8).toByte()
-        }
+        shortArrayToByteArray(source, source.size, result)
         return result
     }
     
@@ -125,7 +128,11 @@ object AudioUtils {
         return out
     }
 
-    /** FloatArray [-1,1] → ShortArray (16-bit PCM) */
+    /** 
+     * FloatArray [-1,1] → ShortArray (16-bit PCM)
+     * @param src 浮点数组，范围[-1,1]
+     * @return 短整型数组
+     */
     fun floatArrayToShortArray(src: FloatArray): ShortArray {
         val out = ShortArray(src.size)
         for (i in src.indices) {
@@ -135,7 +142,11 @@ object AudioUtils {
         return out
     }
 
-    /** ShortArray (16-bit PCM) → FloatArray [-1,1] */
+    /** 
+     * ShortArray (16-bit PCM) → FloatArray [-1,1] 
+     * @param src 短整型数组
+     * @return 浮点数组，范围[-1,1]
+     */
     fun shortArrayToFloatArray(src: ShortArray): FloatArray {
         val out = FloatArray(src.size)
         for (i in src.indices) {
@@ -147,6 +158,9 @@ object AudioUtils {
     /**
      * 将 ShortArray 转为 ByteArray，写入复用的 dst，避免每帧重新分配。
      * dst 必须至少有 samples*2 的空间。
+     * @param src 源短整型数组
+     * @param srcLen 源数组的有效长度 
+     * @param dst 目标字节数组（复用）
      * @return 实际写入的字节数
      */
     fun shortArrayToByteArray(src: ShortArray, srcLen: Int, dst: ByteArray): Int {
@@ -159,5 +173,88 @@ object AudioUtils {
             dst[j++] = (v.toInt() shr 8).toByte()
         }
         return bytes
+    }
+
+    /**
+     * 字节数组转短整型数组
+     * @param bytes 字节数组
+     * @param length 字节数组长度
+     * @return 短整型数组
+     */
+    fun byteArrayToShortArray(bytes: ByteArray, length: Int): ShortArray {
+        val shortLength = length / 2
+        val shorts = ShortArray(shortLength)
+        
+        for (i in 0 until shortLength) {
+            val b1 = bytes[i * 2].toInt() and 0xFF
+            val b2 = bytes[i * 2 + 1].toInt() and 0xFF
+            shorts[i] = ((b2 shl 8) or b1).toShort()
+        }
+        
+        return shorts
+    }
+    
+    /**
+     * 调整音频音量
+     * @param audio 音频数据
+     * @param gain 增益 (0.0-2.0, 1.0表示原始音量)
+     * @return 调整后的音频
+     */
+    fun adjustVolume(audio: ShortArray, gain: Float): ShortArray {
+        val adjusted = ShortArray(audio.size)
+        val clampedGain = gain.coerceIn(0.0f, 2.0f)
+        
+        for (i in audio.indices) {
+            val sample = (audio[i].toFloat() * clampedGain).toInt()
+            adjusted[i] = when {
+                sample > Short.MAX_VALUE -> Short.MAX_VALUE
+                sample < Short.MIN_VALUE -> Short.MIN_VALUE
+                else -> sample.toShort()
+            }
+        }
+        
+        return adjusted
+    }
+    
+    /**
+     * 重采样音频数据（简单实现）
+     * @param input 输入音频数据
+     * @param inputRate 输入采样率
+     * @param outputRate 输出采样率
+     * @param channels 通道数
+     * @return 重采样后的音频数据
+     */
+    fun resampleAudio(input: ByteArray, inputRate: Int, outputRate: Int, channels: Int): ByteArray {
+        if (inputRate == outputRate) return input
+        
+        val inputSamples = input.size / 2 // 16位PCM，每个样本2字节
+        val outputSamples = (inputSamples.toLong() * outputRate / inputRate).toInt()
+        val output = ByteArray(outputSamples * 2)
+        
+        // 转换为short数组
+        val inputShorts = byteArrayToShortArray(input)
+        val outputShorts = ShortArray(outputSamples)
+        
+        // 线性插值重采样
+        for (i in 0 until outputSamples / channels) {
+            val position = i.toDouble() * inputRate / outputRate
+            val intPosition = position.toInt()
+            val fraction = position - intPosition
+            
+            for (ch in 0 until channels) {
+                val inputIndex1 = (intPosition * channels + ch).coerceIn(0, inputShorts.size - 1)
+                val inputIndex2 = ((intPosition + 1) * channels + ch).coerceIn(0, inputShorts.size - 1)
+                
+                val sample1 = inputShorts[inputIndex1].toDouble()
+                val sample2 = inputShorts[inputIndex2].toDouble()
+                
+                val interpolated = (sample1 * (1.0 - fraction) + sample2 * fraction).toInt().toShort()
+                outputShorts[i * channels + ch] = interpolated
+            }
+        }
+        
+        // 转回ByteArray
+        val bytesWritten = shortArrayToByteArray(outputShorts, outputShorts.size, output)
+        return output
     }
 } 

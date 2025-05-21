@@ -1,11 +1,6 @@
 package voice.util
 
-import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.datetime.Clock.System
-import platform.posix.fflush
-import platform.posix.fprintf
-import platform.posix.stderr
-import platform.posix.stdout
 import kotlin.time.ExperimentalTime
 import kotlin.time.TimeMark
 import kotlin.time.TimeSource
@@ -21,17 +16,17 @@ object LogManager {
     enum class LogLevel {
         DEBUG, INFO, WARN, ERROR
     }
-    
+
     // 默认日志级别
     private var defaultLogLevel = LogLevel.DEBUG
-    
+
     /**
      * 设置默认日志级别
      */
     fun setLogLevel(level: LogLevel) {
         defaultLogLevel = level
     }
-    
+
     /**
      * 获取日志记录器
      * @param tag 日志标签
@@ -40,7 +35,7 @@ object LogManager {
     fun getLogger(tag: String): Logger {
         return Logger(tag)
     }
-    
+
     /**
      * 日志记录器
      * @param tag 日志标签
@@ -54,7 +49,7 @@ object LogManager {
                 println("[DEBUG][$tag] $message")
             }
         }
-        
+
         /**
          * 记录信息日志
          */
@@ -63,7 +58,7 @@ object LogManager {
                 println("[INFO][$tag] $message")
             }
         }
-        
+
         /**
          * 记录警告日志
          */
@@ -72,7 +67,7 @@ object LogManager {
                 println("[WARN][$tag] $message")
             }
         }
-        
+
         /**
          * 记录错误日志
          */
@@ -82,7 +77,7 @@ object LogManager {
             }
         }
     }
-    
+
     /**
      * 日志诊断信息
      * 用于收集一段时间内的日志记录，并生成诊断报告
@@ -90,14 +85,14 @@ object LogManager {
     object Diagnostics {
         private val logBuffer = mutableListOf<LogEntry>()
         private const val MAX_BUFFER_SIZE = 1000
-        
+
         private data class LogEntry(
             val timestamp: Long,
             val level: LogLevel,
             val tag: String,
             val message: String
         )
-        
+
         /**
          * 添加日志条目
          */
@@ -111,7 +106,7 @@ object LogManager {
             logBuffer.clear()
             logBuffer.addAll(currentBuffer)
         }
-        
+
         /**
          * 生成诊断报告
          */
@@ -120,14 +115,14 @@ object LogManager {
             report.appendLine("=== 音频处理诊断报告 ===")
             report.appendLine("记录时间: ${TimeSource.Monotonic.markNow().toEpochMilliseconds()}")
             report.appendLine("日志条目数: ${logBuffer.size}")
-            
+
             val errorCount = logBuffer.count { it.level == LogLevel.ERROR }
             val warnCount = logBuffer.count { it.level == LogLevel.WARN }
-            
+
             report.appendLine("错误数: $errorCount")
             report.appendLine("警告数: $warnCount")
             report.appendLine()
-            
+
             if (errorCount > 0) {
                 report.appendLine("== 最近错误日志 ==")
                 logBuffer.filter { it.level == LogLevel.ERROR }
@@ -137,15 +132,15 @@ object LogManager {
                     }
                 report.appendLine()
             }
-            
+
             report.appendLine("== 最近日志摘要 ==")
             logBuffer.takeLast(50).forEach { entry ->
                 report.appendLine("[${entry.timestamp}] [${entry.level}] [${entry.tag}] ${entry.message}")
             }
-            
+
             return report.toString()
         }
-        
+
         /**
          * 清除日志缓冲区
          */
@@ -154,7 +149,7 @@ object LogManager {
             logBuffer.clear()
         }
     }
-    
+
     /**
      * 获取当前时间的毫秒值
      */

@@ -18,8 +18,8 @@ class VoiceActivityDetector : VoiceActivityDetection {
         energyThreshold = 800.0,     // 提高能量阈值，减少误触发
         snrThreshold = 3.5,          // 提高信噪比要求，增加触发难度
         speechThreshold = 0.85f,     // 提高语音阈值要求
-        minConsecutiveSpeechFrames = 6, // 提高连续语音帧要求
-        minConsecutiveSilenceFrames = 6  // 提高连续静音帧要求
+        minConsecutiveSpeechFrames = 12, // 提高连续语音帧要求
+        minConsecutiveSilenceFrames = 10  // 提高连续静音帧要求
     )
 
     // 语音检测状态
@@ -65,18 +65,18 @@ class VoiceActivityDetector : VoiceActivityDetection {
             return VoiceActivityDetection.DetectionResult(false, 0.0f, createEmptyMetrics())
         }
 
-        // 仅使用前16K的数据进行降噪处理
+        // 仅使用前16K的数据进行处理
         val processLength = kotlin.math.min(length, 16000)
 
         try {
-            // 使用RNNoise进行处理
+            // 计算音频能量，不再依赖RNNoise
             val energy = calculateRms(audio, processLength)
 
             // 计算自适应阈值
             adaptNoiseFloor(energy)
 
             // 使用能量和自适应阈值进行VAD判断
-            val energyThreshold = noiseFloor * 1.8
+            val energyThreshold = noiseFloor * 3.5
             val hasSpeech = energy > energyThreshold
 
             // 计算信噪比
@@ -360,7 +360,7 @@ class VoiceActivityDetector : VoiceActivityDetection {
      */
     private fun adaptNoiseFloor(energy: Double) {
         // 使用平滑因子调整噪声基准
-        val alpha = 0.95
+        val alpha = 0.98
 
         if (energy < noiseFloor) {
             // 如果当前能量小于噪声基准，快速调整基准下降

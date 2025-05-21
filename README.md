@@ -138,3 +138,59 @@ AI Robot是一个集成了多种设备控制协议的智能机器人控制系统
 2. 保持文档的及时更新
 3. 遵循代码规范和提交规范
 4. 做好版本管理和分支管理
+
+# 音频处理链路重构
+
+## 重构内容概述
+
+将语音助手系统的音频处理链路完全重新设计，删除已废弃或停止维护的库（如RNNoise、SpeexDSP、Snowboy），并使用现代化的第三方库（WebRTC APM和Porcupine）替代旧的实现。
+
+## 主要变更
+
+1. **删除过时的库**
+   - 移除RNNoise相关实现和引用
+   - 移除SpeexDSP相关实现和引用
+   - 移除Snowboy相关实现和引用
+
+2. **引入新的音频处理库**
+   - 使用WebRTC APM (Audio Processing Module)实现音频处理功能
+     - 降噪 (NS)
+     - 自动增益控制 (AGC)
+     - 高通滤波 (HPF)
+     - 回声消除 (AEC)
+     - 语音活动检测 (VAD)
+   - 使用Porcupine实现关键词检测功能
+
+3. **核心类实现**
+   - `WebRtcApm`: 封装WebRTC APM接口
+   - `PorcupineKeywordDetector`: 封装Porcupine关键词检测功能
+   - `WebRtcApmSingleton`: 提供单例访问管理
+   - `AudioProcessingManager`: 重构音频处理管理器
+   - `AudioPreprocessor`: 精简的音频预处理器
+   - `KeywordDetector`: 重构关键词检测器
+   - `VoiceAssistant`: 更新初始化方法以适配新实现
+
+4. **配置更新**
+   - 在`VoiceAssistantConfig`中添加`porcupineModelPath`支持Porcupine模型目录
+   - 优化程序退出资源清理流程
+
+## 新的音频处理流程
+
+```
+采集 → WebRTC APM(NS+AEC+AGC+HPF+VAD) → Porcupine关键词检测 → 语音识别
+```
+
+## 优势
+
+1. **稳定性提升**: 使用更可靠的第三方库，减少自定义算法的bug
+2. **性能提升**: WebRTC APM经过大量优化，能在资源有限的设备上高效运行
+3. **功能增强**: 提供更先进的降噪和VAD功能
+4. **维护性**: 依赖活跃维护的开源项目，能持续获得更新和优化
+5. **代码简洁**: 减少重复代码，清晰的接口定义
+
+## 后续优化方向
+
+1. 进一步优化内存使用，减少不必要的音频数据复制
+2. 继续清理残留代码
+3. 添加更多配置选项，允许自定义WebRTC APM参数
+4. 支持更多种类的关键词和模型

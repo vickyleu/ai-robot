@@ -1,0 +1,5 @@
+language: C++
+headers:  picovoice.h pv_porcupine.h pv_porcupine_mcu.h
+linkerOpts: -L../cpp/libs -lpv_porcupine -lpthread -lm
+---
+struct pv_porcupine {};

@@ -1,4 +1,5 @@
-@file:OptIn(ExperimentalForeignApi::class, ExperimentalTime::class,
+@file:OptIn(
+    ExperimentalForeignApi::class, ExperimentalTime::class,
     ExperimentalCoroutinesApi::class, DelicateCoroutinesApi::class
 )
 
@@ -12,8 +13,6 @@ import kotlinx.cinterop.ShortVar
 import kotlinx.cinterop.allocArray
 import kotlinx.cinterop.get
 import kotlinx.cinterop.nativeHeap
-import kotlinx.cinterop.free
-import kotlinx.cinterop.set
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.Dispatchers
@@ -26,23 +25,14 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.newSingleThreadContext
-import kotlinx.coroutines.yield
 import kotlinx.datetime.Clock
 import voice.hal.AudioDevice
-import voice.util.AudioUtils
 import voice.util.AudioDefaults
+import voice.util.AudioUtils
 import voice.util.LogManager
 import kotlin.concurrent.Volatile
 import kotlin.coroutines.cancellation.CancellationException
-import kotlin.experimental.and
 import kotlin.time.ExperimentalTime
-import kotlin.native.concurrent.freeze
-import com.airobot.device.yanapi.voice.audio.processing.SoxrSingleton
-import kotlinx.cinterop.memScoped
-import kotlinx.cinterop.FloatVar
-import kotlinx.cinterop.CArrayPointer
-import kotlinx.cinterop.reinterpret
 
 /**
  * PortAudio音频采集实现
@@ -70,12 +60,15 @@ class PortAudioAcquisition(
 
     // 原生缓冲区 - 根据config.channels调整
     private val frameSize = 256  // 每次读取的帧数
+
     // 增大缓冲区大小，避免 PortAudio 返回超出预期帧数时的越界问题
     // 使用 frameSize * channels * 安全系数(8)，确保足够大
     private val bufferSize = frameSize * 2 * 8 // 4096 shorts
     private val buffer = nativeHeap.allocArray<ShortVar>(bufferSize)
+
     // 添加日志记录每次实际读取的帧数
     private var maxFramesEverRead = 0
+
     // 复用的 ByteArray，大小 = bufferSize*2 字节
     private val byteBuffer = ByteArray(bufferSize * 2)
 
@@ -86,7 +79,7 @@ class PortAudioAcquisition(
     private var totalBytesRead = 0L
     private var startTime = 0L
     private var lastLogTime = 0L
-    
+
     // 回调函数，用于传递采集到的音频数据
     var onAudioDataReceived: ((ByteArray, Int) -> Unit)? = null
 
@@ -102,7 +95,8 @@ class PortAudioAcquisition(
     override fun initialize(deviceName: String, sampleRate: Int): Boolean {
         _deviceState.value = AudioDevice.AudioDeviceState.INITIALIZING
         val success = audioDevice.initialize(deviceName, sampleRate)
-        _deviceState.value = if (success) AudioDevice.AudioDeviceState.READY else AudioDevice.AudioDeviceState.IDLE
+        _deviceState.value =
+            if (success) AudioDevice.AudioDeviceState.READY else AudioDevice.AudioDeviceState.IDLE
         return success
     }
 
@@ -160,7 +154,8 @@ class PortAudioAcquisition(
                     // 如检测到输入流被关闭，自动重试一次
                     if (!PortAudioDevice.isInputStreamActive()) {
                         logger.warn("检测到输入流非活跃，尝试重新打开 ...")
-                        val reopened = audioDevice.openInputStream(-1, config.sampleRate, config.channels)
+                        val reopened =
+                            audioDevice.openInputStream(-1, config.sampleRate, config.channels)
                         if (!reopened) {
                             logger.error("重新打开输入流失败，填充静音并继续")
                             // 短暂延迟，继续循环
@@ -177,12 +172,13 @@ class PortAudioAcquisition(
                         maxFramesEverRead = framesRead
                         logger.info("新的最大帧数记录: $maxFramesEverRead")
                     }
-                    
+
                     // 如果读取到数据
                     if (framesRead > 0) {
                         val totalSamples = framesRead * config.channels
                         val maxSamplesAllowed = bufferSize
-                        val safeSamples = if (totalSamples <= maxSamplesAllowed) totalSamples else maxSamplesAllowed
+                        val safeSamples =
+                            if (totalSamples <= maxSamplesAllowed) totalSamples else maxSamplesAllowed
                         if (totalSamples > maxSamplesAllowed) {
                             logger.warn("样本数 $totalSamples 超过缓冲区限制 $maxSamplesAllowed，将被截断")
                         }
@@ -194,20 +190,28 @@ class PortAudioAcquisition(
                         }
 
                         // 转换为ByteArray并回调 (Little-Endian)
-                        val bytesWritten = AudioUtils.shortArrayToByteArray(shortBuf, safeSamples, byteBuffer)
+                        val bytesWritten =
+                            AudioUtils.shortArrayToByteArray(shortBuf, safeSamples, byteBuffer)
                         onAudioDataReceived?.invoke(byteBuffer, bytesWritten)
-                        
+
                         // 更新统计
                         frameCounter++
                         totalBytesRead += bytesWritten.toLong()
-                        
+
                         // 定期记录统计信息
                         val currentTime = Clock.System.now().toEpochMilliseconds()
                         if (currentTime - lastLogTime > 5000) { // 每5秒记录一次
                             val duration = (currentTime - startTime) / 1000.0
                             val framesPerSecond = frameCounter / duration
                             val bytesPerSecond = totalBytesRead / duration
-                            logger.info("采集统计: ${FormatUtil.formatDouble(framesPerSecond,1)} 帧/秒, ${FormatUtil.formatDouble(bytesPerSecond,1)} 字节/秒")
+                            logger.info(
+                                "采集统计: ${
+                                    FormatUtil.formatDouble(
+                                        framesPerSecond,
+                                        1
+                                    )
+                                } 帧/秒, ${FormatUtil.formatDouble(bytesPerSecond, 1)} 字节/秒"
+                            )
                             lastLogTime = currentTime
                         }
 
@@ -229,11 +233,11 @@ class PortAudioAcquisition(
                     delay(100)
                 }
             }
-            
+
             logger.info("音频采集任务已结束")
         }
     }
-    
+
     // 停止采集任务
     fun stopCapture() {
         if (!isCapturing) {
@@ -246,21 +250,23 @@ class PortAudioAcquisition(
         captureScope?.cancel() // Cancel the scope
         captureJob = null
         captureScope = null
-        
+
         // 调用底层设备的stop，以确保流状态正确
-        audioDevice.stop() 
+        audioDevice.stop()
 
         val duration = (Clock.System.now().toEpochMilliseconds() - startTime) / 1000.0
         if (duration > 0 && totalBytesRead > 0) {
-             logger.info("音频采集已停止. 总计: %.2f KB, 时长: %.2f 秒, 平均速率: %.2f KB/s".format(
-                totalBytesRead / 1024.0, 
-                duration, 
-                (totalBytesRead / 1024.0) / duration
-            ))
+            logger.info(
+                "音频采集已停止. 总计: %.2f KB, 时长: %.2f 秒, 平均速率: %.2f KB/s".format(
+                    totalBytesRead / 1024.0,
+                    duration,
+                    (totalBytesRead / 1024.0) / duration
+                )
+            )
         } else {
             logger.info("音频采集已停止. 未采集到有效数据或时长过短.")
         }
-         _deviceState.value = AudioDevice.AudioDeviceState.READY
+        _deviceState.value = AudioDevice.AudioDeviceState.READY
     }
 
     // --- 实现 AudioDevice 接口的其余方法，委托给 audioDevice --- 
@@ -271,7 +277,8 @@ class PortAudioAcquisition(
         // 尝试启动底层设备，如果它尚未激活
         if (audioDevice.deviceState.value != AudioDevice.AudioDeviceState.ACTIVE) {
             val success = audioDevice.start()
-            if (success) _deviceState.value = AudioDevice.AudioDeviceState.ACTIVE // Reflect underlying state
+            if (success) _deviceState.value =
+                AudioDevice.AudioDeviceState.ACTIVE // Reflect underlying state
             return success
         }
         return audioDevice.deviceState.value == AudioDevice.AudioDeviceState.ACTIVE
@@ -286,18 +293,33 @@ class PortAudioAcquisition(
     override fun setSampleRate(sampleRate: Int): Boolean = audioDevice.setSampleRate(sampleRate)
     override fun getSampleRate(): Int = audioDevice.getSampleRate()
     override fun listAudioDevices(): Pair<Int, Int> = audioDevice.listAudioDevices()
-    override suspend fun openInputStream(deviceIndex: Int, sampleRate: Int, channels: Int): Boolean = audioDevice.openInputStream(deviceIndex, sampleRate, channels)
-    override suspend fun openOutputStream(deviceIndex: Int, sampleRate: Int, channels: Int): Boolean = audioDevice.openOutputStream(deviceIndex, sampleRate, channels)
-    
+    override suspend fun openInputStream(
+        deviceIndex: Int,
+        sampleRate: Int,
+        channels: Int
+    ): Boolean = audioDevice.openInputStream(deviceIndex, sampleRate, channels)
+
+    override suspend fun openOutputStream(
+        deviceIndex: Int,
+        sampleRate: Int,
+        channels: Int
+    ): Boolean = audioDevice.openOutputStream(deviceIndex, sampleRate, channels)
+
     // 实现非suspend的readAudio，委托给audioDevice的非suspend版本
-    override fun readAudio(buffer: CPointer<ShortVar>, frameCount: Int): Int = audioDevice.readAudio(buffer, frameCount)
-    
+    override fun readAudio(buffer: CPointer<ShortVar>, frameCount: Int): Int =
+        audioDevice.readAudio(buffer, frameCount)
+
     // 实现非suspend的writeAudio，委托给audioDevice的非suspend版本
-    override fun writeAudio(buffer: CPointer<ShortVar>, frameCount: Int): Int = audioDevice.writeAudio(buffer, frameCount)
-    
+    override fun writeAudio(buffer: CPointer<ShortVar>, frameCount: Int): Int =
+        audioDevice.writeAudio(buffer, frameCount)
+
     override suspend fun closeStreams(): Unit = audioDevice.closeStreams()
-    override fun play(audioData: ByteArray, length: Int): Boolean = audioDevice.play(audioData, length)
-    override fun playAsync(audioData: ByteArray, length: Int, onComplete: () -> Unit): Boolean = audioDevice.playAsync(audioData, length, onComplete)
+    override fun play(audioData: ByteArray, length: Int): Boolean =
+        audioDevice.play(audioData, length)
+
+    override fun playAsync(audioData: ByteArray, length: Int, onComplete: () -> Unit): Boolean =
+        audioDevice.playAsync(audioData, length, onComplete)
+
     override fun pause(): Unit = audioDevice.pause()
     override fun resume(): Unit = audioDevice.resume()
     override fun isPlaying(): Boolean = audioDevice.isPlaying()
