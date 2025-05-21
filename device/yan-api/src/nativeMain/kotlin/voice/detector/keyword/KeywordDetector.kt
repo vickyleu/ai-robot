@@ -53,7 +53,9 @@ class KeywordDetector : KeywordDetectorApi {
     private var consecutiveVoiceFrames = 0
     
     // 音频质量判断参数
-    private val minValidRms = 200.0  // 从300.0降低到200.0，降低最小能量要求
+    // 当 calculateRmsEnergy 归一化到 0~1 区间后，正常语音 RMS ≈ 0.03~0.3。
+    // 设置 0.02 作为下限，过滤极低噪声。
+    private val minValidRms = 0.02
     
     // 添加计数器以限制日志
     private var audioReadCounter = 0

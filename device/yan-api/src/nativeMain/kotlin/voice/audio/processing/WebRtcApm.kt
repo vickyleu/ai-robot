@@ -253,34 +253,21 @@ class WebRtcApm {
                     return audioData
                 }
                 
-                // 将重采样后的数据转换为float并进行WebRTC处理
+                // 计算需要送入 APM 的帧数（10 ms）
                 val processSize = minOf(done.toInt(), frameSize)
-                
-                // 找到最大值用于归一化
-                var maxAbs = 0.0f
+
+                // 1) 将重采样后的 float32 PCM (假设幅度范围为 -32768~32767) 归一化到 [-1,1]
                 for (i in 0 until processSize) {
-                    val abs = kotlin.math.abs(resampledBuffer[i])
-                    if (abs > maxAbs) maxAbs = abs
+                    inputFloatBuffer!![i] = resampledBuffer[i] / 32768f
                 }
-                
-                // 避免除以0，同时保持合理的增益
-                val scale = if (maxAbs < 0.001f) 1.0f else 1.0f / maxAbs
-                
-                // 归一化数据送入WebRTC处理
-                for (i in 0 until processSize) {
-                    inputFloatBuffer!![i] = resampledBuffer[i] * scale
-                }
-                
+
+                // 2) 调用 WebRTC APM 处理
                 webrtc_apm_process_stream(apmHandle, inputArrayPointer, outputArrayPointer)
-                
-                // 将浮点型数据转换回短整型，恢复原始幅度
+
+                // 3) 将处理后的 float [-1,1] 转回 ShortArray
                 return ShortArray(processSize) { i ->
-                    val sample = (outputFloatBuffer!![i] / scale * 32768.0f).toInt()
-                    when {
-                        sample > Short.MAX_VALUE -> Short.MAX_VALUE
-                        sample < Short.MIN_VALUE -> Short.MIN_VALUE
-                        else -> sample.toShort()
-                    }
+                    val f = outputFloatBuffer!![i].coerceIn(-1f, 1f)
+                    (f * 32767f).toInt().toShort()
                 }
             } finally {
                 // 释放临时缓冲区
