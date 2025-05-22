@@ -33,7 +33,6 @@ class WebRtcApm {
     private var inputChannels: Int = 0
 
     // VAD参数
-    private var vadThreshold: Float = 0.12f
     private var vadLogCounter: Int = 0
     private var consecutiveVadPositive: Int = 0
     private var lastVadResult: Boolean = false
@@ -402,8 +401,8 @@ class WebRtcApm {
 
     // 标准配置方法
     fun setVadThreshold(threshold: Float) {
-        this.vadThreshold = threshold.coerceIn(0.0f, 1.0f)
-        logger.info("VAD阈值设置为: $vadThreshold")
+        // WebRTC APM没有直接设置VAD阈值的接口，所以此方法仅记录日志
+        logger.info("VAD阈值设置请求: $threshold (注意: WebRTC APM内部VAD阈值不可直接设置)")
     }
 
     fun setVadDebounceFrames(frames: Int) {

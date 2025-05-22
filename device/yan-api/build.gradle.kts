@@ -65,6 +65,7 @@ kotlin {
             executable {
                 entryPoint = "main"
                 baseName = "yanshee"
+                freeCompilerArgs += listOf("-g", "-Xdebug-info")
                 linkerOpts(
                     "-lstdc++",
                     "-lm",       // 数学库
@@ -98,6 +99,7 @@ kotlin {
                     "-lexpat",
                     "-lm",
                     "-lz",
+                    "-g",
                     "-Wl,--gc-sections",
                     "-Wl,-rpath,/usr/local/lib/$baseName",
                 )

@@ -21,7 +21,6 @@ import kotlinx.cinterop.set
 import kotlinx.cinterop.free
 import kotlinx.cinterop.nativeHeap
 import voice.api.SpeechRecognizerApi
-import voice.audio.RecognitionMetrics
 import voice.util.LogManager
 import kotlin.time.ExperimentalTime
 import kotlin.math.sqrt
@@ -150,7 +149,7 @@ class VoskSpeechRecognizer : SpeechRecognizerApi {
                         text = voskResult.text,
                         isPartial = false,
                         confidence = voskResult.confidence,
-                        metrics = RecognitionMetrics(
+                        metrics = SpeechRecognizerApi.RecognitionMetrics(
                             processingTimeMs = endTime - startTime,
                             confidenceScore = voskResult.confidence,
                             errorCode = 0,
@@ -167,7 +166,7 @@ class VoskSpeechRecognizer : SpeechRecognizerApi {
                         text = voskResult.partialText,
                         isPartial = true,
                         confidence = voskResult.confidence,
-                        metrics = RecognitionMetrics(
+                        metrics = SpeechRecognizerApi.RecognitionMetrics(
                             processingTimeMs = endTime - startTime,
                             confidenceScore = voskResult.confidence,
                             errorCode = 0,
@@ -520,7 +519,7 @@ class VoskSpeechRecognizer : SpeechRecognizerApi {
             text = "",
             isPartial = true,
             confidence = 0.0f,
-            metrics = RecognitionMetrics(
+            metrics = SpeechRecognizerApi.RecognitionMetrics(
                 processingTimeMs = 0,
                 confidenceScore = 0.0f,
                 errorCode = 0,
@@ -533,17 +532,19 @@ class VoskSpeechRecognizer : SpeechRecognizerApi {
     /**
      * 创建错误结果
      */
-    private fun createErrorResult(errorMessage: String, timestamp: Long): SpeechRecognizerApi.RecognitionResult {
+    private fun createErrorResult(message: String, timestamp: Long): SpeechRecognizerApi.RecognitionResult {
         return SpeechRecognizerApi.RecognitionResult(
             success = false,
             text = "",
             isPartial = false,
             confidence = 0.0f,
-            metrics = RecognitionMetrics(
+            errorCode = 1,
+            errorMessage = message,
+            metrics = SpeechRecognizerApi.RecognitionMetrics(
                 processingTimeMs = 0,
                 confidenceScore = 0.0f,
                 errorCode = 1,
-                errorMessage = errorMessage,
+                errorMessage = message,
                 timestamp = timestamp
             )
         )

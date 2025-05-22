@@ -15,7 +15,6 @@ import voice.util.LogManager
 import voice.util.AudioDefaults
 import voice.util.AudioUtils
 import voice.audio.recognition.VoskSpeechRecognizer
-import voice.acquisition.portaudio.PortAudioAcquisition
 import voice.acquisition.portaudio.PortAudioDevice
 import voice.audio.processing.CallbackAudioProcessor
 
@@ -23,14 +22,14 @@ import voice.audio.processing.CallbackAudioProcessor
  * 关键词检测器
  * 使用 Vosk 进行关键词检测，通过 WebRTC APM 进行前处理
  */
-class KeywordDetector : KeywordDetectorApi {
+class KeywordDetector(
+    // 使用全局共享的音频处理器
+    private val audioProcessor: CallbackAudioProcessor = CallbackAudioProcessor()
+) : KeywordDetectorApi {
     private val logger = LogManager.getLogger("KeywordDetector")
     
     // Vosk 检测器实例
     private val voskDetector = VoskKeywordDetector()
-    
-    // 增加回调式音频处理器
-    private val audioProcessor = CallbackAudioProcessor()
     
     // 当前状态
     private var isListening = false
@@ -47,15 +46,11 @@ class KeywordDetector : KeywordDetectorApi {
     // 关键词列表
     private val keywords = mutableListOf<String>()
     
-    // 音频采集器
-    private val acquisition = PortAudioAcquisition()
-    
     // 协程作用域
     private val scope = CoroutineScope(Dispatchers.Default)
     
     // VAD参数 - 使用WebRTC提供的VAD功能
     private val vadDebounceFrames = 5   // 从10降低到5，减少所需的连续帧数
-    private var consecutiveVoiceFrames = 0
     
     // 音频质量判断参数
     // 当 calculateRmsEnergy 归一化到 0~1 区间后，正常语音 RMS ≈ 0.03~0.3。
@@ -64,6 +59,11 @@ class KeywordDetector : KeywordDetectorApi {
     
     // 添加计数器以限制日志
     private var audioReadCounter = 0
+    
+    /**
+     * 获取全局使用的音频处理器实例
+     */
+    fun getAudioProcessor(): CallbackAudioProcessor = audioProcessor
     
     /**
      * 初始化关键词检测器
@@ -87,16 +87,8 @@ class KeywordDetector : KeywordDetectorApi {
             return false
         }
         
-        // 获取 PortAudioDevice 的单例，并从中获取音频参数
-        val paDevice = PortAudioDevice.getInstance()
-        val currentRate = paDevice.getSampleRate()
-        val currentChannels = paDevice.getChannels()
-        
-        // 初始化音频处理器
-        if (!audioProcessor.initialize(currentRate, currentChannels)) {
-            logger.error("音频处理器初始化失败")
-            return false
-        }
+        // 确保音频处理器已初始化 - 但不自行管理，依赖外部传入或默认构造
+        // 只配置回调
         
         // 配置音频处理器回调
         audioProcessor.setProcessedAudioCallback { processedData, size ->
@@ -308,7 +300,7 @@ class KeywordDetector : KeywordDetectorApi {
         
         if (isInitialized) {
             voskDetector.release()
-            audioProcessor.release()
+            // 不再释放audioProcessor，因为它可能被其他组件共享使用
             isInitialized = false
         }
         

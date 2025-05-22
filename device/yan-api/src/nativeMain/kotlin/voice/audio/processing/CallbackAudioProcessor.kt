@@ -6,16 +6,17 @@ import kotlinx.cinterop.ExperimentalForeignApi
 import voice.acquisition.portaudio.PortAudioDevice
 import voice.util.LogManager
 import voice.util.AudioDefaults
-import voice.util.AudioUtils
-import voice.detector.keyword.KeywordDetector
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlin.math.abs
+import kotlinx.atomicfu.locks.SynchronizedObject
+import kotlinx.atomicfu.locks.synchronized
+import kotlinx.datetime.Clock
+import kotlin.concurrent.Volatile
 
 /**
  * 回调式音频处理器
- * 通过PortAudio回调直接处理音频，统一进行降噪、回声消除等处理
+ * 直接在PortAudio回调中使用WebRTC APM处理音频，支持VAD检测
  */
 class CallbackAudioProcessor : PortAudioDevice.AudioDataCallback {
     private val logger = LogManager.getLogger("CallbackAudioProcessor")
@@ -27,23 +28,25 @@ class CallbackAudioProcessor : PortAudioDevice.AudioDataCallback {
     // 音频设备实例
     private val audioDevice = PortAudioDevice.getInstance()
     
-    // APM实例
-    var apm: WebRtcApm? = null
+    // 音频处理锁
+    private val processingLock = SynchronizedObject()
     
-    // 音频缓冲区
-    private var inputBuffer = ShortArray(0)
-    private var outputBuffer = ShortArray(0)
+    // APM实例 - 私有管理，避免外部直接访问
+    @Volatile
+    private var apm: WebRtcApm? = null
     
-    // 音频参数
+    // 音频参数 - 每次接收到新数据时可能会被安全访问
+    @Volatile
     private var sampleRate = AudioDefaults.TARGET_SAMPLE_RATE
+    @Volatile
     private var channels = AudioDefaults.CHANNELS
     
-    // VAD状态
-    private var isVoiceDetected = false
-    private var vadDebounceCounter = 0
-    private val vadDebounceFrames = 3
+    // 上一次处理异常的时间，用于限制日志频率
+    private var lastErrorLogTime = 0L
+    private val errorLogThrottleMs = 1000 // 限制错误日志为每秒最多一条
     
-    // 回调接口
+    // 回调函数 - 保持与现有代码兼容的命名，增加同步保护
+    private val callbackLock = SynchronizedObject()
     private var processedAudioCallback: ((ShortArray, Int) -> Unit)? = null
     private var vadCallback: ((Boolean) -> Unit)? = null
     
@@ -59,33 +62,34 @@ class CallbackAudioProcessor : PortAudioDevice.AudioDataCallback {
         this.sampleRate = sampleRate
         this.channels = channels
         
-        // 创建并初始化APM实例
-        try {
-            apm = WebRtcApm().apply {
-                if (!initialize(sampleRate, channels)) {
+        synchronized(processingLock) {
+            try {
+                // 释放现有实例
+                apm?.release()
+                apm = null
+                
+                // 创建新实例
+                val newApm = WebRtcApm()
+                if (!newApm.initialize(sampleRate, channels)) {
                     logger.error("初始化WebRTC APM失败")
                     return false
                 }
                 
-                // 配置VAD参数
-                setVadThreshold(0.12f)
-                setVadDebounceFrames(2)
+                // 配置APM
+                newApm.setVadThreshold(0.12f)
+                newApm.setVadDebounceFrames(2)
+                newApm.enableEchoCancellation(true)
                 
-                // 启用回声消除
-                enableEchoCancellation(true)
+                apm = newApm
+                
+                logger.info("音频处理器初始化成功: ${sampleRate}Hz, ${channels}ch")
+                _processingState.value = ProcessingState.IDLE
+                return true
+            } catch (e: Exception) {
+                logger.error("初始化音频处理器失败: ${e.message}")
+                _processingState.value = ProcessingState.ERROR
+                return false
             }
-            
-            // 更新缓冲区大小
-            val frameSize = apm?.getApmFrameSize() ?: 160
-            inputBuffer = ShortArray(frameSize * channels)
-            outputBuffer = ShortArray(frameSize)
-            
-            logger.info("CallbackAudioProcessor初始化成功: ${sampleRate}Hz, ${channels}ch")
-            _processingState.value = ProcessingState.IDLE
-            return true
-        } catch (e: Exception) {
-            logger.error("初始化CallbackAudioProcessor失败: ${e.message}")
-            return false
         }
     }
     
@@ -105,7 +109,7 @@ class CallbackAudioProcessor : PortAudioDevice.AudioDataCallback {
                 return false
             }
             
-            // 设置音频回调
+            // 设置回调
             audioDevice.setAudioCallback(this)
             
             // 打开输入流，使用回调模式
@@ -119,12 +123,149 @@ class CallbackAudioProcessor : PortAudioDevice.AudioDataCallback {
             audioDevice.start()
             
             _processingState.value = ProcessingState.PROCESSING
-            logger.info("CallbackAudioProcessor开始处理: ${sampleRate}Hz, ${channels}ch")
+            logger.info("音频处理器开始工作: ${sampleRate}Hz, ${channels}ch")
             return true
         } catch (e: Exception) {
-            logger.error("启动音频处理失败: ${e.message}")
+            logger.error("启动音频处理器失败: ${e.message}")
             _processingState.value = ProcessingState.ERROR
             return false
+        }
+    }
+    
+    /**
+     * 处理PortAudio回调的音频数据
+     * 在回调模式中直接处理音频，不读取流
+     */
+    override fun onAudioInput(data: ShortArray, frameCount: Int) {
+        // 快速检查状态和数据
+        if (_processingState.value != ProcessingState.PROCESSING) return
+        if (data.isEmpty() || frameCount <= 0) return
+        
+        try {
+            // 获取本地APM副本，减少锁定和避免并发修改问题
+            val localApm = synchronized(processingLock) { apm }
+            
+            if (localApm == null) {
+                // 如果APM不存在，跳过处理但继续传递原始数据
+                sendProcessedAudio(data, frameCount)
+                return
+            }
+            
+            // 创建输入数据副本，以确保数据安全
+            val inputCopy = data.copyOf()
+            
+            // 使用try-catch捕获所有处理异常
+            try {
+                // 处理音频 - 不在锁内执行，以避免长时间阻塞
+                val processedData = localApm.processFrame(inputCopy)
+                
+                // 检测语音
+                val hasVoice = localApm.isVoiceDetected()
+                
+                // 发送处理结果
+                sendProcessedAudio(processedData, processedData.size)
+                
+                // 发送VAD结果
+                sendVadResult(hasVoice)
+            } catch (e: Exception) {
+                // 处理失败，使用原始数据，限制过多的错误日志
+                val now = Clock.System.now().toEpochMilliseconds()
+                if (now - lastErrorLogTime > errorLogThrottleMs) {
+                    logger.error("处理音频数据异常: ${e.message}")
+                    lastErrorLogTime = now
+                }
+                
+                // 即使处理失败，也发送原始数据，确保音频流不中断
+                sendProcessedAudio(data, frameCount)
+            }
+        } catch (e: Exception) {
+            // 捕获所有外层异常，确保回调不会崩溃
+            val now = Clock.System.now().toEpochMilliseconds()
+            if (now - lastErrorLogTime > errorLogThrottleMs) {
+                logger.error("回调处理致命错误: ${e.message}")
+                lastErrorLogTime = now
+            }
+        }
+    }
+    
+    /**
+     * 安全发送处理后的音频数据
+     */
+    private fun sendProcessedAudio(data: ShortArray, frameCount: Int) {
+        val callback = synchronized(callbackLock) { processedAudioCallback }
+        try {
+            callback?.invoke(data, frameCount)
+        } catch (e: Exception) {
+            val now = Clock.System.now().toEpochMilliseconds()
+            if (now - lastErrorLogTime > errorLogThrottleMs) {
+                logger.error("处理后音频回调执行异常: ${e.message}")
+                lastErrorLogTime = now
+            }
+        }
+    }
+    
+    /**
+     * 安全发送VAD结果
+     */
+    private fun sendVadResult(hasVoice: Boolean) {
+        val callback = synchronized(callbackLock) { vadCallback }
+        try {
+            callback?.invoke(hasVoice)
+        } catch (e: Exception) {
+            val now = Clock.System.now().toEpochMilliseconds()
+            if (now - lastErrorLogTime > errorLogThrottleMs) {
+                logger.error("VAD回调执行异常: ${e.message}")
+                lastErrorLogTime = now
+            }
+        }
+    }
+    
+    /**
+     * 设置处理后音频的回调
+     * 保持与现有代码的兼容性
+     */
+    fun setProcessedAudioCallback(callback: (ShortArray, Int) -> Unit) {
+        synchronized(callbackLock) {
+            this.processedAudioCallback = callback
+        }
+    }
+    
+    /**
+     * 设置VAD状态变化回调
+     * 保持与现有代码的兼容性
+     */
+    fun setVadCallback(callback: (Boolean) -> Unit) {
+        synchronized(callbackLock) {
+            this.vadCallback = callback
+        }
+    }
+    
+    /**
+     * 检查当前是否检测到语音
+     * 直接查询当前APM实例的VAD状态
+     */
+    fun isVoiceDetected(): Boolean {
+        // 使用安全的线程安全访问
+        return synchronized(processingLock) {
+            apm?.isVoiceDetected() ?: false
+        }
+    }
+    
+    /**
+     * 获取当前的APM实例
+     * 提供外部安全访问APM的方式
+     */
+    fun getApm(): WebRtcApm? {
+        return synchronized(processingLock) { apm?.let { it } }
+    }
+    
+    /**
+     * 设置回声消除状态
+     * 提供外部控制回声消除的方式
+     */
+    fun setEchoCancellationEnabled(enabled: Boolean) {
+        synchronized(processingLock) {
+            apm?.enableEchoCancellation(enabled)
         }
     }
     
@@ -140,86 +281,15 @@ class CallbackAudioProcessor : PortAudioDevice.AudioDataCallback {
             // 移除回调
             audioDevice.setAudioCallback(null)
             
-            // 关闭流
+            // 停止设备
             audioDevice.stop()
             
             _processingState.value = ProcessingState.IDLE
-            logger.info("CallbackAudioProcessor已停止处理")
+            logger.info("音频处理器已停止")
         } catch (e: Exception) {
-            logger.error("停止音频处理失败: ${e.message}")
+            logger.error("停止音频处理器失败: ${e.message}")
             _processingState.value = ProcessingState.ERROR
         }
-    }
-    
-    /**
-     * 设置处理后音频的回调
-     */
-    fun setProcessedAudioCallback(callback: (ShortArray, Int) -> Unit) {
-        this.processedAudioCallback = callback
-    }
-    
-    /**
-     * 设置VAD状态变化回调
-     */
-    fun setVadCallback(callback: (Boolean) -> Unit) {
-        this.vadCallback = callback
-    }
-    
-    /**
-     * 处理来自PortAudio的音频数据
-     */
-    override fun onAudioInput(data: ShortArray, frameCount: Int) {
-        if (_processingState.value != ProcessingState.PROCESSING || apm == null) {
-            return
-        }
-        
-        try {
-            // 检查数据帧大小
-            if (frameCount <= 0 || data.isEmpty()) {
-                return
-            }
-            
-            // 使用APM处理音频
-            val processedData = apm!!.processFrame(data)
-            
-            // 检查VAD状态
-            val vadResult = apm!!.isVoiceDetected()
-            
-            // 音频能量
-            val energy = apm!!.calculateEnergy(processedData)
-            val hasSignificantEnergy = energy > 0.02 && energy < 0.9 // 避免饱和
-            
-            // VAD去抖动
-            val oldVadState = isVoiceDetected
-            if (vadResult && hasSignificantEnergy) {
-                vadDebounceCounter++
-                if (vadDebounceCounter >= vadDebounceFrames && !isVoiceDetected) {
-                    isVoiceDetected = true
-                    vadCallback?.invoke(true)
-                    logger.debug("VAD状态: 有语音")
-                }
-            } else {
-                vadDebounceCounter = 0
-                if (isVoiceDetected) {
-                    isVoiceDetected = false
-                    vadCallback?.invoke(false)
-                    logger.debug("VAD状态: 无语音")
-                }
-            }
-            
-            // 调用回调传递处理后的音频
-            processedAudioCallback?.invoke(processedData, processedData.size)
-            
-        } catch (e: Exception) {
-            logger.error("处理音频数据失败: ${e.message}")
-        }
-    }
-    
-    /**
-     * 获取当前VAD状态
-     */
-    fun isVoiceDetected(): Boolean {
-        return isVoiceDetected
     }
     
     /**
@@ -230,10 +300,22 @@ class CallbackAudioProcessor : PortAudioDevice.AudioDataCallback {
             stopProcessing()
         }
         
-        apm?.release()
-        apm = null
+        // 清除回调
+        synchronized(callbackLock) {
+            processedAudioCallback = null
+            vadCallback = null
+        }
+        
+        // 释放APM
+        synchronized(processingLock) {
+            try {
+                apm?.release()
+            } finally {
+                apm = null
+            }
+        }
         
         _processingState.value = ProcessingState.IDLE
-        logger.info("CallbackAudioProcessor资源已释放")
+        logger.info("音频处理器资源已释放")
     }
 } 

@@ -24,14 +24,18 @@ import voice.core.config.VoiceAssistantConfig
 import voice.detector.keyword.KeywordDetector
 import voice.synthesis.PiperSpeechSynthesizer
 import voice.util.LogManager
+import voice.util.AudioUtils
 import kotlin.time.ExperimentalTime
+import kotlin.concurrent.Volatile
 
 /**
  * 语音助手实现
  * 使用Vosk进行语音识别
  */
 class VoiceAssistant(
-    private val config: VoiceAssistantConfig = VoiceAssistantConfig()
+    private val config: VoiceAssistantConfig = VoiceAssistantConfig(),
+    // 音频处理器 - 全局单例，由外部传入或使用默认实例
+    private val audioProcessor: CallbackAudioProcessor = CallbackAudioProcessor()
 ) : VoiceAssistantApi {
     private val logger = LogManager.getLogger("VoiceAssistant")
 
@@ -47,17 +51,15 @@ class VoiceAssistant(
     private var isEchoCancellationEnabled = false
     private var isTransientSuppressionEnabled = false
 
-    // 核心组件
-    private val keywordDetector = KeywordDetector()
+    // 核心组件 - 传递共享的音频处理器实例
+    private val keywordDetector = KeywordDetector(audioProcessor)
     private val audioDevice = PortAudioDevice.getInstance()
     private val speechSynthesizer = PiperSpeechSynthesizer()
-    private val audioProcessor = CallbackAudioProcessor()
 
     // 协程作用域
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private var stateMonitorJob: Job? = null
     private var timeoutJob: Job? = null
-    private var assistantJob: Job? = null
 
     // 回调
     private var speechCallback: ((String) -> Unit)? = null
@@ -67,6 +69,11 @@ class VoiceAssistant(
     // 超时设置 (毫秒)
     private val activeListeningTimeout = 10000L
     private val keywords = mutableListOf<String>()
+
+    /**
+     * 获取所有组件共享的音频处理器
+     */
+    fun getSharedAudioProcessor(): CallbackAudioProcessor = audioProcessor
 
     /**
      * 初始化语音助手
@@ -129,7 +136,7 @@ class VoiceAssistant(
                     isEchoCancellationEnabled = true
                 }
                 
-                logger.info("音频处理器初始化成功，${if (config.enableEchoCancellation) "已启用" else "已禁用"}回声消除和瞬时噪声抑制")
+                logger.info("音频处理器初始化成功，${if (config.enableEchoCancellation) "已启用" else "已禁用"}回声消除")
             } catch (e: Exception) {
                 logger.error("音频处理器初始化失败: ${e.message}")
                 // 初始化失败不影响整体流程
@@ -341,20 +348,18 @@ class VoiceAssistant(
         // 取消所有任务
         timeoutJob?.cancel()
         stateMonitorJob?.cancel()
-        assistantJob?.cancel()
-        assistantJob = null
 
         // 停止组件
         try {
             keywordDetector.stopListening()
             audioDevice.stop()
-                    } catch (e: Exception) {
+        } catch (e: Exception) {
             logger.error("停止组件时出错: ${e.message}")
         }
 
         isActivated = false
-                        isRunning = false
-                        _assistantState.value = VoiceAssistantApi.AssistantState.IDLE
+        isRunning = false
+        _assistantState.value = VoiceAssistantApi.AssistantState.IDLE
         stateChangeCallback?.invoke(_assistantState.value)
         logger.info("语音助手已停止")
     }
@@ -382,9 +387,9 @@ class VoiceAssistant(
         try {
             keywordDetector.release()
             speechSynthesizer.release()
-            audioProcessor.release()
-            // 不释放全局的audioDevice，它可能被其他组件使用
-            } catch (e: Exception) {
+            // 不释放audioProcessor，因为它可能被其他组件使用
+            // 也不释放全局的audioDevice，它可能被其他组件使用
+        } catch (e: Exception) {
             logger.error("清理资源时出错: ${e.message}")
         }
     }
@@ -414,11 +419,8 @@ class VoiceAssistant(
             val singleton = WebRtcApmSingleton
             singleton.getInstance(16000, 1)?.enableEchoCancellation(enabled)
             
-            // 设置当前处理器的APM实例
-            val apm = audioProcessor.apm
-            apm?.let {
-                it.enableEchoCancellation(enabled)
-            }
+            // 设置当前处理器的APM实例 - 使用安全方法
+            audioProcessor.setEchoCancellationEnabled(enabled)
         } catch (e: Exception) {
             logger.error("设置APM回声消除失败: ${e.message}")
         }
@@ -445,7 +447,6 @@ class VoiceAssistant(
      * @return 诊断文本
      */
     fun generateDiagnosis(): String {
-        logger
         val sb = StringBuilder()
         sb.appendLine("==== 语音助手诊断 ====")
         sb.appendLine("初始化状态: $isInitialized")
@@ -511,7 +512,7 @@ class VoiceAssistant(
 
         // 播放提示音
         try {
-            audioDevice.playAudio(beep)
+            audioDevice.play(AudioUtils.shortArrayToByteArray(beep), beep.size * 2)
             logger.debug("提示音播放完成")
         } catch (e: Exception) {
             logger.error("播放提示音失败: ${e.message}")
@@ -690,7 +691,7 @@ class VoiceAssistant(
         }
 
         // 使用音频设备播放
-        audioDevice.playAudio(beep)
+        audioDevice.play(AudioUtils.shortArrayToByteArray(beep), beep.size * 2)
     }
 
     /**
