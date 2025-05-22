@@ -32,6 +32,7 @@ import platform.posix.pclose
 import platform.posix.popen
 import voice.acquisition.portaudio.PortAudioDevice
 import voice.api.SpeechSynthesizerApi
+import voice.util.AudioDefaults
 
 /**
  * Piper语音合成器实现
@@ -71,7 +72,7 @@ class PiperSpeechSynthesizer : SpeechSynthesizerApi {
         checkPiperLibLoaded()
         // 假设主流程已经初始化并启动了PortAudioDevice，若未启动则尝试启动
         if (audioPlayer.deviceState.value == voice.hal.AudioDevice.AudioDeviceState.IDLE) {
-            audioPlayer.initialize("default", 16000)
+            audioPlayer.initialize("default", AudioDefaults.TARGET_SAMPLE_RATE)
         }
     }
 

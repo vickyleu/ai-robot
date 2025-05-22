@@ -319,6 +319,13 @@ class PortAudioAcquisition(
         channels: Int
     ): Boolean = audioDevice.openInputStream(deviceIndex, sampleRate, channels)
 
+    override suspend fun openInputStreamWithCallback(
+        deviceIndex: Int,
+        sampleRate: Int,
+        channels: Int,
+        callback: PortAudioDevice.AudioDataCallback?
+    ): Boolean = audioDevice.openInputStreamWithCallback(deviceIndex, sampleRate, channels, callback)
+
     override suspend fun openOutputStream(
         deviceIndex: Int,
         sampleRate: Int,

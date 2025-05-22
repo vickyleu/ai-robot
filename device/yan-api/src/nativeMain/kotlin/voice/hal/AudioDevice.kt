@@ -6,6 +6,8 @@ import kotlinx.cinterop.CPointer
 import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.cinterop.ShortVar
 import kotlinx.coroutines.flow.StateFlow
+import voice.acquisition.portaudio.PortAudioDevice.AudioDataCallback
+import voice.util.AudioDefaults
 
 /**
  * 音频设备接口
@@ -36,7 +38,7 @@ interface AudioDevice {
      * @param sampleRate 采样率
      * @return 初始化是否成功
      */
-    fun initialize(deviceName: String = "", sampleRate: Int = 16000): Boolean
+    fun initialize(deviceName: String = "", sampleRate: Int = AudioDefaults.TARGET_SAMPLE_RATE): Boolean
     
     /**
      * 开始音频流
@@ -76,6 +78,21 @@ interface AudioDevice {
      * @return 是否成功打开
      */
     suspend fun openInputStream(deviceIndex: Int, sampleRate: Int, channels: Int): Boolean
+    
+    /**
+     * 打开带回调的音频输入流
+     * @param deviceIndex 设备索引，-1表示默认设备
+     * @param sampleRate 采样率
+     * @param channels 通道数
+     * @param callback 音频数据回调
+     * @return 是否成功打开
+     */
+    suspend fun openInputStreamWithCallback(
+        deviceIndex: Int = -1,
+        sampleRate: Int = AudioDefaults.TARGET_SAMPLE_RATE,
+        channels: Int = AudioDefaults.CHANNELS,
+        callback: AudioDataCallback?
+    ): Boolean
     
     /**
      * 打开音频输出流

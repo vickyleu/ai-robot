@@ -17,7 +17,9 @@ import kotlinx.datetime.Clock.System
 import voice.acquisition.portaudio.PortAudioDevice
 import voice.api.KeywordDetectorApi
 import voice.api.VoiceAssistantApi
+import voice.audio.processing.WebRtcApm
 import voice.audio.processing.WebRtcApmSingleton
+import voice.audio.processing.CallbackAudioProcessor
 import voice.core.config.VoiceAssistantConfig
 import voice.detector.keyword.KeywordDetector
 import voice.synthesis.PiperSpeechSynthesizer
@@ -49,6 +51,7 @@ class VoiceAssistant(
     private val keywordDetector = KeywordDetector()
     private val audioDevice = PortAudioDevice.getInstance()
     private val speechSynthesizer = PiperSpeechSynthesizer()
+    private val audioProcessor = CallbackAudioProcessor()
 
     // 协程作用域
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -109,20 +112,29 @@ class VoiceAssistant(
                 // 语音合成初始化失败不影响整体流程
             }
             
-            // 初始化WebRTC APM
+            // 初始化CallbackAudioProcessor
             try {
-                // 使用实际的音频设备采样率
+                // 获取实际的音频设备采样率和通道数
                 val actualSampleRate = audioDevice.getSampleRate()
-                WebRtcApmSingleton.getInstance(actualSampleRate, 1, true)
-                setEchoCancellationEnabled(true)
-                isEchoCancellationEnabled = true
-                isTransientSuppressionEnabled = true
-                logger.info("WebRTC APM 初始化成功，已启用回声消除和瞬时噪声抑制")
+                val actualChannels = audioDevice.getChannels()
+                
+                // 初始化音频处理器
+                if (!audioProcessor.initialize(actualSampleRate, actualChannels)) {
+                    logger.error("音频处理器初始化失败")
+                }
+                
+                // 启用回声消除
+                if (config.enableEchoCancellation) {
+                    setApmEchoCancellation(true)
+                    isEchoCancellationEnabled = true
+                }
+                
+                logger.info("音频处理器初始化成功，${if (config.enableEchoCancellation) "已启用" else "已禁用"}回声消除和瞬时噪声抑制")
             } catch (e: Exception) {
-                logger.error("WebRTC APM 初始化失败: ${e.message}")
-                // APM初始化失败不影响整体流程
+                logger.error("音频处理器初始化失败: ${e.message}")
+                // 初始化失败不影响整体流程
             }
-
+            
             // 启动状态监控
             startMonitoring()
 
@@ -370,6 +382,7 @@ class VoiceAssistant(
         try {
             keywordDetector.release()
             speechSynthesizer.release()
+            audioProcessor.release()
             // 不释放全局的audioDevice，它可能被其他组件使用
             } catch (e: Exception) {
             logger.error("清理资源时出错: ${e.message}")
@@ -382,11 +395,32 @@ class VoiceAssistant(
      */
     fun setEchoCancellationEnabled(enabled: Boolean) {
         try {
-            WebRtcApmSingleton.enableEchoCancellation(enabled)
+            // 使用回调音频处理器管理的APM
+            setApmEchoCancellation(enabled)
+            
             isEchoCancellationEnabled = enabled
             logger.info("回声消除功能已${if (enabled) "启用" else "禁用"}")
         } catch (e: Exception) {
             logger.error("设置回声消除功能失败: ${e.message}")
+        }
+    }
+    
+    /**
+     * 内部方法：设置所有APM实例的回声消除状态
+     */
+    private fun setApmEchoCancellation(enabled: Boolean) {
+        try {
+            // 使用WebRtcApmSingleton全局设置
+            val singleton = WebRtcApmSingleton
+            singleton.getInstance(16000, 1)?.enableEchoCancellation(enabled)
+            
+            // 设置当前处理器的APM实例
+            val apm = audioProcessor.apm
+            apm?.let {
+                it.enableEchoCancellation(enabled)
+            }
+        } catch (e: Exception) {
+            logger.error("设置APM回声消除失败: ${e.message}")
         }
     }
     
@@ -563,7 +597,7 @@ class VoiceAssistant(
                         val outputStreamOpened = audioDevice.openOutputStream(
                             deviceIndex = -1,
                             sampleRate = config.sampleRate,
-                            channels = 2
+                            channels = config.channels
                         )
                         
                         if (!outputStreamOpened) {

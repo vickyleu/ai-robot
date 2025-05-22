@@ -11,5 +11,5 @@ object AudioDefaults {
     const val TARGET_SAMPLE_RATE = 16_000
 
     /** 系统默认通道数（Microsemi 强制立体声） */
-    const val CHANNELS = 2
+    const val CHANNELS = 1
 } 

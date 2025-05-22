@@ -16,6 +16,8 @@ import voice.util.AudioDefaults
 import voice.util.AudioUtils
 import voice.audio.recognition.VoskSpeechRecognizer
 import voice.acquisition.portaudio.PortAudioAcquisition
+import voice.acquisition.portaudio.PortAudioDevice
+import voice.audio.processing.CallbackAudioProcessor
 
 /**
  * 关键词检测器
@@ -26,6 +28,9 @@ class KeywordDetector : KeywordDetectorApi {
     
     // Vosk 检测器实例
     private val voskDetector = VoskKeywordDetector()
+    
+    // 增加回调式音频处理器
+    private val audioProcessor = CallbackAudioProcessor()
     
     // 当前状态
     private var isListening = false
@@ -82,11 +87,29 @@ class KeywordDetector : KeywordDetectorApi {
             return false
         }
         
-        // 初始化 WebRTC APM
-        WebRtcApmSingleton.getInstance(
-            sampleRate = AudioDefaults.TARGET_SAMPLE_RATE,
-            channels = 1
-        )
+        // 获取 PortAudioDevice 的单例，并从中获取音频参数
+        val paDevice = PortAudioDevice.getInstance()
+        val currentRate = paDevice.getSampleRate()
+        val currentChannels = paDevice.getChannels()
+        
+        // 初始化音频处理器
+        if (!audioProcessor.initialize(currentRate, currentChannels)) {
+            logger.error("音频处理器初始化失败")
+            return false
+        }
+        
+        // 配置音频处理器回调
+        audioProcessor.setProcessedAudioCallback { processedData, size ->
+            // 使用Vosk检测处理后的音频
+            if (isListening && size > 0) {
+                voskDetector.detect(processedData)
+            }
+        }
+        
+        // 配置VAD回调
+        audioProcessor.setVadCallback { hasVoice ->
+            // 可选：处理VAD状态变化
+        }
         
         isInitialized = true
         _detectorState.value = KeywordDetectorApi.DetectorState.IDLE
@@ -133,14 +156,10 @@ class KeywordDetector : KeywordDetectorApi {
             return true
         }
         
-        // 启动底层音频采集
-        try {
-            acquisition.startCapture { byteArray, length ->
-                // 将原始PCM字节发送到检测逻辑
-                detect(byteArray, length)
-            }
-        } catch (e: Exception) {
-            logger.error("启动音频采集失败: ${e.message}")
+        // 使用回调式处理器启动音频处理
+        val success = audioProcessor.startProcessing()
+        if (!success) {
+            logger.error("启动音频处理器失败")
             return false
         }
 
@@ -161,8 +180,8 @@ class KeywordDetector : KeywordDetectorApi {
             return
         }
         
-        // 停止采集
-        acquisition.stopCapture()
+        // 停止音频处理器
+        audioProcessor.stopProcessing()
 
         isListening = false
         _detectorState.value = KeywordDetectorApi.DetectorState.IDLE
@@ -177,37 +196,9 @@ class KeywordDetector : KeywordDetectorApi {
      * @return 是否检测到关键词
      */
     fun detect(audioData: ByteArray, length: Int): Boolean {
-        if (!isInitialized || !isListening) {
-            return false
-        }
-        
-        try {
-            // 将ByteArray转换为ShortArray
-            val shorts = AudioUtils.byteArrayToShortArray(audioData, length)
-            
-            // 使用ShortArray版本处理
-            return processAudioFrame(shorts, shorts.size)
-        } catch (e: Exception) {
-            logger.error("关键词检测出错: ${e.message}")
-            return false
-        }
-    }
-    
-    /**
-     * 计算音频能量(RMS)
-     */
-    private fun calculateRmsEnergy(audio: ShortArray): Double {
-        if (audio.isEmpty()) return 0.0
-        
-        var sum = 0.0
-        for (sample in audio) {
-            // 直接计算平方和，不做归一化
-            sum += (sample * sample).toDouble()
-        }
-        
-        // 计算RMS并归一化到[0,1]范围
-        val rms = kotlin.math.sqrt(sum / audio.size)
-        return rms / Short.MAX_VALUE
+        // 在回调模式下，该方法仅作为兼容性API存在
+        // 实际处理已在audioProcessor.onAudioInput中完成
+        return false
     }
     
     /**
@@ -220,63 +211,73 @@ class KeywordDetector : KeywordDetectorApi {
         if (!isInitialized) {
             return false
         }
-        
+
         try {
-            // 使用 WebRTC APM 进行音频预处理和VAD检测
-            val processedData = WebRtcApmSingleton.processFrame(audioFrame)
-            
-            // 使用WebRTC内置VAD进行语音检测
-            val hasVoiceActivity = WebRtcApmSingleton.isVoiceDetected()
-            
-            // 计算音频能量，作为额外过滤条件
-            val rms = calculateRmsEnergy(processedData)
-            
-            // 只有VAD和能量都满足条件才认为有语音活动
-            val isRealVoice = hasVoiceActivity && rms > minValidRms
-            
-            // 每100帧记录一次状态，帮助调试
-            if (audioReadCounter++ % 100 == 0) {
-                // 添加最大值信息到日志
-                var maxValue = 0.0
-                for (sample in processedData) {
-                    val abs = kotlin.math.abs(sample.toDouble())
-                    if (abs > maxValue) maxValue = abs
-                }
-                logger.debug("当前音频能量: $rms, 最大值: $maxValue, VAD状态: $hasVoiceActivity isRealVoice:$isRealVoice")
+            // 基本输入检查
+            if (audioFrame.isEmpty() || frameSize <= 0) {
+                return false
             }
-            
-            if (isRealVoice) {
-                consecutiveVoiceFrames++
-                
-                // 稳定检测 - 至少连续N帧有语音才认为是语音段
-                if (consecutiveVoiceFrames >= vadDebounceFrames) {
-                    // 使用 Vosk 检测关键词
-                    // 传递VAD结果为true，避免重复计算
-                    val detected = voskDetector.detect(processedData, true)
-                    
-                    if (detected) {
-                        logger.info("✓ 检测到关键词!")
-                        _detectorState.value = KeywordDetectorApi.DetectorState.DETECTED
-                        // 重置语音帧计数器
-                        consecutiveVoiceFrames = 0
-                        return true
-                    }
+
+            // 简单的数据质量检查
+            var validSamples = 0
+            for (sample in audioFrame) {
+                if (kotlin.math.abs(sample.toInt()) > 50) { // 超过基本噪声阈值
+                    validSamples++
                 }
+            }
+
+            val validRatio = validSamples.toDouble() / audioFrame.size
+
+            // 如果有效数据太少，跳过处理
+            if (validRatio < 0.01) {
+                if (audioReadCounter++ % 500 == 0) {
+                    logger.debug("有效样本比例过低: ${(validRatio * 100).toInt()}%")
+                }
+                return false
+            }
+            // 获取当前设备实际采样率和通道数
+            val paDevice = PortAudioDevice.getInstance()
+            val currentRate = paDevice.getSampleRate()
+            val currentChannels = paDevice.getChannels()
+
+            // 获取/创建对应的 WebRTC APM 实例
+            // APM实例将根据实际的currentRate和currentChannels进行内部配置或重采样
+            val apm = WebRtcApmSingleton.getInstance(currentRate, currentChannels) ?: return false
+
+            // 使用APM处理音频
+            // WebRtcApm.processFrame 内部会处理重采样到APM的目标速率（如16kHz）
+            val processedData = apm.processFrame(audioFrame)
+
+            // 查询VAD结果 (APM内部的VAD是基于其处理速率的，例如16kHz)
+            val hasVoiceActivity = apm.isVoiceDetected()
+
+            // 计算处理后的能量 (能量计算也是基于APM处理后的数据)
+            val processedRms = apm.calculateEnergy(processedData)
+
+            // 语音判定：VAD + 能量阈值 + 数据质量
+            val isRealVoice = hasVoiceActivity &&
+                    processedRms > minValidRms &&
+                    processedRms < 1.0 && // 避免异常高能量
+                    validRatio > 0.1
+
+            // 简化日志输出
+            if (audioReadCounter++ % 1000 == 0 || (isRealVoice && audioReadCounter % 100 == 0)) {
+                logger.debug("音频状态: RMS=$processedRms, VAD=$hasVoiceActivity, 有效=${(validRatio*100).toInt()}%, 语音=$isRealVoice")
+            }
+
+            // 只有检测到真实语音时才进行关键词检测
+            return if (isRealVoice) {
+                voskDetector.detect(processedData)
             } else {
-                // 如果当前帧没有语音活动，重置连续计数
-                if (consecutiveVoiceFrames > 0) {
-                    consecutiveVoiceFrames = 0
-                }
+                false
             }
-            
-            return false
+
         } catch (e: Exception) {
-            logger.error("关键词处理出错: ${e.message}")
-            e.printStackTrace()
+            logger.error("处理音频帧异常: ${e.message}")
             return false
         }
     }
-    
+
     /**
      * 设置敏感度
      * @param sensitivity 敏感度值 [0,1]
@@ -307,7 +308,7 @@ class KeywordDetector : KeywordDetectorApi {
         
         if (isInitialized) {
             voskDetector.release()
-            acquisition.release()
+            audioProcessor.release()
             isInitialized = false
         }
         

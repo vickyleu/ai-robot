@@ -109,19 +109,48 @@ class VoskKeywordDetector {
     }
     
     /**
+     * 处理音频数据 - ShortArray版本
+     * @param audioData 短整型音频数据
+     * @return 是否检测到关键词
+     */
+    fun processAudio(audioData: ShortArray): Boolean {
+        if (!isInitialized) {
+            return false
+        }
+        
+        try {
+            // 将ShortArray转换为ByteArray
+            val tempBuffer = ByteArray(audioData.size * 2)
+            val audioBytes = AudioUtils.shortArrayToByteArray(audioData, audioData.size, tempBuffer)
+            
+            // 使用已有的detect方法处理字节数据
+            return detect(tempBuffer.copyOf(audioBytes))
+        } catch (e: Exception) {
+            logger.error("处理音频数据异常: ${e.message}")
+            return false
+        }
+    }
+    
+    /**
      * 检测音频中是否含有关键词
      * @param audioData 音频数据
      * @param hasVoiceActivity 是否已检测到语音活动(可选，null表示未预先检测)
      * @return 是否检测到关键词
      */
     fun detect(audioData: ShortArray, hasVoiceActivity: Boolean? = null): Boolean {
-
+        // 转换为字节数组并调用ByteArray版本
+        val tempBuffer = ByteArray(audioData.size * 2)
+        val audioBytes = AudioUtils.shortArrayToByteArray(audioData, audioData.size, tempBuffer)
+        return detect(tempBuffer.copyOf(audioBytes))
+    }
+    
+    /**
+     * 检测音频中是否含有关键词 - ByteArray版本
+     * @param audioData 字节数组音频数据
+     * @return 是否检测到关键词
+     */
+    fun detect(audioData: ByteArray): Boolean {
         if (!isInitialized) {
-            return false
-        }
-        
-        // 如果明确指定无语音活动，直接返回false，节省处理资源
-        if (hasVoiceActivity != null && !hasVoiceActivity) {
             return false
         }
         
@@ -132,29 +161,12 @@ class VoskKeywordDetector {
                 return false
             }
             
-            // 使用AudioUtils进行数据转换
-            val tempBuffer = ByteArray(audioData.size * 2)
-            val audioBytes = AudioUtils.shortArrayToByteArray(audioData, audioData.size, tempBuffer)
-            
             // 积累音频数据
-            accumulateAudio(tempBuffer.copyOf(audioBytes))
+            accumulateAudio(audioData)
             
             // 只有音频缓冲区有足够数据时才进行处理
             if (audioBuffer.size < 1000) {
                 return false
-            }
-            
-            // 计算能量值，帮助诊断
-            var energy = 0.0
-            for (i in 0 until audioData.size) {
-                energy += audioData[i] * audioData[i]
-            }
-            if (energy > 0 && audioData.size > 0) {
-                energy = kotlin.math.sqrt(energy / audioData.size)
-                // 每100帧记录一次能量值，帮助调试
-                if (Clock.System.now().toEpochMilliseconds() % 100 == 0L) {
-                    logger.debug("当前音频帧能量: $energy")
-                }
             }
             
             // 处理音频数据

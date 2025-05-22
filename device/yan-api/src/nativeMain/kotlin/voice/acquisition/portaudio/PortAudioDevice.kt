@@ -10,6 +10,8 @@ import com.airobot.portaudiointerop.Pa_GetDeviceInfo
 import com.airobot.portaudiointerop.Pa_GetErrorText
 import com.airobot.portaudiointerop.Pa_Initialize
 import com.airobot.portaudiointerop.Pa_OpenStream
+import com.airobot.portaudiointerop.PaAlsaStreamInfo
+import com.airobot.portaudiointerop.paALSA
 import com.airobot.portaudiointerop.Pa_ReadStream
 import com.airobot.portaudiointerop.Pa_StartStream
 import com.airobot.portaudiointerop.Pa_StopStream
@@ -25,9 +27,11 @@ import kotlinx.cinterop.COpaquePointerVar
 import kotlinx.cinterop.CPointer
 import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.cinterop.ShortVar
+import kotlinx.cinterop.sizeOf
 import kotlinx.cinterop.alloc
 import kotlinx.cinterop.allocArray
 import kotlinx.cinterop.get
+import kotlinx.cinterop.convert
 import kotlinx.cinterop.nativeHeap
 import kotlinx.cinterop.pointed
 import kotlinx.cinterop.ptr
@@ -62,8 +66,24 @@ import voice.hal.LinuxAudioDeviceSelector
 import voice.util.AudioDefaults
 import voice.util.LogManager
 import kotlin.concurrent.Volatile
-import kotlin.math.sqrt
+import kotlin.math.abs
 import kotlin.time.ExperimentalTime
+import com.airobot.portaudiointerop.PaStreamCallback
+import com.airobot.portaudiointerop.PaStreamCallbackResult
+import com.airobot.portaudiointerop.PaStreamCallbackTimeInfo
+import com.airobot.portaudiointerop.Pa_GetDefaultInputDevice
+import com.airobot.portaudiointerop.paContinue
+import com.airobot.portaudiointerop.paComplete
+import kotlinx.cinterop.reinterpret
+import kotlinx.cinterop.staticCFunction
+import kotlinx.coroutines.withContext
+import com.airobot.portaudiointerop.paComplete
+import kotlinx.cinterop.CFunction
+import kotlinx.cinterop.CPointed
+import kotlinx.cinterop.StableRef
+import kotlinx.cinterop.asStableRef
+import kotlinx.cinterop.cstr
+import kotlinx.cinterop.memScoped
 
 /**
  * PortAudio音频设备实现类
@@ -157,6 +177,9 @@ class PortAudioDevice private constructor() : AudioDevice {
     // 当前采样率
     private var currentSampleRate = AudioDefaults.TARGET_SAMPLE_RATE
 
+    // 当前输入通道数
+    private var currentInputChannels: Int = AudioDefaults.CHANNELS // Default to a sensible value
+
     // Linux设备选择器
     private val deviceSelector = LinuxAudioDeviceSelector()
 
@@ -196,83 +219,71 @@ class PortAudioDevice private constructor() : AudioDevice {
     // 非suspend版本的readAudio - 作为主要实现
     override fun readAudio(buffer: CPointer<ShortVar>, frameCount: Int): Int {
         synchronized(portAudioLock) {
-            // 防御性检查：确保frameCount > 0
             if (frameCount <= 0) {
                 logger.error("⚠️ readAudio: 无效的帧数要求: $frameCount")
                 return 0
             }
 
-            // 先检查输入流是否活跃
             val isActive = synchronized(streamStateLock) { inputStreamActive }
 
-            // 检查流状态
             if (!isActive || inputStreamPtr.value == null) {
-                if (audioReadCounter++ % 500 == 0) {
-                    logger.debug("readAudio: stream inactive (active=$isActive, ptr=${if (inputStreamPtr.value != null) "valid" else "null"})")
-                }
-                // 填充静音
+                // 填充静音而不是返回0
                 for (i in 0 until frameCount) {
                     buffer[i] = 0
                 }
-                return frameCount // 返回读取的帧数（静音）
+                return frameCount
             }
 
-            // 直接调用PortAudio，不涉及协程
             val result = Pa_ReadStream(inputStreamPtr.value, buffer, frameCount.toUInt())
 
-            // 音频能量验证，每200帧检查一次，帮助排查设备未捕获声音的问题
-            if (audioReadCounter++ % 1000 == 0) {
-                var energy = 0.0
-                for (i in 0 until frameCount) {
-                    energy += buffer[i] * buffer[i]
-                }
-                if (energy > 0) {
-                    energy = sqrt(energy / frameCount)
-                    logger.debug("readAudio: avg energy=$energy")
-                } else {
-                    logger.debug("readAudio: silence (energy=0)")
-                }
-            }
-
-            if (result == paNoError || result == paInputOverflowed) {
-                // paInputOverflowed只是表示部分数据被丢弃，不是真正的错误
-                // 正常返回，重置连续错误计数
-                if (consecutiveErrors > 0) {
+            // 改进错误处理逻辑
+            when (result) {
+                paNoError -> {
                     consecutiveErrors = 0
-                }
-                
-                // 对于paInputOverflowed，只记录低频日志，不要把它当做严重错误
-                if (result == paInputOverflowed && audioReadCounter % 1000 == 0) {
-                    logger.debug("输入缓冲区溢出 (paInputOverflowed)，部分数据可能丢失")
+                    return frameCount
                 }
 
-                return frameCount
-            } else {
-                // 增加连续错误计数
-                consecutiveErrors++
-
-                if (audioReadCounter % 20 == 0 || consecutiveErrors >= 3) {  // 更频繁地报告错误
-                    logger.warn("⚠️ readAudio失败: ${Pa_GetErrorText(result)?.toKString()} (错误码: $result, 连续错误: $consecutiveErrors)")
-                }
-
-                // 连续错误过多，触发自动恢复机制
-                if (consecutiveErrors >= 5) {
-                    logger.error("❌ 连续错误达到阈值，设置重置标记")
-                    audioReadResetNeeded = true
-
-                    // 在全局标记恢复需求
-                    val currentTimeMs = System.now().toEpochMilliseconds()
-                    if (currentTimeMs - lastRecoveryTime > recoveryIntervalMs) {
-                        // 这里不调用恢复，而是标记需要恢复，让具有协程上下文的readAudioSuspend处理
-                        logger.info("标记需要恢复音频流")
+                paInputOverflowed -> {
+                    // 输入溢出不是严重错误，只记录并继续
+                    if (audioReadCounter % 100 == 0) {
+                        logger.debug("输入缓冲区溢出，可能存在音频延迟")
                     }
+                    consecutiveErrors = 0
+                    return frameCount
                 }
 
-                // 填充静音
-                for (i in 0 until frameCount) {
-                    buffer[i] = 0
+                else -> {
+                    consecutiveErrors++
+
+                    // 立即检查音频数据的有效性
+                    var hasValidData = false
+                    for (i in 0 until frameCount) {
+                        if (abs(buffer[i].toInt()) > 100) { // 超过噪声阈值
+                            hasValidData = true
+                            break
+                        }
+                    }
+
+                    if (!hasValidData && consecutiveErrors < 3) {
+                        // 如果没有有效数据且错误次数不多，填充静音继续
+                        for (i in 0 until frameCount) {
+                            buffer[i] = 0
+                        }
+                        return frameCount
+                    }
+
+                    if (consecutiveErrors >= 3) {
+                        logger.error("连续音频读取错误: ${Pa_GetErrorText(result)?.toKString()}")
+                        // 触发流重建
+                        audioReadResetNeeded = true
+                    }
+
+                    // 填充静音
+                    for (i in 0 until frameCount) {
+                        buffer[i] = 0
+                    }
+                    return frameCount
                 }
-                return frameCount // 即使错误也返回帧数，因为数据被静音填充
             }
         }
     }
@@ -519,13 +530,51 @@ class PortAudioDevice private constructor() : AudioDevice {
         }
     }
 
+    private fun performAudioHealthCheck(): Boolean {
+        logger.info("执行音频设备健康检查...")
+
+        // 检查1: 设备文件权限
+        val deviceFiles = listOf("/dev/snd/controlC0", "/dev/snd/pcmC0D0c", "/dev/snd/pcmC0D0p")
+        for (deviceFile in deviceFiles) {
+            val result = platform.posix.system("test -r $deviceFile -a -w $deviceFile")
+            if (result != 0) {
+                logger.error("设备文件权限检查失败: $deviceFile")
+                platform.posix.system("sudo chmod 666 $deviceFile")
+            }
+        }
+
+        // 检查2: ALSA设备状态
+        logger.info("检查ALSA设备状态...")
+        val alsaCheck = platform.posix.system("arecord -l > /dev/null 2>&1")
+        if (alsaCheck != 0) {
+            logger.error("ALSA设备枚举失败")
+            return false
+        }
+
+        // 检查3: 执行简短的音频捕获测试
+        logger.info("执行音频捕获测试...")
+        val captureTest = platform.posix.system(
+            "timeout 2s arecord -D hw:0,0 -f S16_LE -r 16000 -c 2 -t raw | " +
+                    "head -c 1000 > /tmp/audio_test.raw 2>/dev/null"
+        )
+
+        if (captureTest == 0) {
+            // 检查捕获的数据是否有效
+            val sizeCheck = platform.posix.system("test -s /tmp/audio_test.raw")
+            if (sizeCheck == 0) {
+                logger.info("✅ 音频捕获测试通过")
+                return true
+            }
+        }
+
+        logger.error("❌ 音频捕获测试失败")
+        return false
+    }
+
     override fun initialize(deviceName: String, sampleRate: Int): Boolean {
         // 使用协程级别的锁，确保设备初始化的互斥性
         runBlocking {
             deviceMutex.withLock {
-                // 更温和的重置，不全面重置PortAudio
-                // 删除：forceResetPortAudio()
-
                 // 防止重复初始化
                 if (portAudioInitialized) {
                     logger.info("PortAudio已经初始化，不需要重复初始化")
@@ -676,6 +725,7 @@ class PortAudioDevice private constructor() : AudioDevice {
                     _deviceState.value = AudioDeviceState.READY
 
                     logger.info("✅ 音频设备初始化完成")
+                    performAudioHealthCheck()
                     return@withLock true
                 } catch (e: Exception) {
                     logger.error("初始化音频设备失败: ${e.message}")
@@ -801,7 +851,7 @@ class PortAudioDevice private constructor() : AudioDevice {
                     // 强制初始化再试一次，但不中断操作
                     logger.info("🔄 尝试强制初始化设备...")
 
-                    if (!initialize("default", 16000)) {
+                    if (!initialize("default", AudioDefaults.TARGET_SAMPLE_RATE)) {
                         logger.error("❌ 强制初始化失败，但仍将尝试启动")
                         // 即使初始化失败，也继续尝试设置状态和打开流
                     } else {
@@ -861,6 +911,15 @@ class PortAudioDevice private constructor() : AudioDevice {
         return currentSampleRate
     }
 
+    /**
+     * 获取当前输入流的通道数。
+     * 注意：这通常在输入流成功打开后才有意义。
+     * @return 当前活动输入流的通道数，如果流未打开或未配置，则返回默认值。
+     */
+    fun getChannels(): Int { // Made it a fun for now, can be override if in AudioDevice interface
+        return currentInputChannels
+    }
+
     override fun listAudioDevices(): Pair<Int, Int> {
         logger.info("列举设备: portAudioInitialized=$portAudioInitialized")
 
@@ -908,180 +967,11 @@ class PortAudioDevice private constructor() : AudioDevice {
                 }
             }
         }
-
-        // 优先选择带有 "dsnoop"/"dsnooped" 等名称的输入设备，可自动完成采样率转换
-        var firstInput = -1
-        var firstOutput = -1
-        for (idx in 0 until Pa_GetDeviceCount()) {
-            val info = Pa_GetDeviceInfo(idx)?.pointed ?: continue
-            val name = info.name?.toKString() ?: "unknown"
-
-            // 记录首个可用输出
-            if (firstOutput < 0 && info.maxOutputChannels > 0) firstOutput = idx
-
-            // 查找首个专用输入（优先 dsnoop 等软插件，以避免硬件采样率限制）
-            if (info.maxInputChannels > 0) {
-                if (name.contains("dsnoop", ignoreCase = true) || name.contains(
-                        "dsnooped",
-                        ignoreCase = true
-                    )
-                ) {
-                    firstInput = idx
-                    logger.info("选择 dsnoop 类输入设备 idx=$idx, name=$name")
-                    break
-                } else if (firstInput < 0) {
-                    // 先记录一个候选，若后续找到更合适的会被覆盖
-                    firstInput = idx
-                }
-            }
-        }
-
-        if (firstInput < 0) firstInput = 0
-        if (firstOutput < 0) firstOutput = 0
-
-        logger.info("自动选择设备: 输入=$firstInput, 输出=$firstOutput")
-        println("自动选择设备: 输入=$firstInput, 输出=$firstOutput")
-
-        selectedInputDeviceIndex = firstInput
-        selectedOutputDeviceIndex = firstOutput
-
-        return Pair(firstInput, firstOutput)
-    }
-
-    override suspend fun openInputStream(
-        deviceIndex: Int,
-        sampleRate: Int,
-        channels: Int
-    ): Boolean {
-        return deviceMutex.withLock {
-            try {
-                logger.info("========== [openInputStream] 尝试打开音频输入流 ==========")
-
-                // 强制使用2个通道，即使请求的是单通道
-
-                // 如果请求的不是2个通道，记录警告
-                if (channels != 2) {
-                    logger.warn("[openInputStream] Microsemi DAC设备要求使用2通道(立体声)，忽略请求的 $channels 通道")
-                }
-
-                // 尝试多次打开流，但减少次数
-                var success = false
-                var attempts = 0
-                var lastError: String? = null
-
-                // 减少参数组合，只使用最稳定的组合
-                val paramCombinations = listOf(
-                    Triple(2, AudioDefaults.HW_SAMPLE_RATE, 0), // 首选硬件采样率 48k
-                    Triple(2, AudioDefaults.TARGET_SAMPLE_RATE, 512),
-                    Triple(2, AudioDefaults.TARGET_SAMPLE_RATE, 0)
-                )
-
-                logger.info("[openInputStream] 将尝试 ${paramCombinations.size} 种参数组合:")
-
-                paramCombinations.forEachIndexed { index, (ch, rate, buffer) ->
-                    logger.info("[openInputStream] 组合 #${index + 1} (tid=${threadId()}): 通道数=$ch, 采样率=$rate, 缓冲区大小=$buffer")
-                }
-
-                for ((attemptChannels, attemptRate, bufferSize) in paramCombinations) {
-                    attempts++
-                    logger.info("[openInputStream] 尝试参数组合 #$attempts: 通道=$attemptChannels, 采样率=$attemptRate, 缓冲区=$bufferSize")
-
-                    // 分配输入参数
-                    val inputParams = nativeHeap.alloc<PaStreamParameters>()
-                    try {
-                        inputParams.device = selectedInputDeviceIndex
-                        inputParams.channelCount = attemptChannels
-                        inputParams.sampleFormat = paInt16
-                        inputParams.suggestedLatency = 0.05
-                        inputParams.hostApiSpecificStreamInfo = null
-
-                        // 使用Pa_OpenStream而不是Pa_OpenDefaultStream
-                        val streamVar = nativeHeap.alloc<COpaquePointerVar>()
-                        try {
-                            logger.info("即将进入输入 Pa_OpenStream (rate=$attemptRate, buf=$bufferSize)")
-                            val t0 = System.now().toEpochMilliseconds()
-                            val result = Pa_OpenStream(
-                                stream = streamVar.ptr,
-                                inputParameters = inputParams.ptr,
-                                outputParameters = null,  // 不使用输出
-                                sampleRate = attemptRate.toDouble(),
-                                framesPerBuffer = bufferSize.toUInt(),
-                                streamFlags = 0u,
-                                streamCallback = null,
-                                userData = null
-                            )
-                            logger.info(
-                                "Pa_OpenStream输入 返回=$result, 耗时=${
-                                    System.now().toEpochMilliseconds() - t0
-                                } ms"
-                            )
-                            if (result == paNoError) {
-                                // 存储流指针
-                                inputStreamPtr.value = streamVar.value
-
-                                // 启动流
-                                val startResult = Pa_StartStream(inputStreamPtr.value)
-                                if (startResult == paNoError) {
-                                    logger.info("====> [openInputStream] 音频输入流打开并启动成功（参数组合 #$attempts, tid=${threadId()}）, 通道=$attemptChannels, 采样率=$attemptRate")
-
-                                    // 确保设备状态是ACTIVE
-                                    if (_deviceState.value != AudioDeviceState.ACTIVE) {
-                                        _deviceState.value = AudioDeviceState.ACTIVE
-                                        logger.info("[openInputStream] 设备状态已设置为ACTIVE")
-                                    }
-
-                                    // 更新当前采样率
-                                    currentSampleRate = attemptRate
-                                    logger.info("[openInputStream] 当前采样率已更新为: $currentSampleRate")
-
-                                    // 设置输入流标志 - 使用专用锁
-                                    synchronized(streamStateLock) {
-                                        logger.info("[openInputStream] 设置输入流标志为活跃")
-                                        inputStreamActive = true
-                                    }
-
-                                    // 等待一小段时间确保流稳定
-                                    delay(100)
-
-                                    success = true
-                                    break
-                                } else {
-                                    val errorMsg =
-                                        Pa_GetErrorText(startResult)?.toKString() ?: "未知错误"
-                                    logger.error("无法启动音频输入流（尝试 #$attempts）: $errorMsg")
-                                    Pa_CloseStream(inputStreamPtr.value)
-                                    inputStreamPtr.value = null
-                                }
-                            } else {
-                                val errorMsg = Pa_GetErrorText(result)?.toKString() ?: "未知错误"
-                                logger.error("无法打开音频输入流（尝试 #$attempts）: $errorMsg")
-                                lastError = errorMsg
-                            }
-                        } finally {
-                            nativeHeap.free(streamVar.rawPtr)
-                        }
-                    } finally {
-                        nativeHeap.free(inputParams.rawPtr)
-                    }
-                }
-
-                if (!success) {
-                    logger.error("所有参数组合都失败，最后一个错误: $lastError")
-                    synchronized(streamStateLock) {
-                        inputStreamActive = false
-                    }
-                    return@withLock false
-                }
-
-                return@withLock true
-            } catch (e: Exception) {
-                logger.error("打开音频输入流时发生异常: ${e.message}")
-                synchronized(streamStateLock) {
-                    inputStreamActive = false
-                }
-                return@withLock false
-            }
-        }
+        val inDev  = Pa_GetDefaultInputDevice().takeIf { it>=0 } ?: 0
+        val outDev = Pa_GetDefaultOutputDevice().takeIf { it>=0 } ?: 0
+        selectedInputDeviceIndex  = inDev
+        selectedOutputDeviceIndex = outDev
+        return Pair(inDev, outDev)
     }
 
     override suspend fun openOutputStream(
@@ -1118,19 +1008,19 @@ class PortAudioDevice private constructor() : AudioDevice {
             }
 
             // 固定使用硬件采样率，保持与输入一致
-            val actualSampleRate = AudioDefaults.HW_SAMPLE_RATE
+            val actualSampleRate = AudioDefaults.TARGET_SAMPLE_RATE
 
             // 获取实际设备索引
             val actualDeviceIndex =
                 if (deviceIndex >= 0) deviceIndex else selectedOutputDeviceIndex
 
             // 强制使用2个通道，即使请求的是单通道
-            val actualChannels = 2 // Microsemi DAC 要求使用立体声
+            val actualChannels = AudioDefaults.CHANNELS // Microsemi DAC 要求使用立体声
 
-            // 如果请求的不是2个通道，记录警告
-            if (channels != 2) {
-                logger.warn("检测到Microsemi DAC设备，强制使用2个通道(立体声)代替请求的 $channels 通道")
-            }
+//            // 如果请求的不是2个通道，记录警告
+//            if (channels != 2) {
+//                logger.warn("检测到Microsemi DAC设备，强制使用2个通道(立体声)代替请求的 $channels 通道")
+//            }
 
             // 标记输出流正在处理中
             synchronized(streamStateLock) {
@@ -1457,7 +1347,11 @@ class PortAudioDevice private constructor() : AudioDevice {
                 }
 
                 val success = runBlocking {
-                    openOutputStream(selectedOutputDeviceIndex, AudioDefaults.HW_SAMPLE_RATE, 2)
+                    openOutputStream(
+                        selectedOutputDeviceIndex,
+                        AudioDefaults.TARGET_SAMPLE_RATE,
+                        AudioDefaults.CHANNELS
+                    )
                 }
                 if (!success) {
                     logger.error("无法打开输出流，播放失败")
@@ -1525,8 +1419,8 @@ class PortAudioDevice private constructor() : AudioDevice {
 
                         val success = openOutputStream(
                             selectedOutputDeviceIndex,
-                            AudioDefaults.HW_SAMPLE_RATE,
-                            2
+                            AudioDefaults.TARGET_SAMPLE_RATE,
+                            AudioDefaults.CHANNELS
                         )
                         if (!success) {
                             logger.error("播放音频数据失败：无法打开输出流")
@@ -1730,8 +1624,8 @@ class PortAudioDevice private constructor() : AudioDevice {
                 val success = runBlocking {
                     openOutputStream(
                         selectedOutputDeviceIndex,
-                        AudioDefaults.HW_SAMPLE_RATE,
-                        2
+                        AudioDefaults.TARGET_SAMPLE_RATE,
+                        AudioDefaults.CHANNELS
                     )
                 }
                 if (!success) {
@@ -1823,6 +1717,350 @@ class PortAudioDevice private constructor() : AudioDevice {
         } finally {
             if (file != null) {
                 fclose(file)
+            }
+        }
+    }
+
+    // 添加音频数据处理回调接口
+    interface AudioDataCallback {
+        fun onAudioInput(data: ShortArray, frameCount: Int)
+    }
+
+    // 音频回调相关
+    private var audioCallback: AudioDataCallback? = null
+    private var callbackBuffer: ShortArray? = null
+    private var callbackBufferSize: Int = 0
+    private val lock = SynchronizedObject()
+
+    // 持有自身引用，用于回调
+    private val thisRef = StableRef.create(this).asCPointer()
+
+    // 原生回调函数
+    private val streamCallback = staticCFunction { input: CPointer<*>?,
+                                                   output: CPointer<*>?,
+                                                   frameCount: UInt,
+                                                   timeInfo: CPointer<PaStreamCallbackTimeInfo>?,
+                                                   statusFlags: UInt,
+                                                   userData: CPointer<*>? ->
+
+        val devicePtr = userData?.reinterpret<COpaquePointerVar>()?.pointed?.value
+        if (devicePtr != null) {
+            val device = devicePtr.asStableRef<PortAudioDevice>().get()
+            device.processAudioCallback(input, frameCount.toInt())
+        }
+
+        paContinue.toInt() // 返回Int而不是UInt
+    }
+
+    /**
+     * 注册音频回调处理器
+     * @param callback 回调接口实现
+     * @param bufferSize 回调缓冲区大小（帧数）
+     */
+    fun setAudioCallback(callback: AudioDataCallback?, bufferSize: Int = 512) {
+        synchronized(lock) {
+            this.audioCallback = callback
+            this.callbackBufferSize = bufferSize
+            val needed = bufferSize * currentInputChannels
+            if (callback != null && (callbackBuffer == null || callbackBuffer!!.size != needed)) {
+                callbackBuffer = ShortArray(needed)
+            }
+        }
+    }
+
+    /**
+     * 处理来自PortAudio回调的音频数据
+     */
+    private fun processAudioCallback(input: CPointer<*>?, frameCount: Int) {
+        if (input == null || frameCount <= 0 || audioCallback == null) return
+
+        val inputShort = input.reinterpret<ShortVar>()
+        val currentChannels = this.currentInputChannels
+
+        // 确保缓冲区足够大
+        val requiredSize = frameCount * currentChannels
+        synchronized(lock) {
+            if (callbackBuffer == null || callbackBuffer!!.size < requiredSize) {
+                callbackBuffer = ShortArray(requiredSize)
+            }
+            // 拷贝数据到缓冲区
+            for (i in 0 until requiredSize) {
+                callbackBuffer!![i] = inputShort[i]
+            }
+
+            // 触发回调
+            try {
+                audioCallback?.onAudioInput(callbackBuffer!!, frameCount)
+            } catch (e: Exception) {
+                logger.error("音频回调处理异常: ${e.message}")
+            }
+        }
+    }
+
+    override suspend fun openInputStream(
+        deviceIndex: Int,
+        sampleRate: Int,
+        channels: Int
+    ): Boolean {
+        return withContext(Dispatchers.Default) {
+            deviceMutex.withLock {
+                memScoped {
+                    try {
+                        logger.info("========== [openInputStream] 尝试打开音频输入流 ==========")
+                        // 尝试多次打开流，但减少次数
+                        var success = false
+                        var attempts = 0
+                        var lastError: String? = null
+                        val attemptChannels = AudioDefaults.CHANNELS
+                        val attemptRate = AudioDefaults.TARGET_SAMPLE_RATE
+                        val bufferSize = 0
+                        logger.info("[openInputStream] 尝试参数组合 #$attempts: 通道=$attemptChannels, 采样率=$attemptRate, 缓冲区=$bufferSize")
+
+                        // 分配输入参数
+                        val inputParams = nativeHeap.alloc<PaStreamParameters>()
+                        try {
+                            val devName = "plughw:0,0".cstr.getPointer(this)
+                            val alsaInfo = nativeHeap.alloc<PaAlsaStreamInfo> {
+                                size         = sizeOf<PaAlsaStreamInfo>().convert()     // 结构体大小
+                                hostApiType  = paALSA                                  // ALSA 类型
+                                version      = 1u       // 通常是 1
+                                deviceString = devName                                 // 把 cstr 指针填进去
+                            }
+                            inputParams.hostApiSpecificStreamInfo = alsaInfo.ptr
+
+                            inputParams.device = Pa_GetDefaultInputDevice()
+                            inputParams.channelCount = attemptChannels
+                            inputParams.sampleFormat = paInt16
+                            inputParams.suggestedLatency = 0.1
+
+                            // 使用Pa_OpenStream而不是Pa_OpenDefaultStream
+                            val streamVar = nativeHeap.alloc<COpaquePointerVar>()
+                            try {
+                                logger.info("即将进入输入 Pa_OpenStream (rate=$attemptRate, buf=$bufferSize)")
+                                val t0 = System.now().toEpochMilliseconds()
+                                val result = Pa_OpenStream(
+                                    stream = streamVar.ptr,
+                                    inputParameters = inputParams.ptr,
+                                    outputParameters = null,  // 不使用输出
+                                    sampleRate = attemptRate.toDouble(),
+                                    framesPerBuffer = bufferSize.toUInt(),
+                                    streamFlags = 0u,
+                                    streamCallback = null,
+                                    userData = null
+                                )
+                                logger.info(
+                                    "Pa_OpenStream输入 返回=$result, 耗时=${
+                                        System.now().toEpochMilliseconds() - t0
+                                    } ms"
+                                )
+                                if (result == paNoError) {
+                                    // 存储流指针
+                                    inputStreamPtr.value = streamVar.value
+                                    // 启动流
+                                    val startResult = Pa_StartStream(inputStreamPtr.value)
+                                    if (startResult == paNoError) {
+                                        logger.info("====> [openInputStream] 音频输入流打开并启动成功（参数组合 #$attempts, tid=${threadId()}）, 通道=$attemptChannels, 采样率=$attemptRate")
+
+                                        // 确保设备状态是ACTIVE
+                                        if (_deviceState.value != AudioDeviceState.ACTIVE) {
+                                            _deviceState.value = AudioDeviceState.ACTIVE
+                                            logger.info("[openInputStream] 设备状态已设置为ACTIVE")
+                                        }
+
+                                        // 更新当前采样率和通道数
+                                        currentSampleRate = attemptRate
+                                        this@PortAudioDevice.currentInputChannels =
+                                            attemptChannels // Store the actual channels used
+                                        logger.info("[openInputStream] 当前采样率已更新为: $currentSampleRate, 通道数更新为: ${this@PortAudioDevice.currentInputChannels}")
+
+                                        // 设置输入流标志 - 使用专用锁
+                                        synchronized(streamStateLock) {
+                                            logger.info("[openInputStream] 设置输入流标志为活跃")
+                                            inputStreamActive = true
+                                        }
+
+                                        // 等待一小段时间确保流稳定
+                                        delay(100)
+
+                                        success = true
+                                    } else {
+                                        val errorMsg =
+                                            Pa_GetErrorText(startResult)?.toKString() ?: "未知错误"
+                                        logger.error("无法启动音频输入流（尝试 #$attempts）: $errorMsg")
+                                        Pa_CloseStream(inputStreamPtr.value)
+                                        inputStreamPtr.value = null
+                                    }
+                                } else {
+                                    val errorMsg = Pa_GetErrorText(result)?.toKString() ?: "未知错误"
+                                    logger.error("无法打开音频输入流（尝试 #$attempts）: $errorMsg")
+                                    lastError = errorMsg
+                                }
+                            } finally {
+                                nativeHeap.free(streamVar.rawPtr)
+                            }
+                        } finally {
+                            nativeHeap.free(inputParams.rawPtr)
+                        }
+
+                        if (!success) {
+                            logger.error("所有参数组合都失败，最后一个错误: $lastError")
+                            synchronized(streamStateLock) {
+                                inputStreamActive = false
+                            }
+                            return@withLock false
+                        }
+
+                        return@withLock true
+                    } catch (e: Exception) {
+                        logger.error("打开音频输入流时发生异常: ${e.message}")
+                        synchronized(streamStateLock) {
+                            inputStreamActive = false
+                        }
+                        return@withLock false
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * 使用回调方式打开输入流
+     */
+    override suspend fun openInputStreamWithCallback(
+        deviceIndex: Int,
+        sampleRate: Int,
+        channels: Int,
+        callback: AudioDataCallback?
+    ): Boolean {
+        // 设置回调
+        setAudioCallback(callback)
+
+        return withContext(Dispatchers.Default) {
+            deviceMutex.withLock {
+                try {
+                    logger.info("========== [openInputStreamWithCallback] 尝试打开带回调的音频输入流 ==========")
+
+                    // 强制使用2个通道，即使请求的是单通道
+                    val actualChannels = channels
+
+                    // 尝试打开流
+                    var success = false
+                    var attempts = 0
+                    val maxAttempts = 3
+                    var lastError: String? = null
+
+                    // 简化为只尝试最稳定的参数组合
+                    val attemptRate = sampleRate
+                    val bufferSize = 512 // 固定使用标准缓冲区大小
+
+                    while (attempts < maxAttempts && !success) {
+                        attempts++
+                        logger.info("[openInputStreamWithCallback] 尝试打开回调流 #$attempts: 通道=$actualChannels, 采样率=$attemptRate, 缓冲区=$bufferSize")
+
+                        // 分配输入参数
+                        val inputParams = nativeHeap.alloc<PaStreamParameters>()
+                        try {
+                            inputParams.device =
+                                if (deviceIndex >= 0) deviceIndex else selectedInputDeviceIndex
+                            inputParams.channelCount = actualChannels
+                            inputParams.sampleFormat = paInt16
+                            inputParams.suggestedLatency = 0.1
+                            inputParams.hostApiSpecificStreamInfo = null
+
+                            // 使用Pa_OpenStream打开流
+                            val streamVar = nativeHeap.alloc<COpaquePointerVar>()
+                            try {
+                                logger.info("即将使用回调打开Pa_OpenStream (rate=$attemptRate, buf=$bufferSize)")
+                                val t0 = System.now().toEpochMilliseconds()
+
+                                // 注意: 这里我们使用回调
+                                val result = Pa_OpenStream(
+                                    stream = streamVar.ptr,
+                                    inputParameters = inputParams.ptr,
+                                    outputParameters = null,  // 不使用输出
+                                    sampleRate = attemptRate.toDouble(),
+                                    framesPerBuffer = bufferSize.toUInt(),
+                                    streamFlags = 0u,
+                                    streamCallback = if (audioCallback != null) streamCallback else null,
+                                    userData = if (audioCallback != null) thisRef else null
+                                )
+
+                                logger.info(
+                                    "Pa_OpenStream输入回调 返回=$result, 耗时=${
+                                        System.now().toEpochMilliseconds() - t0
+                                    } ms"
+                                )
+
+                                if (result == paNoError) {
+                                    // 存储流指针
+                                    inputStreamPtr.value = streamVar.value
+
+                                    // 启动流
+                                    val startResult = Pa_StartStream(inputStreamPtr.value)
+                                    if (startResult == paNoError) {
+                                        logger.info("====> [openInputStreamWithCallback] 带回调的音频输入流打开并启动成功, 通道=$actualChannels, 采样率=$attemptRate")
+
+                                        // 确保设备状态是ACTIVE
+                                        if (_deviceState.value != AudioDeviceState.ACTIVE) {
+                                            _deviceState.value = AudioDeviceState.ACTIVE
+                                            logger.info("[openInputStreamWithCallback] 设备状态已设置为ACTIVE")
+                                        }
+
+                                        // 更新当前采样率和通道数
+                                        currentSampleRate = attemptRate
+                                        this@PortAudioDevice.currentInputChannels = actualChannels
+                                        logger.info("[openInputStreamWithCallback] 当前采样率已更新为: $currentSampleRate, 通道数更新为: ${this@PortAudioDevice.currentInputChannels}")
+
+                                        // 设置输入流标志
+                                        synchronized(streamStateLock) {
+                                            inputStreamActive = true
+                                        }
+
+                                        success = true
+                                        break
+                                    } else {
+                                        val errorMsg =
+                                            Pa_GetErrorText(startResult)?.toKString() ?: "未知错误"
+                                        logger.error("无法启动回调音频输入流（尝试 #$attempts）: $errorMsg")
+                                        Pa_CloseStream(inputStreamPtr.value)
+                                        inputStreamPtr.value = null
+                                    }
+                                } else {
+                                    val errorMsg =
+                                        Pa_GetErrorText(result)?.toKString() ?: "未知错误"
+                                    logger.error("无法打开回调音频输入流（尝试 #$attempts）: $errorMsg")
+                                    lastError = errorMsg
+                                }
+                            } finally {
+                                nativeHeap.free(streamVar.rawPtr)
+                            }
+                        } finally {
+                            nativeHeap.free(inputParams.rawPtr)
+                        }
+
+                        // 如果失败了，等待一下再重试
+                        if (!success && attempts < maxAttempts) {
+                            delay(500)
+                        }
+                    }
+
+                    if (!success) {
+                        logger.error("所有回调流尝试都失败，最后一个错误: $lastError")
+                        synchronized(streamStateLock) {
+                            inputStreamActive = false
+                        }
+                        return@withLock false
+                    }
+
+                    return@withLock true
+                } catch (e: Exception) {
+                    logger.error("打开回调音频输入流时发生异常: ${e.message}")
+                    e.printStackTrace()
+                    synchronized(streamStateLock) {
+                        inputStreamActive = false
+                    }
+                    return@withLock false
+                }
             }
         }
     }

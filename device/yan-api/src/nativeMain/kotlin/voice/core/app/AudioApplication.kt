@@ -6,6 +6,7 @@ import kotlinx.cinterop.ExperimentalForeignApi
 import voice.acquisition.portaudio.PortAudioDevice
 import voice.hal.LinuxAudioDeviceSelector
 import voice.audio.processing.WebRtcApmSingleton
+import voice.util.AudioDefaults
 import kotlin.concurrent.atomics.AtomicReference
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
 
@@ -87,9 +88,9 @@ object AudioApplication {
 
         try {
             // 预热WebRTC APM实例
-            WebRtcApmSingleton.getInstance(16000, 1).let {
+            WebRtcApmSingleton.getInstance(AudioDefaults.TARGET_SAMPLE_RATE, AudioDefaults.CHANNELS)?.let {
                 // 进行简单处理以确保实例正确初始化
-                if (WebRtcApmSingleton.isVoiceDetected()) {
+                if (it.isVoiceDetected()) {
                     println("[INFO] WebRTC APM VAD测试通过")
                 }
                 println("[INFO] WebRTC APM预热成功")
@@ -109,7 +110,7 @@ object AudioApplication {
         val audioDevice = PortAudioDevice.getInstance()
         
         try {
-            if (audioDevice.initialize("default", 16000)) {
+            if (audioDevice.initialize("default", AudioDefaults.TARGET_SAMPLE_RATE)) {
                 println("[INFO] PortAudio初始化成功")
             } else {
                 println("[WARN] PortAudio初始化失败，应用可能无法正常工作")

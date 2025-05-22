@@ -1,4 +1,10 @@
+@file:OptIn(ExperimentalTime::class)
+
 package voice.core.config
+
+import kotlinx.datetime.Clock
+import voice.util.AudioDefaults
+import kotlin.time.ExperimentalTime
 
 /**
  * 语音助手配置类
@@ -11,8 +17,8 @@ data class VoiceAssistantConfig(
     val keywordSensitivity: Float = 0.7f,
     
     // 语音识别设置
-    val sampleRate: Int = 16000,
-    val channels: Int = 1,
+    val sampleRate: Int = AudioDefaults.TARGET_SAMPLE_RATE,
+    val channels: Int = AudioDefaults.CHANNELS,
     
     // 超时设置（毫秒）
     val keywordTimeout: Long = 10000L,
@@ -40,5 +46,19 @@ data class VoiceAssistantConfig(
     val soundsPath: String = "/usr/local/share/yanshee-model/sounds",
     
     // 调试模式
-    val debugMode: Boolean = false
+    val debugMode: Boolean = false,
+
+    // 回声消除设置
+    val enableEchoCancellation: Boolean = true,                  // 是否启用回声消除
+
+    // 初始关键词
+    val initialKeywords: List<String> = listOf("小度", "你好", "嗨", "在吗", "小兔子"),
+
+    // 语音合成设置
+    val piperModelPath2: String = "/usr/local/share/yanshee-model/piper/zh_CN-huayan-medium.onnx",
+    val piperConfigPath2: String = "/usr/local/share/yanshee-model/piper/zh_CN-huayan-medium.onnx.json",
+    val piperESpeakDataPath2: String = "/usr/local/share/yanshee-model/piper/espeak-ng-data",
+
+    // 语音交互设置
+    val useInternalResponse2: Boolean = true                     // 是否使用内部响应(否则调用回调)
 )

@@ -11,3 +11,5 @@ typedef int PaStreamCallback(
     const PaStreamCallbackTimeInfo* timeInfo,
     PaStreamCallbackFlags statusFlags,
     void *userData );
+
+typedef unsigned long PaStreamCallbackFlags;

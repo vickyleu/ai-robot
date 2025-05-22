@@ -30,6 +30,7 @@ import kotlinx.cinterop.*
 
 // 用于解析JSON
 import kotlinx.serialization.json.*
+import voice.util.AudioDefaults
 
 /**
  * Vosk语音识别实现
@@ -44,7 +45,7 @@ class VoskSpeechRecognizer : SpeechRecognizerApi {
     private var voskRecognizer: CPointer<VoskRecognizer>? = null
     
     // 配置
-    private val sampleRate = 16000
+    private val sampleRate = AudioDefaults.TARGET_SAMPLE_RATE
     
     // 内部状态
     internal var isInitialized = false

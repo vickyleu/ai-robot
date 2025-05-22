@@ -101,6 +101,14 @@ class LinuxAudioDeviceSelector {
 
         // 检查设备访问权限
         system("sudo chmod -R 777 /dev/snd/* 2>/dev/null || true")
+        // 应用麦克风增益设置（在创建配置文件之前）
+        // 设置更保守的麦克风增益
+        println("设置麦克风增益...")
+        system("amixer set 'MIC SOUT GAIN' 6 2>/dev/null || true")  // 降到40%
+        system("amixer set 'MIC SOUT MUTE' on 2>/dev/null || true")
+        system("sudo alsactl store 2>/dev/null || true")
+        // 验证增益设置
+        system("amixer get 'MIC SOUT GAIN'")
 
         // 创建针对Microsemi DAC的特殊配置
         val asoundrcContent = """
@@ -114,10 +122,9 @@ class LinuxAudioDeviceSelector {
                 device 0
             }
             slave.format S16_LE
-            slave.channels 2
+            slave.channels 1    # 改这里：从2改为1
             slave.rate 16000
         }
-
         ctl.!default {
             type hw
             card 0
