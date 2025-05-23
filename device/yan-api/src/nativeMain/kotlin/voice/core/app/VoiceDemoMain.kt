@@ -2,6 +2,7 @@
 
 package voice.core.app
 
+import com.airobot.device.yanapi.voice.util.AudioBufferPool
 import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.cinterop.staticCFunction
 import kotlinx.cinterop.toKString
@@ -25,6 +26,7 @@ import voice.api.VoiceAssistantApi.AssistantState
 import voice.core.config.VoiceAssistantConfig
 import voice.core.service.VoiceAssistant
 import voice.util.LogManager
+import voice.util.PerformanceMonitorManager
 import kotlin.time.ExperimentalTime
 
 /**
@@ -144,6 +146,11 @@ fun runVoiceDemo() {
                 // --- 阻塞主协程保持程序运行，直到收到 SIGINT ---
                 while (isRunning) {
                     delay(1000)
+                    if(false){
+                        logger.info(PerformanceMonitorManager.generateGlobalReport())
+                        logger.info(AudioBufferPool.getStats())
+                    }
+
                 }
             }
         } catch (e: Exception) {

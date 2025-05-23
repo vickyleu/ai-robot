@@ -93,11 +93,11 @@ class LinuxAudioDeviceSelector {
         killOtherAudioProcesses()
 
         // 获取用户主目录
-        val homeDir = getenv("HOME")?.toKString() ?: return false
-        val asoundrcPath = "$homeDir/.asoundrc"
-
-        // 清理旧配置
-        system("rm -f $asoundrcPath")
+//        val homeDir = getenv("HOME")?.toKString() ?: return false
+//        val asoundrcPath = "$homeDir/.asoundrc"
+//
+//        // 清理旧配置
+//        system("rm -f $asoundrcPath")
 
         // 检查设备访问权限
         system("sudo chmod -R 777 /dev/snd/* 2>/dev/null || true")
@@ -110,7 +110,7 @@ class LinuxAudioDeviceSelector {
         // 验证增益设置
         system("amixer get 'MIC SOUT GAIN'")
 
-        // 创建针对Microsemi DAC的特殊配置
+       /* // 创建针对Microsemi DAC的特殊配置
         val asoundrcContent = """
         # Microsemi DAC 配置 (plug -> hw:0,0) - 自动生成
 
@@ -122,7 +122,7 @@ class LinuxAudioDeviceSelector {
                 device 0
             }
             slave.format S16_LE
-            slave.channels 1    # 改这里：从2改为1
+            slave.channels 2
             slave.rate 16000
         }
         ctl.!default {
@@ -132,12 +132,12 @@ class LinuxAudioDeviceSelector {
         """.trimIndent()
 
         // 写入文件
-        val file = fopen(asoundrcPath, "w") ?: return false
+        val file = fopen(asoundrcPath, "w") ?: return false*/
 
         try {
-            for (line in asoundrcContent.lines()) {
-                fputs("$line\n", file)
-            }
+//            for (line in asoundrcContent.lines()) {
+//                fputs("$line\n", file)
+//            }
 
             // 应用新配置
             system("alsactl store 2>/dev/null || true")
@@ -151,7 +151,7 @@ class LinuxAudioDeviceSelector {
             logger.error("配置ALSA失败: ${e.message}")
             return false
         } finally {
-            fclose(file)
+//            fclose(file)
         }
     }
 

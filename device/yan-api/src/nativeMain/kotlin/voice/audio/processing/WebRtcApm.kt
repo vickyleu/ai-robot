@@ -5,6 +5,7 @@ package voice.audio.processing
 
 import com.airobot.webrtcapminterop.*
 import kotlinx.cinterop.*
+import voice.util.AudioUtils
 import voice.util.LogManager
 import kotlin.math.abs
 
@@ -216,7 +217,7 @@ class WebRtcApm {
         try {
             // 第1步：声道转换 (例如，如果输入是立体声，APM配置为单声道)
             val channelConvertedData = if (inputChannels > 1 && apmChannels == 1) {
-                convertStereoToMono(audioData)
+                AudioUtils.stereoToMono(audioData)
             } else if (inputChannels == 1 && apmChannels > 1) {
                 // 如果APM需要多声道而输入是单声道，可能需要复制或特殊处理
                 logger.warn("输入是单声道但APM配置为 ${apmChannels}声道，暂未实现此转换，将使用单声道数据。")
@@ -326,25 +327,6 @@ class WebRtcApm {
         }
     }
 
-    /**
-     * 标准立体声到单声道转换
-     */
-    private fun convertStereoToMono(stereoData: ShortArray): ShortArray {
-        if (inputChannels <= 1) return stereoData
-
-        val monoSize = stereoData.size / inputChannels
-        val monoData = ShortArray(monoSize)
-
-        for (i in 0 until monoSize) {
-            var sum = 0
-            for (c in 0 until inputChannels) {
-                sum += stereoData[i * inputChannels + c]
-            }
-            monoData[i] = (sum / inputChannels).toShort()
-        }
-
-        return monoData
-    }
 
     /**
      * 标准能量计算

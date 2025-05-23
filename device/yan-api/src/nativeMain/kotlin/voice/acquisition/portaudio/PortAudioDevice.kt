@@ -56,7 +56,11 @@ import com.airobot.portaudiointerop.PaStreamCallbackTimeInfo
 import com.airobot.portaudiointerop.Pa_GetDefaultInputDevice
 import com.airobot.portaudiointerop.Pa_WriteStream
 import com.airobot.portaudiointerop.paContinue
+import com.airobot.portaudiointerop.paInputOverflow
+import com.airobot.portaudiointerop.paInputUnderflow
 import com.airobot.portaudiointerop.paOutputUnderflowed
+import com.airobot.portaudiointerop.paPrimingOutput
+import com.airobot.portaudiointerop.paUseHostApiSpecificDeviceSpecification
 import kotlinx.cinterop.reinterpret
 import kotlinx.cinterop.staticCFunction
 import kotlinx.cinterop.StableRef
@@ -168,6 +172,8 @@ class PortAudioDevice private constructor() : AudioDevice {
     private val audioPlayBuffer = ShortArray(8192)
     private var audioPlayBufferPos = 0
     private val minPlayFrames = 512  // 较小的最小播放帧数，减少延迟
+
+    private var debugCallbackCounter=0
 
     // Linux设备选择器
     private val deviceSelector = LinuxAudioDeviceSelector()
@@ -523,64 +529,95 @@ class PortAudioDevice private constructor() : AudioDevice {
     private val callbackLock = SynchronizedObject()
     
     // 确保获取有效的稳定引用
-    private fun getOrCreateStableRef(): CPointer<*> {
+    private fun getOrCreateStableRef(): StableRef<PortAudioDevice> {
         synchronized(callbackLock) {
             if (thisStableRef == null) {
                 thisStableRef = StableRef.create(this)
             }
-            return thisStableRef!!.asCPointer()
+            return thisStableRef!!
         }
     }
 
     // 原生回调函数
     private val streamCallback = staticCFunction { input: CPointer<*>?,
-                                                 output: CPointer<*>?,
-                                                 frameCount: UInt,
-                                                 timeInfo: CPointer<PaStreamCallbackTimeInfo>?,
-                                                 statusFlags: UInt,
-                                                 userData: CPointer<*>? ->
+                                                   output: CPointer<*>?,
+                                                   frameCount: UInt,
+                                                   timeInfo: CPointer<PaStreamCallbackTimeInfo>?,
+                                                   statusFlags: UInt,
+                                                   userData: CPointer<*>? ->
 
         try {
-            val devicePtr = userData?.reinterpret<COpaquePointerVar>()?.pointed?.value
-            if (devicePtr != null) {
-                val device = devicePtr.asStableRef<PortAudioDevice>().get()
-                
-                // 直接在这里将C数据转换为Kotlin安全的ShortArray，并调用回调
-                // 这样可以确保原始C指针不会被后续流程误用或修改
+            // 检查状态标志，可能提供有用的调试信息
+            if (statusFlags != 0u) {
+                when {
+                    (statusFlags and paInputUnderflow.toUInt()) != 0u ->
+                        println("⚠️ 音频输入缓冲区欠载")
+                    (statusFlags and paInputOverflow.toUInt()) != 0u ->
+                        println("⚠️ 音频输入缓冲区溢出")
+                    (statusFlags and paPrimingOutput.toUInt()) != 0u ->
+                        println("ℹ️ 音频输出启动中")
+                }
+            }
+            // 直接将 userData 作为 StableRef 的指针
+            if (userData != null) {
+                val device = userData.asStableRef<PortAudioDevice>().get()
+
+                // 处理音频数据...
                 if (input != null && frameCount.toInt() > 0) {
                     val channels = device.currentInputChannels.coerceAtLeast(1)
                     val totalSamples = frameCount.toInt() * channels
-                    
-                    // 创建新的Kotlin ShortArray作为安全的音频数据容器
+
+                    // 创建安全的 Kotlin 数组
                     val safeAudioData = try {
                         val buffer = ShortArray(totalSamples)
                         val inputShort = input.reinterpret<ShortVar>()
-                        
-                        // 复制数据到安全区域
+                        // 快速检查前几个样本是否为零
+                        var nonZeroSamples = 0
+                        val samplesToCheck = minOf(totalSamples, 10)
+
+                        for (i in 0 until samplesToCheck) {
+                            if (inputShort[i] != 0.toShort()) {
+                                nonZeroSamples++
+                            }
+                        }
+                        // 如果所有样本都是零，记录这个信息
+                        if (nonZeroSamples == 0 && device.debugCallbackCounter++ % 500 == 0) {
+                            println("🔍 回调接收到的原始数据全为零 (第${device.debugCallbackCounter}次)")
+                            // 尝试读取更多样本来确认
+                            var allZero = true
+                            for (i in 0 until minOf(totalSamples, 100)) {
+                                if (inputShort[i] != 0.toShort()) {
+                                    allZero = false
+                                    break
+                                }
+                            }
+
+                            if (allZero) {
+                                println("🚨 确认：音频输入流中没有有效数据")
+                            }
+                        }
+
+                        // 复制数据
                         for (i in 0 until totalSamples) {
                             buffer[i] = inputShort[i]
                         }
                         buffer
                     } catch (e: Exception) {
-                        // 如果复制失败，记录异常但不崩溃
                         println("❌ 复制音频数据失败: ${e.message}")
                         null
                     }
-                    
-                    // 如果成功创建了安全数据，调用设备的处理方法
+
+                    // 调用处理方法
                     if (safeAudioData != null) {
                         device.onSafeAudioInput(safeAudioData, frameCount.toInt())
                     }
                 }
             }
         } catch (e: Exception) {
-            // 确保回调中的异常不会导致崩溃
-            // 不能直接使用logger（可能导致崩溃）
-            // 所以使用println记录错误
             println("❌ FATAL ERROR in PortAudio callback: ${e.message}")
         }
 
-        paContinue.toInt() // 返回Int而不是UInt
+        paContinue.toInt()
     }
 
     /**
@@ -613,16 +650,6 @@ class PortAudioDevice private constructor() : AudioDevice {
         }
     }
 
-    /**
-     * 处理音频回调 - 不再直接使用
-     * @param input 输入数据
-     * @param frameCount 帧数
-     */
-    @Deprecated("不再直接使用，通过onSafeAudioInput替代")
-    private fun processAudioCallback(input: CPointer<*>?, frameCount: Int) {
-        // 此方法保留用于兼容性，实际处理已移至原生回调中
-        logger.warn("processAudioCallback被调用，但这个方法已不再直接使用")
-    }
 
     /**
      * 使用回调模式打开输入流
@@ -667,7 +694,17 @@ class PortAudioDevice private constructor() : AudioDevice {
                             // 分配输入参数
                             val inputParams = nativeHeap.alloc<PaStreamParameters>()
                             try {
-                                inputParams.device = Pa_GetDefaultInputDevice()
+
+                                // 可以考虑直接使用ALSA API指定详细设备参数
+                                val alsaStreamInfo = nativeHeap.alloc<PaAlsaStreamInfo>()
+                                alsaStreamInfo.size = sizeOf<PaAlsaStreamInfo>().convert()
+                                alsaStreamInfo.hostApiType = paALSA
+                                alsaStreamInfo.version = 1u
+//                                alsaStreamInfo.deviceString = "hw:0,0".cstr.ptr
+                                alsaStreamInfo.deviceString = "default".cstr.ptr  // 或者 "plughw:0,0"
+                                inputParams.hostApiSpecificStreamInfo = alsaStreamInfo.ptr.reinterpret()
+
+                                inputParams.device = paUseHostApiSpecificDeviceSpecification
                                 inputParams.channelCount = actualChannels
                                 inputParams.sampleFormat = paInt16
                                 inputParams.suggestedLatency = 0.1
@@ -678,8 +715,8 @@ class PortAudioDevice private constructor() : AudioDevice {
                                     logger.info("即将使用回调打开Pa_OpenStream (rate=$attemptRate, buf=$bufferSize)")
                                     
                                     // 确保有一个有效的引用用于回调
-                                    val callbackUserData = if (callback != null) getOrCreateStableRef() else null
-                                    
+                                    val stableRef = if (callback != null) getOrCreateStableRef() else null
+
                                     // 使用回调
                                     val result = Pa_OpenStream(
                                         stream = streamVar.ptr,
@@ -689,7 +726,7 @@ class PortAudioDevice private constructor() : AudioDevice {
                                         framesPerBuffer = bufferSize.toUInt(),
                                         streamFlags = 0u,
                                         streamCallback = if (callback != null) streamCallback else null,
-                                        userData = callbackUserData
+                                        userData = stableRef?.asCPointer()
                                     )
 
                                     if (result == paNoError) {

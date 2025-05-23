@@ -4,6 +4,7 @@ package voice.detector.keyword
 
 import kotlinx.cinterop.*
 import kotlinx.datetime.Clock
+import kotlinx.datetime.Clock.System
 import voice.util.LogManager
 import voice.audio.recognition.VoskSpeechRecognizer
 import kotlinx.serialization.json.*
@@ -36,7 +37,11 @@ class VoskKeywordDetector {
     // 检测控制
     private var lastDetectionTime = 0L
     private val detectionCooldownMs = 1500L // 检测冷却期
-    
+
+    // 关键词缓存和优化
+    private val keywordCache = mutableMapOf<String, Long>()
+    private val keywordCacheDuration = 1000L // 1秒内不重复触发同一关键词
+
     /**
      * 初始化Vosk关键词检测器
      * @param modelPath Vosk模型路径
@@ -107,151 +112,38 @@ class VoskKeywordDetector {
     fun setSensitivity(sensitivity: Float) {
         this.sensitivity = sensitivity.coerceIn(0f, 1f)
     }
-    
-    /**
-     * 处理音频数据 - ShortArray版本
-     * @param audioData 短整型音频数据
-     * @return 是否检测到关键词
-     */
-    fun processAudio(audioData: ShortArray): Boolean {
-        if (!isInitialized) {
+
+    fun detect(audioData: ShortArray): Boolean {
+        if (!isInitialized || recognizer == null) {
             return false
         }
-        
+
         try {
-            // 将ShortArray转换为ByteArray
-            val tempBuffer = ByteArray(audioData.size * 2)
-            val audioBytes = AudioUtils.shortArrayToByteArray(audioData, audioData.size, tempBuffer)
-            
-            // 使用已有的detect方法处理字节数据
-            return detect(tempBuffer.copyOf(audioBytes))
-        } catch (e: Exception) {
-            logger.error("处理音频数据异常: ${e.message}")
-            return false
-        }
-    }
-    
-    /**
-     * 检测音频中是否含有关键词
-     * @param audioData 音频数据
-     * @param hasVoiceActivity 是否已检测到语音活动(可选，null表示未预先检测)
-     * @return 是否检测到关键词
-     */
-    fun detect(audioData: ShortArray, hasVoiceActivity: Boolean? = null): Boolean {
-        // 转换为字节数组并调用ByteArray版本
-        val tempBuffer = ByteArray(audioData.size * 2)
-        val audioBytes = AudioUtils.shortArrayToByteArray(audioData, audioData.size, tempBuffer)
-        return detect(tempBuffer.copyOf(audioBytes))
-    }
-    
-    /**
-     * 检测音频中是否含有关键词 - ByteArray版本
-     * @param audioData 字节数组音频数据
-     * @return 是否检测到关键词
-     */
-    fun detect(audioData: ByteArray): Boolean {
-        if (!isInitialized) {
-            return false
-        }
-        
-        try {
-            // 检查冷却时间
-            val now = Clock.System.now().toEpochMilliseconds()
-            if (now - lastDetectionTime < detectionCooldownMs) {
-                return false
-            }
-            
-            // 积累音频数据
-            accumulateAudio(audioData)
-            
-            // 只有音频缓冲区有足够数据时才进行处理
-            if (audioBuffer.size < 1000) {
-                return false
-            }
-            
-            // 处理音频数据
-            val result = recognizer.recognize(audioBuffer, audioBuffer.size, now)
-            
-            // 检查是否有文本结果
-            if (result.text.isNotEmpty()) {
-                // 检测文本中是否包含关键词
-                val detectedKeyword = findKeyword(result.text)
-                
-                if (detectedKeyword != null) {
-                    logger.info("检测到关键词: '$detectedKeyword', 置信度: ${result.confidence}")
-                    
-                    // 只有置信度达到阈值时才触发回调
-                    if (result.confidence >= sensitivity) {
-                        logger.info("✓✓✓ 关键词检测通过阈值检查! 触发回调")
-                        keywordCallback?.invoke(detectedKeyword)
-                        lastDetectionTime = now
-                        resetBuffer() // 重置缓冲区
+            // 转换 ShortArray 到 ByteArray
+            val byteData = voice.util.AudioUtils.shortArrayToByteArray(audioData)
+
+            // 调用识别器
+            val result = recognizer.recognize(byteData, byteData.size, System.now().toEpochMilliseconds())
+
+            // 检查结果中的关键词
+            if (result.success && result.text.isNotBlank()) {
+                // 检测关键词的逻辑
+                for (keyword in keywords) {
+                    if (result.text.contains(keyword)) {
+                        logger.info("检测到关键词: $keyword")
+                        keywordCallback?.invoke(keyword)
                         return true
-                    } else {
-                        logger.debug("关键词 '$detectedKeyword' 置信度不足: ${result.confidence} < $sensitivity")
                     }
-                } else {
-                    // 有结果但不包含关键词时使用 DEBUG 级别，减少日志噪音
-                    logger.debug("识别到非关键词文本: \"${result.text}\", 置信度: ${result.confidence}")
                 }
-            } else if (result.confidence > 0.0f) {
-                // 只在置信度不为0时才输出日志
-                logger.debug("Vosk结果置信度: ${result.confidence}")
             }
-            
+
             return false
         } catch (e: Exception) {
-            logger.error("Vosk关键词检测异常: ${e.message}")
+            logger.error("关键词检测异常: ${e.message}")
             return false
         }
     }
-    
-    /**
-     * 在文本中查找关键词
-     * @param text 输入文本
-     * @return 找到的关键词，未找到则返回null
-     */
-    private fun findKeyword(text: String): String? {
-        if (text.isBlank() || keywords.isEmpty()) {
-            return null
-        }
-        
-        val lowerText = text.lowercase()
-        for (keyword in keywords) {
-            if (keyword.isBlank()) continue
-            
-            // 检查文本是否包含关键词
-            if (lowerText.contains(keyword.lowercase())) {
-                return keyword
-            }
-        }
-        
-        return null
-    }
-    
-    /**
-     * 积累音频数据
-     */
-    private fun accumulateAudio(newData: ByteArray) {
-        // 将新数据添加到缓冲区
-        val combined = ByteArray(audioBuffer.size + newData.size)
-        audioBuffer.copyInto(combined)
-        newData.copyInto(combined, audioBuffer.size)
-        audioBuffer = combined
-        
-        // 如果缓冲区过大，保留最新的部分
-        if (audioBuffer.size > maxBufferSize) {
-            val newBuffer = ByteArray(maxBufferSize)
-            audioBuffer.copyInto(
-                newBuffer, 
-                0, 
-                audioBuffer.size - maxBufferSize, 
-                audioBuffer.size
-            )
-            audioBuffer = newBuffer
-        }
-    }
-    
+
     /**
      * 重置音频缓冲区
      */
