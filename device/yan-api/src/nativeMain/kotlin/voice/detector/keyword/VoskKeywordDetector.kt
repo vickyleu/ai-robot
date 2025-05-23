@@ -114,7 +114,7 @@ class VoskKeywordDetector {
     }
 
     fun detect(audioData: ShortArray): Boolean {
-        if (!isInitialized || recognizer == null) {
+        if (!isInitialized) {
             return false
         }
 
