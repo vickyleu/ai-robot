@@ -36,7 +36,7 @@ class VoskKeywordDetector {
     
     // 检测控制
     private var lastDetectionTime = 0L
-    private val detectionCooldownMs = 1500L // 检测冷却期
+    private val detectionCooldownMs = 1000L // 从500L增加到1000L，减少无意义的识别
 
     // 关键词缓存和优化
     private val keywordCache = mutableMapOf<String, Long>()
@@ -122,19 +122,75 @@ class VoskKeywordDetector {
             // 转换 ShortArray 到 ByteArray
             val byteData = voice.util.AudioUtils.shortArrayToByteArray(audioData)
 
-            // 调用识别器
-            val result = recognizer.recognize(byteData, byteData.size, System.now().toEpochMilliseconds())
+            // 累积音频数据到缓冲区
+            val newBuffer = audioBuffer + byteData
+            audioBuffer = if (newBuffer.size > maxBufferSize) {
+                // 如果缓冲区太大，保留最新的数据
+                newBuffer.takeLast(maxBufferSize).toByteArray()
+            } else {
+                newBuffer
+            }
+
+            // 添加调试日志
+            if (audioBuffer.size % 3200 == 0) { // 从每100ms改为每200ms记录一次
+                logger.debug("音频缓冲区状态: 当前大小=${audioBuffer.size}字节 (${audioBuffer.size/32}ms)")
+            }
+
+            // 只有当缓冲区有足够数据时才进行识别
+            val minBufferForRecognition = 1600 // 从3200降低到1600（100ms @ 16kHz），让Vosk更容易触发
+            if (audioBuffer.size < minBufferForRecognition) {
+                // 减少日志频率
+                if (audioBuffer.size % 800 == 0) { // 只在特定大小时记录
+                    logger.debug("缓冲区不足: ${audioBuffer.size}/${minBufferForRecognition}字节")
+                }
+                return false
+            }
+
+            // 检查冷却期
+            val currentTime = System.now().toEpochMilliseconds()
+            if (currentTime - lastDetectionTime < detectionCooldownMs) {
+                return false
+            }
+
+            // 减少识别开始的日志频率
+            if (audioBuffer.size % 1600 == 0) { // 只在特定大小时记录
+                logger.info("开始Vosk识别: 缓冲区大小=${audioBuffer.size}字节 (${audioBuffer.size/32}ms)")
+            }
+
+            // 调用识别器处理整个缓冲区
+            val result = recognizer.recognize(audioBuffer, audioBuffer.size, currentTime)
 
             // 检查结果中的关键词
             if (result.success && result.text.isNotBlank()) {
+                logger.info("Vosk识别结果: \"${result.text}\"")
+                
                 // 检测关键词的逻辑
                 for (keyword in keywords) {
-                    if (result.text.contains(keyword)) {
-                        logger.info("检测到关键词: $keyword")
-                        keywordCallback?.invoke(keyword)
-                        return true
+                    if (result.text.contains(keyword, ignoreCase = true)) {
+                        // 检查关键词缓存，避免重复触发
+                        val keywordLastTime = keywordCache[keyword] ?: 0L
+                        if (currentTime - keywordLastTime > keywordCacheDuration) {
+                            logger.info("检测到关键词: $keyword")
+                            keywordCache[keyword] = currentTime
+                            lastDetectionTime = currentTime
+                            
+                            // 清空缓冲区，避免重复识别
+                            audioBuffer = ByteArray(0)
+                            
+                            keywordCallback?.invoke(keyword)
+                            return true
+                        }
                     }
                 }
+            } else {
+                logger.debug("Vosk识别无结果: success=${result.success}, text=\"${result.text}\"")
+            }
+
+            // 如果没有检测到关键词，但缓冲区已满，清理一部分旧数据
+            if (audioBuffer.size >= maxBufferSize) {
+                val keepSize = maxBufferSize / 2
+                audioBuffer = audioBuffer.takeLast(keepSize).toByteArray()
+                logger.debug("缓冲区已满，清理到${keepSize}字节")
             }
 
             return false

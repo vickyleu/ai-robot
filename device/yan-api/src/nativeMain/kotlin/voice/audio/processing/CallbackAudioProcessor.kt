@@ -12,6 +12,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.atomicfu.locks.SynchronizedObject
 import kotlinx.atomicfu.locks.synchronized
 import kotlinx.datetime.Clock
+import voice.util.AudioUtils
 import kotlin.concurrent.Volatile
 
 /**
@@ -28,7 +29,7 @@ class CallbackAudioProcessor : PortAudioDevice.AudioDataCallback {
     private var lowQualityFrames = 0
     private val maxLowQualityFrames = 10
     // 音频设备实例
-    private val audioDevice = PortAudioDevice.getInstance()
+    /*private*/ val audioDevice = PortAudioDevice.getInstance()
     
     // 音频处理锁
     private val processingLock = SynchronizedObject()
@@ -48,7 +49,7 @@ class CallbackAudioProcessor : PortAudioDevice.AudioDataCallback {
     private val errorLogThrottleMs = 1000 // 限制错误日志为每秒最多一条
     // 音频读取计数器
     private var audioReadCounter = 0
-
+    private val minValidRms = 0.01 // 从0.02降低到0.01，适应低振幅音频设备
     // 回调函数 - 保持与现有代码兼容的命名，增加同步保护
     private val callbackLock = SynchronizedObject()
     private var processedAudioCallback: ((ShortArray, Int) -> Unit)? = null
@@ -79,9 +80,9 @@ class CallbackAudioProcessor : PortAudioDevice.AudioDataCallback {
                     return false
                 }
                 
-                // 配置APM
-                newApm.setVadThreshold(0.12f)
-                newApm.setVadDebounceFrames(2)
+                // 配置APM - 重新配置VAD参数，让它更严格
+                newApm.setVadThreshold(0.30f)  // 大幅提高VAD阈值，从0.05f提高到0.30f
+                newApm.setVadDebounceFrames(5)  // 增加去抖动帧数，从1提高到5
                 newApm.enableEchoCancellation(true)
                 
                 apm = newApm
@@ -141,9 +142,11 @@ class CallbackAudioProcessor : PortAudioDevice.AudioDataCallback {
      * 在回调模式中直接处理音频，不读取流
      */
     override fun onAudioInput(data: ShortArray, frameCount: Int) {
-        // 添加调试日志
-        if (audioReadCounter++ % 100 == 0) {
-            logger.debug("音频回调接收: ${frameCount}帧, 第${audioReadCounter}次")
+        // 检查原始输入数据
+        if (audioReadCounter++ % 1000 == 0) { // 从100改为1000，大幅减少日志
+            val rawSamples = data.take(10).joinToString(", ")
+            val rawMax = data.maxOfOrNull { kotlin.math.abs(it.toInt()) } ?: 0
+            logger.debug("原始音频: 前10个样本=$rawSamples, 最大振幅=$rawMax")
         }
 
         if (_processingState.value != ProcessingState.PROCESSING) {
@@ -155,25 +158,12 @@ class CallbackAudioProcessor : PortAudioDevice.AudioDataCallback {
         if (data.isEmpty() || frameCount <= 0) return
 
         try {
-            // 快速质量检查
-            val maxAmplitude = data.maxOfOrNull { kotlin.math.abs(it.toInt()) } ?: 0
-
-            if (maxAmplitude < 50) {
-                lowQualityFrames++
-                if (audioReadCounter % 200 == 0) {
-                    logger.debug("检测到有效音频，最大--振幅: $maxAmplitude")
-                }
-                if (lowQualityFrames > maxLowQualityFrames) {
-                    // 太多低质量帧，跳过处理节省CPU
-                    if (audioReadCounter % 500 == 0) {
-                        logger.debug("跳过低质量音频帧")
-                    }
-                    return
-                }
-            } else {
-                lowQualityFrames = 0
-                // 添加日志显示检测到有效音频
-                if (audioReadCounter % 200 == 0) {
+            // 检测音频振幅
+            val maxAmplitude = calculateMaxAmplitude(data, frameCount)
+            
+            // 减少日志频率，避免咳嗽等声音产生大量日志
+            if (maxAmplitude > 100) {
+                if (audioReadCounter % 100 == 0) { // 从每20帧改为每100帧记录一次
                     logger.debug("检测到有效音频，最大振幅: $maxAmplitude")
                 }
             }
@@ -187,49 +177,70 @@ class CallbackAudioProcessor : PortAudioDevice.AudioDataCallback {
                 sendProcessedAudio(data, frameCount)
                 return
             }
-
+            
             // 创建输入数据副本，以确保数据安全
             val inputCopy = data.copyOf()
+
+            // 检测语音 - 暂时只用振幅检测，WebRTC VAD太严格
+            val hasVoice = try {
+                val amplitude = calculateMaxAmplitude(data, frameCount)
+                amplitude > 2000  // 只用振幅检测
+            } catch (e: Exception) {
+                false
+            }
+            // 每5帧才处理一次，减少处理负载
+            if (audioReadCounter % 5 != 0) {
+                return  // 跳过大部分帧
+            }
+            if (audioReadCounter % 500 == 0) { // 从100改为500，更少的调试信息
+                val apmVad = try { localApm.isVoiceDetected() } catch (e: Exception) { false }
+                logger.debug("VAD调试: 振幅=$maxAmplitude, APM-VAD=$apmVad, 最终结果=$hasVoice")
+            }
+            // 采样抽取策略: 根据是否有语音动态调整处理频率
+            // 有语音时直接处理；无语音时，完全不处理
+            if (!hasVoice) {
+                // 没有语音时，完全跳过处理和发送
+                if (audioReadCounter % 1000 == 0) {
+                    logger.debug("未检测到语音，跳过处理")
+                }
+                return  // 直接返回，不发送任何数据到识别器
+            }
 
             // 使用try-catch捕获所有处理异常
             try {
                 // 处理音频 - 不在锁内执行，以避免长时间阻塞
                 val processedData = localApm.processFrame(inputCopy)
+//                val processedData = inputCopy.copyOf()  // 直接使用原始数据
+                // 只有检测到语音时才发送数据
+                if (hasVoice) {
+                    // 添加VAD日志
+                    if (audioReadCounter % 200 == 0) {
+                        logger.debug("VAD检测到语音，发送数据: hasVoice=$hasVoice")
+                    }
 
-                // 检测语音
-                val hasVoice = localApm.isVoiceDetected()
-
-                // 添加VAD日志
-                if (audioReadCounter % 200 == 0 || hasVoice) {
-                    logger.debug("VAD检测: hasVoice=$hasVoice")
+                    // 发送处理结果
+                    sendProcessedAudio(data = processedData, frameCount = processedData.size)
+                    
+                    // 发送VAD结果
+                    sendVadResult(hasVoice)
                 }
-
-                // 发送处理结果
-                sendProcessedAudio(processedData, processedData.size)
-
-                // 发送VAD结果
-                sendVadResult(hasVoice)
             } catch (e: Exception) {
-                // 处理失败，使用原始数据，限制过多的错误日志
+                // 处理失败，限制过多的错误日志
                 val now = Clock.System.now().toEpochMilliseconds()
                 if (now - lastErrorLogTime > errorLogThrottleMs) {
                     logger.error("处理音频数据异常: ${e.message}")
                     lastErrorLogTime = now
                 }
-
-                // 即使处理失败，也发送原始数据，确保音频流不中断
-                sendProcessedAudio(data, frameCount)
+                // 处理失败时不发送数据
             }
         } catch (e: Exception) {
-            // 处理失败，使用原始数据，限制过多的错误日志
+            // 处理失败，限制过多的错误日志
             val now = Clock.System.now().toEpochMilliseconds()
             if (now - lastErrorLogTime > errorLogThrottleMs) {
                 logger.error("处理音频数据异常: ${e.message}")
                 lastErrorLogTime = now
             }
-
-            // 即使处理失败，也发送原始数据，确保音频流不中断
-            sendProcessedAudio(data, frameCount)
+            // 异常时不发送数据
         }
     }
     /**
@@ -345,6 +356,20 @@ class CallbackAudioProcessor : PortAudioDevice.AudioDataCallback {
             logger.error("停止音频处理器失败: ${e.message}")
             _processingState.value = ProcessingState.ERROR
         }
+    }
+    
+    /**
+     * 计算音频数据的最大振幅
+     */
+    private fun calculateMaxAmplitude(data: ShortArray, frameCount: Int): Int {
+        var maxAmplitude = 0
+        for (i in 0 until minOf(frameCount, data.size)) {
+            val amplitude = kotlin.math.abs(data[i].toInt())
+            if (amplitude > maxAmplitude) {
+                maxAmplitude = amplitude
+            }
+        }
+        return maxAmplitude
     }
     
     /**

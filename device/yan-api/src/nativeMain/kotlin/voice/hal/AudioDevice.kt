@@ -69,16 +69,7 @@ interface AudioDevice {
      * @return 输入设备索引和输出设备索引的对
      */
     fun listAudioDevices(): Pair<Int, Int>
-    
-    /**
-     * 打开音频输入流
-     * @param deviceIndex 设备索引，-1表示默认设备
-     * @param sampleRate 采样率
-     * @param channels 通道数
-     * @return 是否成功打开
-     */
-    suspend fun openInputStream(deviceIndex: Int, sampleRate: Int, channels: Int): Boolean
-    
+
     /**
      * 打开带回调的音频输入流
      * @param deviceIndex 设备索引，-1表示默认设备

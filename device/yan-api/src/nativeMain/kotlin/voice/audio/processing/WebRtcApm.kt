@@ -37,7 +37,7 @@ class WebRtcApm {
     private var vadLogCounter: Int = 0
     private var consecutiveVadPositive: Int = 0
     private var lastVadResult: Boolean = false
-    private var vadDebounceFrames: Int = 2
+    private var vadDebounceFrames: Int = 10  // 保持10帧去抖动，确保稳定性
 
     fun initialize(sampleRate: Int, channels: Int): Boolean {
         if (apmHandle != null) {
@@ -214,6 +214,18 @@ class WebRtcApm {
             return audioData
         }
 
+        // 快速能量检测，跳过处理低能量帧
+        var maxAmplitude = 0
+        for (i in 0 until minOf(audioData.size, 100)) {
+            val amplitude = kotlin.math.abs(audioData[i].toInt())
+            if (amplitude > maxAmplitude) maxAmplitude = amplitude
+        }
+        
+        // 降低能量阈值，适应低振幅音频设备
+        if (maxAmplitude < 30) {  // 从50降低到30
+            return audioData
+        }
+
         try {
             // 第1步：声道转换 (例如，如果输入是立体声，APM配置为单声道)
             val channelConvertedData = if (inputChannels > 1 && apmChannels == 1) {
@@ -314,10 +326,11 @@ class WebRtcApm {
             // outputArrayPointer!![0] 已经指向 outputFloatBuffer
             webrtc_apm_process_stream(apmHandle, inputArrayPointer, outputArrayPointer)
 
-            // 第4步：转换APM输出回ShortArray (outputFloatBuffer -> ShortArray)
-            // APM输出也是apmFrameSize个样本
             return ShortArray(apmFrameSize) { i ->
-                (outputFloatBuffer!![i].coerceIn(-1f, 1f) * 32767f).toInt().toShort()
+                val floatSample = outputFloatBuffer!![i].coerceIn(-1f, 1f)
+                // 增加增益并确保不削波
+                val amplifiedSample = floatSample * 1.5f  // 适度增益
+                (amplifiedSample.coerceIn(-1f, 1f) * 32767f).toInt().toShort()
             }
 
         } catch (e: Exception) {
@@ -361,24 +374,61 @@ class WebRtcApm {
     fun isVoiceDetected(): Boolean {
         if (apmHandle == null) return false
 
-        val vadResult = my_webrtc_apm_voice_detected(apmHandle) == 1
+        // 获取APM内部的VAD结果
+        val apmVadResult = my_webrtc_apm_voice_detected(apmHandle) == 1
+        
+        // 对于APM的VAD结果，增加能量确认
+        var finalVadResult = apmVadResult
+        
+        // 添加详细的VAD调试日志
+        if (vadLogCounter++ % 2000 == 0 || (apmVadResult && vadLogCounter % 100 == 0)) { // 大幅减少日志频率
+            logger.debug("VAD详细状态: APM-VAD=$apmVadResult, 连续帧=$consecutiveVadPositive")
+        }
+        
+        // 只有APM认为有语音时才进行额外检查
+        if (apmVadResult) {
+            // 从inputFloatBuffer获取当前帧的能量
+            var energy = 0.0f
+            if (inputFloatBuffer != null && apmFrameSize > 0) {
+                var sum = 0.0f
+                for (i in 0 until apmFrameSize) {
+                    val sample = inputFloatBuffer!![i]
+                    sum += sample * sample
+                }
+                energy = kotlin.math.sqrt(sum / apmFrameSize)
+                
+                // 仅当能量超过一定阈值时才确认是真实语音
+                val minVoiceEnergy = 0.05f // 从0.005f大幅提高到0.05f，避免把汽车鸣笛、键盘声当成人声
+                if (energy < minVoiceEnergy) {
+                    // 能量太低，可能是噪音被误判为语音
+                    finalVadResult = false
+                    if (vadLogCounter++ % 50 == 0) {
+                        logger.debug("APM-VAD检测到语音但能量太低，被忽略: energy=$energy")
+                    }
+                } else {
+                    if (vadLogCounter % 200 == 0) { // 减少日志频率
+                        logger.debug("VAD能量检查通过: energy=$energy (阈值=$minVoiceEnergy)")
+                    }
+                }
+            }
+        }
 
         // 去抖动逻辑
-        if (vadResult) {
+        if (finalVadResult) {
             consecutiveVadPositive++
         } else {
             consecutiveVadPositive = 0
         }
 
-        val finalResult = consecutiveVadPositive >= vadDebounceFrames
+        val result = consecutiveVadPositive >= vadDebounceFrames
 
         // 只在状态变化时记录
-        if (finalResult != lastVadResult) {
-            logger.debug("VAD状态变化: $lastVadResult -> $finalResult (连续帧: $consecutiveVadPositive)")
-            lastVadResult = finalResult
+        if (result != lastVadResult) {
+            logger.debug("VAD状态变化: $lastVadResult -> $result (连续帧: $consecutiveVadPositive)")
+            lastVadResult = result
         }
 
-        return finalResult
+        return result
     }
 
     // 标准配置方法

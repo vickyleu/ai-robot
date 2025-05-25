@@ -58,6 +58,7 @@ import com.airobot.portaudiointerop.Pa_WriteStream
 import com.airobot.portaudiointerop.paContinue
 import com.airobot.portaudiointerop.paInputOverflow
 import com.airobot.portaudiointerop.paInputUnderflow
+import com.airobot.portaudiointerop.paNeverDropInput
 import com.airobot.portaudiointerop.paOutputUnderflowed
 import com.airobot.portaudiointerop.paPrimingOutput
 import com.airobot.portaudiointerop.paUseHostApiSpecificDeviceSpecification
@@ -69,6 +70,7 @@ import kotlinx.cinterop.asStableRef
 import kotlinx.cinterop.cstr
 import kotlinx.cinterop.get
 import kotlinx.cinterop.memScoped
+import kotlinx.cinterop.refTo
 import kotlinx.cinterop.set
 import kotlinx.coroutines.launch
 
@@ -78,6 +80,7 @@ import kotlinx.coroutines.launch
  */
 class PortAudioDevice private constructor() : AudioDevice {
     private val logger = LogManager.getLogger("PortAudioDevice")
+    private val deviceSelector = LinuxAudioDeviceSelector()
 
     // 单例实现
     companion object {
@@ -152,6 +155,9 @@ class PortAudioDevice private constructor() : AudioDevice {
     // 协程作用域
     private val scope = CoroutineScope(Dispatchers.Default)
     
+    // 暂时保留但不使用
+    // private val audioProcessingDispatcher = Dispatchers.Default.limitedParallelism(1)
+    
     // 音频流管理
     private val audioMutex = Mutex()
     
@@ -175,11 +181,8 @@ class PortAudioDevice private constructor() : AudioDevice {
 
     private var debugCallbackCounter=0
 
-    // Linux设备选择器
-    private val deviceSelector = LinuxAudioDeviceSelector()
-
-    // 工具: 获取当前线程ID (仅用于调试日志)
-    private fun threadId(): ULong = pthread_self().toLong().toULong()
+    // 添加一个变量跟踪当前使用的输出设备
+    private var outputDeviceInUse: String = "未知"
 
     // 非实现不应被调用 - 在回调模式中不支持直接读取
     override fun readAudio(buffer: CPointer<ShortVar>, frameCount: Int): Int {
@@ -205,6 +208,8 @@ class PortAudioDevice private constructor() : AudioDevice {
                 currentSampleRate = sampleRate
 
                 try {
+                    // 首先进行全面诊断和修复
+
                     // 释放音频资源
                     logger.info("正在释放音频资源...")
                     
@@ -245,9 +250,6 @@ class PortAudioDevice private constructor() : AudioDevice {
                     // 创建优化的ALSA配置
                     deviceSelector.fixAlsaConfig()
 
-                    // 测试设备
-                    platform.posix.system("arecord -d 1 -f S16_LE -r 16000 -c 2 -D hw:0,0 /dev/null 2>/tmp/arecord_init_test.log")
-                    
                     // 初始化PortAudio
                     logger.info("正在初始化PortAudio...")
                     var initSuccess = false
@@ -404,13 +406,13 @@ class PortAudioDevice private constructor() : AudioDevice {
     override fun listAudioDevices(): Pair<Int, Int> {
         logger.info("列举设备: portAudioInitialized=$portAudioInitialized")
 
-        // 释放音频资源
-        try {
-            logger.info("强制释放音频资源...")
-            deviceSelector.killOtherAudioProcesses()
-        } catch (e: Exception) {
-            logger.warn("释放音频资源失败: ${e.message}")
-        }
+//        // 释放音频资源
+//        try {
+//            logger.info("强制释放音频资源...")
+//            deviceSelector.killOtherAudioProcesses()
+//        } catch (e: Exception) {
+//            logger.warn("释放音频资源失败: ${e.message}")
+//        }
 
         // 如果PortAudio未初始化，直接尝试重新初始化一次
         if (!portAudioInitialized) {
@@ -609,7 +611,10 @@ class PortAudioDevice private constructor() : AudioDevice {
 
                     // 调用处理方法
                     if (safeAudioData != null) {
-                        device.onSafeAudioInput(safeAudioData, frameCount.toInt())
+                        // 使用默认调度器
+                        device.scope.launch {
+                            device.onSafeAudioInput(safeAudioData, frameCount.toInt())
+                        }
                     }
                 }
             }
@@ -675,7 +680,7 @@ class PortAudioDevice private constructor() : AudioDevice {
                         logger.info("尝试打开带回调的音频输入流")
 
                         // 使用实际通道数
-                        val actualChannels = channels
+                        val actualChannels = 2//channels
 
                         // 尝试打开流
                         var success = false
@@ -685,7 +690,7 @@ class PortAudioDevice private constructor() : AudioDevice {
 
                         // 固定使用标准参数
                         val attemptRate = sampleRate
-                        val bufferSize = 512 // 标准缓冲区大小
+                        val bufferSize = 1024 // 增加缓冲区大小，原来是512
 
                         while (attempts < maxAttempts && !success) {
                             attempts++
@@ -694,20 +699,16 @@ class PortAudioDevice private constructor() : AudioDevice {
                             // 分配输入参数
                             val inputParams = nativeHeap.alloc<PaStreamParameters>()
                             try {
-
-                                // 可以考虑直接使用ALSA API指定详细设备参数
                                 val alsaStreamInfo = nativeHeap.alloc<PaAlsaStreamInfo>()
                                 alsaStreamInfo.size = sizeOf<PaAlsaStreamInfo>().convert()
                                 alsaStreamInfo.hostApiType = paALSA
                                 alsaStreamInfo.version = 1u
-//                                alsaStreamInfo.deviceString = "hw:0,0".cstr.ptr
-                                alsaStreamInfo.deviceString = "default".cstr.ptr  // 或者 "plughw:0,0"
+                                alsaStreamInfo.deviceString = "plug:dsnoop".cstr.getPointer(this)  // 或者 "plughw:0,0"
                                 inputParams.hostApiSpecificStreamInfo = alsaStreamInfo.ptr.reinterpret()
-
                                 inputParams.device = paUseHostApiSpecificDeviceSpecification
                                 inputParams.channelCount = actualChannels
                                 inputParams.sampleFormat = paInt16
-                                inputParams.suggestedLatency = 0.1
+                                inputParams.suggestedLatency = 0.2 // 增加推荐延迟，原来是0.1
 
                                 // 使用Pa_OpenStream打开流
                                 val streamVar = nativeHeap.alloc<COpaquePointerVar>()
@@ -724,7 +725,7 @@ class PortAudioDevice private constructor() : AudioDevice {
                                         outputParameters = null,  // 不使用输出
                                         sampleRate = attemptRate.toDouble(),
                                         framesPerBuffer = bufferSize.toUInt(),
-                                        streamFlags = 0u,
+                                        streamFlags = 0u, // 使用默认标志
                                         streamCallback = if (callback != null) streamCallback else null,
                                         userData = stableRef?.asCPointer()
                                     )
@@ -805,41 +806,20 @@ class PortAudioDevice private constructor() : AudioDevice {
     }
 
     /**
-     * 简单实现的打开输入流 - 回调模式下不应使用
+     * 诊断音频输出问题
+     * 尝试使用不同方法播放测试音频
      */
-    override suspend fun openInputStream(deviceIndex: Int, sampleRate: Int, channels: Int): Boolean {
-        logger.warn("在回调模式下不应直接打开输入流，请使用openInputStreamWithCallback")
-        return false
-    }
-
-    /**
-     * 获取设备信息
-     * @return 设备信息字符串
-     */
-    override fun getDeviceInfo(): String {
-        val sb = StringBuilder()
-        sb.appendLine("PortAudio设备信息:")
-
-        if (!portAudioInitialized) {
-            sb.appendLine("PortAudio未初始化")
-            return sb.toString()
+    fun diagnoseSoundOutput() {
+        logger.info("开始诊断音频输出问题...")
+        try {
+            // 检查音量设置
+            logger.info("检查音量设置:")
+            platform.posix.system("amixer")
+            
+            logger.info("音频诊断完成")
+        } catch (e: Exception) {
+            logger.error("诊断过程中出现异常: ${e.message}")
         }
-
-        val deviceCount = Pa_GetDeviceCount()
-        sb.appendLine("共发现 $deviceCount 个设备")
-
-        for (i in 0 until deviceCount) {
-            val info = Pa_GetDeviceInfo(i)?.pointed
-            sb.appendLine("设备 $i: ${info?.name?.toKString() ?: "未知"}")
-            sb.appendLine("  输入通道: ${info?.maxInputChannels ?: 0}")
-            sb.appendLine("  输出通道: ${info?.maxOutputChannels ?: 0}")
-            sb.appendLine("  默认采样率: ${info?.defaultSampleRate ?: 0.0}")
-        }
-
-        sb.appendLine("当前选择的输入设备: $selectedInputDeviceIndex")
-        sb.appendLine("当前选择的输出设备: $selectedOutputDeviceIndex")
-
-        return sb.toString()
     }
 
     /**
@@ -854,6 +834,9 @@ class PortAudioDevice private constructor() : AudioDevice {
         sampleRate: Int,
         channels: Int
     ): Boolean {
+        // 先运行诊断
+        diagnoseSoundOutput()
+        
         return deviceMutex.withLock {
             // 严格检查：如果输入流活跃，警告可能存在冲突
             if (inputStreamActive) {
@@ -891,96 +874,148 @@ class PortAudioDevice private constructor() : AudioDevice {
             }
 
             var success = false
-            try {
-                // 开始尝试打开流
-                var attempts = 0
-                val maxAttempts = 3
+            memScoped {
+                try {
+                    // 开始尝试打开流
+                    var attempts = 0
+                    val maxAttempts = 3
 
-                while (!success && attempts < maxAttempts) {
-                    attempts++
+                    // 尝试不同的设备字符串
+                    val deviceStrings = listOf( "plug:dmix", "hw:0,0", "default","sysdefault:0,0", "dmix:0,0")
+                    var currentDeviceStringIndex = 0
 
-                    // 在每次尝试之间短暂延迟
-                    if (attempts > 1) {
-                        delay(500)
-                    }
+                    while (!success && attempts < maxAttempts) {
+                        attempts++
 
-                    // 创建流参数结构体
-                    val outputParams = nativeHeap.alloc<PaStreamParameters>()
+                        // 在每次尝试之间短暂延迟
+                        if (attempts > 1) {
+                            delay(500)
+                        }
 
-                    try {
-                        outputParams.device = if (actualDeviceIndex >= 0)
-                            actualDeviceIndex
-                        else
-                            Pa_GetDefaultOutputDevice()
-                        outputParams.channelCount = actualChannels
-                        outputParams.sampleFormat = paInt16
-                        outputParams.suggestedLatency = 0.05
-                        outputParams.hostApiSpecificStreamInfo = null
+                        // 创建流参数结构体
+                        val outputParams = nativeHeap.alloc<PaStreamParameters>()
 
-                        // 使用Pa_OpenStream打开流
-                        val streamVar = nativeHeap.alloc<COpaquePointerVar>()
                         try {
-                            logger.info("打开输出流: rate=$actualSampleRate, buf=1024")
-                            val result = Pa_OpenStream(
-                                stream = streamVar.ptr,
-                                inputParameters = null,  // 不使用输入
-                                outputParameters = outputParams.ptr,
-                                sampleRate = actualSampleRate.toDouble(),
-                                framesPerBuffer = 1024u,
-                                streamFlags = 0u,
-                                streamCallback = null,
-                                userData = null
-                            )
+                            // 可以考虑直接使用ALSA API指定详细设备参数
+                            val alsaStreamInfo = nativeHeap.alloc<PaAlsaStreamInfo>()
+                            alsaStreamInfo.size = sizeOf<PaAlsaStreamInfo>().convert()
+                            alsaStreamInfo.hostApiType = paALSA
+                            alsaStreamInfo.version = 1u
                             
-                            if (result == paNoError) {
-                                // 存储流指针
-                                outputStreamPtr.value = streamVar.value
+                            // 循环尝试不同的设备字符串
+                            val deviceString = deviceStrings[currentDeviceStringIndex % deviceStrings.size]
+                            currentDeviceStringIndex++
+                            
+                            logger.info("尝试使用音频输出设备: $deviceString")
+                            alsaStreamInfo.deviceString = deviceString.cstr.getPointer(this)
+                            
+                            outputParams.hostApiSpecificStreamInfo = alsaStreamInfo.ptr.reinterpret()
+                            outputParams.device = paUseHostApiSpecificDeviceSpecification
+                            outputParams.channelCount = actualChannels
+                            outputParams.sampleFormat = paInt16
+                            outputParams.suggestedLatency = 0.05
 
-                                // 启动流
-                                val startResult = Pa_StartStream(outputStreamPtr.value)
-                                if (startResult == paNoError) {
-                                    logger.info("音频输出流打开并启动成功（尝试 #$attempts）, 采样率: $actualSampleRate")
+                            // 使用Pa_OpenStream打开流
+                            val streamVar = nativeHeap.alloc<COpaquePointerVar>()
+                            try {
+                                logger.info("打开输出流: rate=$actualSampleRate, buf=2048")
+                                val result = Pa_OpenStream(
+                                    stream = streamVar.ptr,
+                                    inputParameters = null,  // 不使用输入
+                                    outputParameters = outputParams.ptr,
+                                    sampleRate = actualSampleRate.toDouble(),
+                                    framesPerBuffer = 2048u, // 增大缓冲区，提高稳定性
+                                    streamFlags = 0u,
+                                    streamCallback = null,
+                                    userData = null
+                                )
 
-                                    // 清空播放缓冲区
-                                    audioPlayBufferPos = 0
+                                if (result == paNoError) {
+                                    // 存储流指针
+                                    outputStreamPtr.value = streamVar.value
 
-                                    success = true
-                                    break
+                                    // 启动流
+                                    val startResult = Pa_StartStream(outputStreamPtr.value)
+                                    if (startResult == paNoError) {
+                                        logger.info("音频输出流打开并启动成功（尝试 #$attempts）, 采样率: $actualSampleRate")
+
+                                        // 清空播放缓冲区
+                                        audioPlayBufferPos = 0
+
+                                        outputDeviceInUse = deviceString
+                                        logger.info("成功打开输出设备: $deviceString")
+//                                        monitorOutputDeviceStatus()
+
+                                        success = true
+                                        break
+                                    } else {
+                                        val errorMsg = Pa_GetErrorText(startResult)?.toKString() ?: "未知错误"
+                                        logger.error("无法启动音频输出流（尝试 #$attempts）: $errorMsg")
+                                        Pa_CloseStream(outputStreamPtr.value)
+                                        outputStreamPtr.value = null
+                                    }
                                 } else {
-                                    val errorMsg = Pa_GetErrorText(startResult)?.toKString() ?: "未知错误"
-                                    logger.error("无法启动音频输出流（尝试 #$attempts）: $errorMsg")
-                                    Pa_CloseStream(outputStreamPtr.value)
-                                    outputStreamPtr.value = null
+                                    val errorMsg = Pa_GetErrorText(result)?.toKString() ?: "未知错误"
+                                    logger.error("无法打开音频输出流（尝试 #$attempts）: $errorMsg")
                                 }
-                            } else {
-                                val errorMsg = Pa_GetErrorText(result)?.toKString() ?: "未知错误"
-                                logger.error("无法打开音频输出流（尝试 #$attempts）: $errorMsg")
+                            } finally {
+                                nativeHeap.free(streamVar.rawPtr)
                             }
                         } finally {
-                            nativeHeap.free(streamVar.rawPtr)
+                            // 确保释放参数内存
+                            nativeHeap.free(outputParams.rawPtr)
                         }
-                    } finally {
-                        // 确保释放参数内存
-                        nativeHeap.free(outputParams.rawPtr)
                     }
-                }
 
-                return@withLock success
-            } catch (e: Exception) {
-                logger.error("打开音频输出流时出错: ${e.message}")
-                e.printStackTrace()
-                return@withLock false
-            } finally {
-                // 如果没有成功，重置标志
-                if (!success) {
-                    synchronized(streamStateLock) {
-                        outputStreamActive = false
+                    return@withLock success
+                } catch (e: Exception) {
+                    logger.error("打开音频输出流时出错: ${e.message}")
+                    e.printStackTrace()
+                    return@withLock false
+                } finally {
+                    // 如果没有成功，重置标志
+                    if (!success) {
+                        synchronized(streamStateLock) {
+                            outputStreamActive = false
+                        }
                     }
                 }
             }
+
         }
     }
-    
+
+
+    /**
+     * 获取设备信息
+     * @return 设备信息字符串
+     */
+    override fun getDeviceInfo(): String {
+        val sb = StringBuilder()
+        sb.appendLine("PortAudio设备信息:")
+
+        if (!portAudioInitialized) {
+            sb.appendLine("PortAudio未初始化")
+            return sb.toString()
+        }
+
+        val deviceCount = Pa_GetDeviceCount()
+        sb.appendLine("共发现 $deviceCount 个设备")
+
+        for (i in 0 until deviceCount) {
+            val info = Pa_GetDeviceInfo(i)?.pointed
+            sb.appendLine("设备 $i: ${info?.name?.toKString() ?: "未知"}")
+            sb.appendLine("  输入通道: ${info?.maxInputChannels ?: 0}")
+            sb.appendLine("  输出通道: ${info?.maxOutputChannels ?: 0}")
+            sb.appendLine("  默认采样率: ${info?.defaultSampleRate ?: 0.0}")
+        }
+
+        sb.appendLine("当前选择的输入设备: $selectedInputDeviceIndex")
+        sb.appendLine("当前选择的输出设备: $selectedOutputDeviceIndex")
+
+        return sb.toString()
+    }
+
     /**
      * 写入音频数据
      * @param buffer 音频数据缓冲区
@@ -997,12 +1032,53 @@ class PortAudioDevice private constructor() : AudioDevice {
                 return -1
             }
             
-            val result = Pa_WriteStream(outputStreamPtr.value, buffer, frameCount.toUInt())
-            if (result == paNoError || result == paOutputUnderflowed) {
-                return frameCount
-            } else {
-                logger.error("写入音频失败: ${Pa_GetErrorText(result)?.toKString()}")
+            // 检查数据和帧数
+            if (frameCount <= 0) {
+                logger.error("无效的帧数: $frameCount")
                 return -1
+            }
+            
+            // 读取一些数据样本进行日志
+            val firstSamples = StringBuilder()
+            for (i in 0 until minOf(5, frameCount)) {
+                firstSamples.append("${buffer[i]} ")
+            }
+            logger.debug("写入音频: $frameCount 帧, 样本: $firstSamples...")
+            
+            // 增强音频音量 - 对数据进行处理
+            val volumeMultiplier = 2.0f // 将音量放大2倍
+            val processedBuffer = nativeHeap.allocArray<ShortVar>(frameCount * 2) // 假设双声道
+            
+            try {
+                // 复制并放大每个样本
+                for (i in 0 until frameCount * 2) { // 遍历所有样本（包括双声道）
+                    val originalValue = buffer[i].toInt()
+                    // 放大音量但避免溢出
+                    val amplifiedValue = (originalValue * volumeMultiplier).toInt().coerceIn(Short.MIN_VALUE.toInt(), Short.MAX_VALUE.toInt())
+                    processedBuffer[i] = amplifiedValue.toShort()
+                }
+                
+                // 写入处理后的音频数据
+                val result = Pa_WriteStream(outputStreamPtr.value, processedBuffer, frameCount.toUInt())
+                
+                when (result) {
+                    paNoError -> {
+                        logger.warn("音频数据写入成功")
+                        return frameCount
+                    }
+                    paOutputUnderflowed -> {
+                        logger.warn("音频输出欠载，但数据已写入")
+                        return frameCount
+                    }
+                    else -> {
+                        val errorMsg = Pa_GetErrorText(result)?.toKString() ?: "未知错误"
+                        logger.error("写入音频失败 (错误码: $result): $errorMsg")
+                        return -1
+                    }
+                }
+            } finally {
+                // 释放临时缓冲区
+                nativeHeap.free(processedBuffer.rawValue)
             }
         }
     }
@@ -1016,48 +1092,97 @@ class PortAudioDevice private constructor() : AudioDevice {
     override fun play(audioData: ByteArray, length: Int): Boolean {
         // 确保所有播放操作都在synchronized块内
         return synchronized(portAudioLock) {
+            // 首先尝试使用PortAudio播放
+            var portAudioSuccess = false
+            
             if (_deviceState.value != AudioDeviceState.ACTIVE) {
                 logger.warn("音频设备未处于活动状态，无法播放音频数据")
-                return@synchronized false
-            }
-
-            // 若输出流未打开，尝试打开
-            if (outputStreamPtr.value == null) {
-                // 安全检查：确保不在打开输出流时尝试播放
-                if (outputStreamActive) {
-                    logger.warn("输出流正在打开中，暂时无法播放音频")
-                    return@synchronized false
+            } else {
+                // 若输出流未打开，尝试打开
+                if (outputStreamPtr.value == null) {
+                    // 安全检查：确保不在打开输出流时尝试播放
+                    if (outputStreamActive) {
+                        logger.warn("输出流正在打开中，暂时无法播放音频")
+                    } else {
+                        logger.info("输出流不存在，尝试打开新的输出流")
+                        val success = runBlocking {
+                            openOutputStream(
+                                selectedOutputDeviceIndex,
+                                AudioDefaults.TARGET_SAMPLE_RATE,
+                                AudioDefaults.CHANNELS
+                            )
+                        }
+                        if (!success) {
+                            logger.error("无法打开输出流，播放失败")
+                        } else {
+                            logger.info("成功打开输出流")
+                        }
+                    }
                 }
 
-                val success = runBlocking {
-                    openOutputStream(
-                        selectedOutputDeviceIndex,
-                        AudioDefaults.TARGET_SAMPLE_RATE,
-                        AudioDefaults.CHANNELS
-                    )
-                }
-                if (!success) {
-                    logger.error("无法打开输出流，播放失败")
-                    return@synchronized false
+                // 如果流成功打开，尝试写入数据
+                if (outputStreamPtr.value != null) {
+                    try {
+                        // 转换数据格式
+                        val shortArray = voice.util.AudioUtils.byteArrayToShortArray(audioData.copyOfRange(0, length))
+                        
+                        // 记录音频信号强度
+                        val maxAmplitude = shortArray.maxOfOrNull { kotlin.math.abs(it.toInt()) } ?: 0
+                        logger.info("正在播放音频数据: ${length}字节, 最大振幅: $maxAmplitude")
+                        
+                        // 音量放大处理
+                        val volumeMultiplier = 3.0f // 放大音量，使声音更清晰
+                        val processedShortArray = ShortArray(shortArray.size)
+                        for (i in shortArray.indices) {
+                            val amplifiedValue = (shortArray[i] * volumeMultiplier).toInt().coerceIn(Short.MIN_VALUE.toInt(), Short.MAX_VALUE.toInt())
+                            processedShortArray[i] = amplifiedValue.toShort()
+                        }
+                        
+                        val nativeBuf = nativeHeap.allocArray<ShortVar>(processedShortArray.size)
+                        for (i in processedShortArray.indices) nativeBuf[i] = processedShortArray[i]
+                        val framesToWrite = processedShortArray.size / 2 // 假设2个通道
+
+                        val written = writeAudio(nativeBuf, framesToWrite)
+                        nativeHeap.free(nativeBuf.rawValue)
+
+                        if (written == framesToWrite) {
+                            logger.info("成功写入 $written 帧音频数据")
+                            portAudioSuccess = true
+                        } else {
+                            logger.error("写入音频数据不完整: $written / $framesToWrite")
+                        }
+                    } catch (e: Exception) {
+                        logger.error("写入音频数据异常: ${e.message}")
+                    }
                 }
             }
-
-            // 写入数据
-            try {
-                // 转换数据格式
-                val shortArray = voice.util.AudioUtils.byteArrayToShortArray(audioData.copyOfRange(0, length))
-                val nativeBuf = nativeHeap.allocArray<ShortVar>(shortArray.size)
-                for (i in shortArray.indices) nativeBuf[i] = shortArray[i]
-                val framesToWrite = shortArray.size / 2 // 假设2个通道
-
-                val written = writeAudio(nativeBuf, framesToWrite)
-                nativeHeap.free(nativeBuf.rawValue)
-
-                written == framesToWrite // 检查是否全部写入
-            } catch (e: Exception) {
-                logger.error("写入音频数据异常: ${e.message}")
-                false
+            
+            // 如果PortAudio播放失败，尝试使用系统命令播放
+            if (!portAudioSuccess) {
+                try {
+                    // 将音频数据写入临时文件
+                    val tempFilePath = "/tmp/temp_audio_${System.now().toEpochMilliseconds()}.raw"
+                    val tempFile = platform.posix.fopen(tempFilePath, "wb")
+                    if (tempFile != null) {
+                        //audioData: ByteArray
+                        platform.posix.fwrite(audioData.refTo(0), 1u, length.toUInt(), tempFile)
+                        platform.posix.fclose(tempFile)
+                        
+                        // 使用aplay播放临时文件
+                        logger.info("尝试使用aplay播放音频")
+                        val cmd = "aplay -f S16_LE -r ${AudioDefaults.TARGET_SAMPLE_RATE} -c ${AudioDefaults.CHANNELS} $tempFilePath && rm $tempFilePath"
+                        val result = platform.posix.system(cmd)
+                        
+                        logger.info("aplay播放结果: $result")
+                        return result == 0
+                    }
+                } catch (e: Exception) {
+                    logger.error("使用系统命令播放音频失败: ${e.message}")
+                    return false
+                }
             }
+            
+            return portAudioSuccess
         }
     }
     
@@ -1288,6 +1413,50 @@ class PortAudioDevice private constructor() : AudioDevice {
                 } catch (e: Exception) {
                     logger.error("释放资源时出错: ${e.message}")
                 }
+            }
+        }
+    }
+
+    /**
+     * 监控音频输出设备状态
+     * 记录当前正在使用的输出设备和状态
+     */
+    private fun monitorOutputDeviceStatus() {
+        scope.launch {
+            try {
+                logger.info("开始监控音频输出设备状态")
+                
+                // 检查ALSA音量
+                val volumeResult = platform.posix.system("amixer get Master 2>/dev/null || amixer get PCM 2>/dev/null || amixer get Speaker 2>/dev/null")
+                logger.info("音量检查结果: $volumeResult")
+                
+                // 验证正在使用的设备
+                val actualDevice = outputDeviceInUse
+                logger.info("当前使用的输出设备: $actualDevice")
+                
+                // 测试直接播放
+                logger.info("测试直接播放到当前设备")
+                val testBuffer = nativeHeap.allocArray<ShortVar>(1024)
+                
+                // 生成简单的正弦波测试音频
+                for (i in 0 until 1024) {
+                    val value = (kotlin.math.sin(i * 0.05) * Short.MAX_VALUE * 0.8).toInt()
+                    testBuffer[i] = value.toShort()
+                }
+                
+                // 尝试播放测试音频
+                if (outputStreamPtr.value != null) {
+                    val result = Pa_WriteStream(outputStreamPtr.value, testBuffer, 512u)
+                    logger.info("测试音频播放结果: $result (${Pa_GetErrorText(result)?.toKString()})")
+                } else {
+                    logger.warn("输出流不可用，无法进行测试播放")
+                }
+                
+                // 释放测试缓冲区
+                nativeHeap.free(testBuffer.rawValue)
+                
+            } catch (e: Exception) {
+                logger.error("监控音频设备状态时出错: ${e.message}")
             }
         }
     }

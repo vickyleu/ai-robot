@@ -558,22 +558,15 @@ class VoiceAssistant(
             
             if (inputStreamActive) {
                 // 输入流活动时，直接使用系统命令合成和播放
-                logger.info("检测到输入流活动，使用系统命令播放音频...")
-                
-                // 使用系统命令合成并直接播放
-                val cmd =
-                    "echo \"$text\" | piper --model ${config.piperModelPath} --config ${config.piperConfigPath} --output-raw | aplay -f S16_LE -r 16000 -c 1 -D hw:0,0 2>/dev/null"
+                var success = false
                 try {
-                    val result = platform.posix.system(cmd)
-                    logger.info("使用系统命令合成并播放完成，结果: $result")
-                    
+                    success=speechSynthesizer.speak(text)
                     _assistantState.value = VoiceAssistantApi.AssistantState.LISTENING_FOR_KEYWORD
-                    return result == 0
+                    return success
                 } catch (e: Exception) {
-                    logger.error("使用系统命令合成播放失败: ${e.message}")
-                    _assistantState.value = VoiceAssistantApi.AssistantState.LISTENING_FOR_KEYWORD
-                    return false
+                    delay(500) // 等待一段时间再重试
                 }
+                return success
             } else {
                 // 仅在输入流不活动时才尝试使用PortAudio播放
                 // 使用额外尝试次数增加合成成功率

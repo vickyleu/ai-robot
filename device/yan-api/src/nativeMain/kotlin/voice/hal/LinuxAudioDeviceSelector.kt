@@ -17,6 +17,7 @@ import platform.posix.fputs
 import platform.posix.getenv
 import platform.posix.pclose
 import platform.posix.popen
+import platform.posix.sleep
 import platform.posix.system
 import voice.util.LogManager
 
@@ -87,102 +88,44 @@ class LinuxAudioDeviceSelector {
      * 创建最优化的Microsemi DAC配置
      */
     fun fixAlsaConfig(): Boolean {
-        logger.info("配置针对Microsemi DAC的ALSA...")
-
-        // 确保没有其他进程占用音频设备
-        killOtherAudioProcesses()
-
-        // 获取用户主目录
-//        val homeDir = getenv("HOME")?.toKString() ?: return false
-//        val asoundrcPath = "$homeDir/.asoundrc"
-//
-//        // 清理旧配置
-//        system("rm -f $asoundrcPath")
-
-        // 检查设备访问权限
-        system("sudo chmod -R 777 /dev/snd/* 2>/dev/null || true")
-        // 应用麦克风增益设置（在创建配置文件之前）
-        // 设置更保守的麦克风增益
-        println("设置麦克风增益...")
-        system("amixer set 'MIC SOUT GAIN' 6 2>/dev/null || true")  // 降到40%
-        system("amixer set 'MIC SOUT MUTE' on 2>/dev/null || true")
-        system("sudo alsactl store 2>/dev/null || true")
-        // 验证增益设置
-        system("amixer get 'MIC SOUT GAIN'")
-
-       /* // 创建针对Microsemi DAC的特殊配置
-        val asoundrcContent = """
-        # Microsemi DAC 配置 (plug -> hw:0,0) - 自动生成
-
-        pcm.!default {
-            type plug
-            slave.pcm {
-                type hw
-                card 0
-                device 0
-            }
-            slave.format S16_LE
-            slave.channels 2
-            slave.rate 16000
-        }
-        ctl.!default {
-            type hw
-            card 0
-        }
-        """.trimIndent()
-
-        // 写入文件
-        val file = fopen(asoundrcPath, "w") ?: return false*/
+        logger.info("修复Microsemi DAC的ALSA麦克风配置...")
 
         try {
-//            for (line in asoundrcContent.lines()) {
-//                fputs("$line\n", file)
-//            }
+            // 确保没有其他进程占用音频设备
+            killOtherAudioProcesses()
 
-            // 应用新配置
-            system("alsactl store 2>/dev/null || true")
+            // 检查设备访问权限
+            system("sudo chmod -R 777 /dev/snd/* 2>/dev/null || true")
 
-            // 重启ALSA服务
-            system("sudo alsactl kill rescan 2>/dev/null || true")
-            system("sudo alsactl -F restore 2>/dev/null || true")
+            // 🔧 关键修复：取消麦克风静音并提高增益
+            logger.info("取消麦克风静音...")
+            val unmuteResult = system("amixer set 'MIC SOUT MUTE' off 2>/dev/null")
+            if (unmuteResult != 0) {
+                logger.warn("取消静音命令执行失败，继续尝试...")
+            }
 
-            return testAudioDevice()
+            logger.info("设置麦克风增益到最大...")
+            val gainResult = system("amixer set 'MIC SOUT GAIN' 15 2>/dev/null")  // 改为最大值15
+            if (gainResult != 0) {
+                logger.warn("设置增益命令执行失败，继续尝试...")
+            }
+
+            // 确保DAC音量也是最大
+            logger.info("设置DAC音量到最大...")
+            system("amixer set 'DAC' 20 2>/dev/null || true")
+
+            // 保存设置
+            system("sudo alsactl store 2>/dev/null || true")
+
+            // 验证设置是否生效
+            logger.info("验证麦克风配置...")
+            system("amixer get 'MIC SOUT MUTE'")
+            system("amixer get 'MIC SOUT GAIN'")
+            system("amixer get 'DAC'")
+            return true
+
         } catch (e: Exception) {
             logger.error("配置ALSA失败: ${e.message}")
-            return false
-        } finally {
-//            fclose(file)
-        }
-    }
-
-    /**
-     * 测试音频设备可用性
-     */
-    fun testAudioDevice(): Boolean {
-        logger.info("测试音频设备可用性...")
-
-        try {
-            // 使用arecord测试Microsemi DAC
-            val result =
-                system("arecord -d 1 -f S16_LE -r 16000 -c 2 -D hw:0,0 /dev/null 2>/dev/null")
-            val success = (result == 0)
-
-            if (!success) {
-                // 如果失败，尝试重新加载模块
-                system("sudo modprobe -r snd_microsemi 2>/dev/null || true")
-                system("sleep 1")
-                system("sudo modprobe snd_microsemi 2>/dev/null || true")
-                system("sleep 1")
-
-                // 再次测试
-                val retestResult =
-                    system("arecord -d 1 -f S16_LE -r 16000 -c 2 -D hw:0,0 /dev/null 2>/dev/null")
-                return (retestResult == 0)
-            }
-
-            return success
-        } catch (e: Exception) {
-            logger.warn("测试音频设备失败: ${e.message}")
             return false
         }
     }
@@ -341,6 +284,78 @@ class LinuxAudioDeviceSelector {
             return true
         } catch (e: Exception) {
             logger.error("释放音频资源失败: ${e.message}")
+            return false
+        }
+    }
+
+    /**
+     * 全面诊断和修复音频问题
+     * 检查并尝试解决常见的音频问题
+     * @return 是否成功修复问题
+     */
+    fun diagnoseAndFixAudioIssues(): Boolean {
+        logger.info("开始全面诊断和修复音频问题...")
+        
+        try {
+            // 1. 检查并释放其他进程占用的音频设备
+            killOtherAudioProcesses()
+            
+            // 2. 检查设备权限
+            logger.info("检查音频设备权限...")
+            system("sudo chmod -R 777 /dev/snd/* 2>/dev/null || true")
+            
+            // 3. 检查声卡模块是否加载
+            logger.info("检查声卡模块...")
+            system("lsmod | grep snd")
+            
+            // 4. 重新加载声卡模块
+            logger.info("尝试重新加载声卡模块...")
+            system("sudo modprobe -r snd_microsemi 2>/dev/null || true")
+            system("sleep 1")
+            system("sudo modprobe snd_microsemi 2>/dev/null || true")
+            system("sleep 1")
+            
+            // 5. 调整音量设置
+            logger.info("调整音量设置...")
+            system("amixer set Master 100% unmute 2>/dev/null || true")  
+            system("amixer set PCM 100% unmute 2>/dev/null || true")
+            system("amixer set Speaker 100% unmute 2>/dev/null || true")
+            system("amixer set 'MIC SOUT GAIN' 12 2>/dev/null || true")
+            
+            // 6. 尝试重启ALSA服务
+            logger.info("尝试重启ALSA服务...")
+            system("sudo alsactl kill rescan 2>/dev/null || true")
+            system("sudo alsactl -F restore 2>/dev/null || true")
+            
+            // 7. 创建测试音频文件
+            logger.info("创建测试音频文件...")
+            val testWavPath = "/tmp/test_tone.wav"
+            system("""
+                dd if=/dev/urandom bs=1k count=10 | aplay -f cd -t raw 2>/dev/null || true
+                if [ ! -f "$testWavPath" ]; then
+                    echo "生成测试音频文件..."
+                    dd if=/dev/urandom of=$testWavPath bs=1k count=10 2>/dev/null || true
+                fi
+            """.trimIndent())
+            
+            // 8. 使用不同方法测试播放
+            logger.info("测试音频播放...")
+            // 使用ALSA直接播放
+            system("aplay -D hw:0,0 $testWavPath 2>/dev/null || true")
+            // 使用默认设备播放
+            system("aplay -D default $testWavPath 2>/dev/null || true")
+            // 使用dmix设备播放
+            system("aplay -D dmix:0,0 $testWavPath 2>/dev/null || true")
+            
+            // 9. 输出音频设备详细信息
+            logger.info("音频设备详细信息:")
+            system("aplay -l")
+            system("aplay -L")
+            
+            logger.info("诊断和修复完成")
+            return true
+        } catch (e: Exception) {
+            logger.error("诊断和修复过程中出现异常: ${e.message}")
             return false
         }
     }

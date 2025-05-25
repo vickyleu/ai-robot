@@ -16,7 +16,7 @@ import kotlin.concurrent.atomics.ExperimentalAtomicApi
  */
 object AudioApplication {
     private var isInitialized = false
-    private val deviceSelector = LinuxAudioDeviceSelector()
+//    private val deviceSelector = LinuxAudioDeviceSelector()
 
     /**
      * 初始化应用程序
@@ -30,13 +30,13 @@ object AudioApplication {
         registerShutdownHook()
 
         // 释放系统音频资源
-        deviceSelector.killOtherAudioProcesses()
+//        deviceSelector.killOtherAudioProcesses()
         
-        // 应用ALSA配置
-        if (deviceSelector.isRaspberryPi()) {
-            deviceSelector.fixAlsaConfig()
-            println("[INFO] 已应用树莓派优化配置")
-        }
+//        // 应用ALSA配置
+//        if (deviceSelector.isRaspberryPi()) {
+//            deviceSelector.fixAlsaConfig()
+//            println("[INFO] 已应用树莓派优化配置")
+//        }
 
         // 预热核心资源
         preloadResources()

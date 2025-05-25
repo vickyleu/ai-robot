@@ -1,18 +1,24 @@
 package voice.audio.recognition
 
 import com.airobot.device.yanapi.voice.util.AudioBufferPool
+import com.airobot.voskinterop.VOSK_EP_ANSWER_SHORT
+import com.airobot.voskinterop.VOSK_EP_ANSWER_VERY_LONG
 import com.airobot.voskinterop.VoskModel
 import com.airobot.voskinterop.VoskRecognizer
 import com.airobot.voskinterop.vosk_model_free
 import com.airobot.voskinterop.vosk_model_new
 import com.airobot.voskinterop.vosk_recognizer_accept_waveform_s
+import com.airobot.voskinterop.vosk_recognizer_final_result
 import com.airobot.voskinterop.vosk_recognizer_free
 import com.airobot.voskinterop.vosk_recognizer_new
 import com.airobot.voskinterop.vosk_recognizer_partial_result
 import com.airobot.voskinterop.vosk_recognizer_reset
 import com.airobot.voskinterop.vosk_recognizer_result
+import com.airobot.voskinterop.vosk_recognizer_set_endpointer_delays
+import com.airobot.voskinterop.vosk_recognizer_set_endpointer_mode
 import com.airobot.voskinterop.vosk_recognizer_set_words
 import com.airobot.voskinterop.vosk_recognizer_set_grm
+import kotlinx.atomicfu.locks.ReentrantLock
 import kotlinx.cinterop.CPointer
 import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.cinterop.ShortVar
@@ -33,6 +39,8 @@ import kotlinx.datetime.Clock.System
 import kotlinx.serialization.json.*
 import voice.util.AudioDefaults
 import voice.util.PerformanceMonitorManager
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 
 /**
  * Vosk语音识别实现
@@ -43,7 +51,11 @@ class VoskSpeechRecognizer : SpeechRecognizerApi {
     private val logger = LogManager.getLogger("VoskSpeechRecognizer")
     // 添加性能监控
     private val performanceMonitor = PerformanceMonitorManager.getMonitor("VoskRecognizer")
-
+    
+    // 暂时保留但不使用
+    private val voskProcessingDispatcher = Dispatchers.Default.limitedParallelism(1)
+    private val voskProcessingScope = CoroutineScope(voskProcessingDispatcher)
+    
     // Vosk模型和识别器
     private var voskModel: CPointer<VoskModel>? = null
     private var voskRecognizer: CPointer<VoskRecognizer>? = null
@@ -57,9 +69,9 @@ class VoskSpeechRecognizer : SpeechRecognizerApi {
     private var accumulatedAudio = ByteArray(0)
     private var lastRecognitionTime = 0L
 
-    private val minAudioBufferSize = 320 // 降低到20ms数据量 (16000Hz * 0.02 * 2bytes)
-    private val maxAudioBufferSize = 3200 // 降低到200ms数据量
-    private val recognitionCooldownMs = 100L // 降低识别间隔到100ms
+    private val minAudioBufferSize = 320 // 20ms数据量
+    private val maxAudioBufferSize = 6400 // 增大到400ms数据量，原来是3200
+    private val recognitionCooldownMs = 150L // 增加到150ms，原来是100ms
 
 
     private var isStreamProcessing = false
@@ -97,7 +109,8 @@ class VoskSpeechRecognizer : SpeechRecognizerApi {
     override fun getCurrentKeywords(): List<String> {
         return registeredKeywords.toList()
     }
-    
+    private val recognizerLock = ReentrantLock()
+
     /**
      * 处理音频数据
      * @param audio 音频数据
@@ -106,108 +119,63 @@ class VoskSpeechRecognizer : SpeechRecognizerApi {
      * @return 识别结果
      */
     override fun recognize(audio: ByteArray, length: Int, timestamp: Long): SpeechRecognizerApi.RecognitionResult {
-        if (!isInitialized || voskRecognizer == null) {
-            logger.error("Vosk识别器未初始化或已失效")
-            return createErrorResult("识别器未初始化", timestamp)
-        }
-
-        recognitionCount++
-        val startTime = LogManager.getCurrentTimeMillis()
-
-        // 每100次打印一次日志，减少日志量
-        if (recognitionCount % 100 == 0) {
-            logger.debug("音频数据接收: ${length}字节, 第${recognitionCount}次调用, 缓冲区大小: ${accumulatedAudio.size}")
-        }
-
+        recognizerLock.lock()
         try {
-            // 计算能量
+            if (!isInitialized || voskRecognizer == null) return createErrorResult("识别器未初始化", timestamp)
+            recognitionCount++
+            // 移除跳过逻辑，处理所有音频数据
+            // if (recognitionCount % 2 != 0) return createEmptyResult(timestamp)
+
             val energy = calculateEnergy(audio, length)
-            val hasVoice = energy > 100
+            val hasVoice = energy > 50  // 从150降低到50，适应低能量语音
+            if (!hasVoice) silenceFrames++ else silenceFrames = 0
 
-            // 静音检测
-            if (!hasVoice) {
-                silenceFrames++
-            } else {
-                silenceFrames = 0
+            // 添加能量检测日志
+            if (recognitionCount % 200 == 0) { // 从50改为200，减少日志频率
+                logger.debug("音频能量检测: energy=$energy, hasVoice=$hasVoice, 数据长度=$length")
             }
 
-            // 累积音频数据，但限制增长
-            if (accumulatedAudio.size < maxAudioBufferSize) {
+            // 累积数据
+            if (hasVoice || accumulatedAudio.isNotEmpty()) {
                 accumulateAudio(audio, length)
-            } else {
-                // 缓冲区满，滑动窗口处理
-                slideAudioBuffer(audio, length)
-            }
-
-            // 判断是否应该执行识别
-            val shouldRecognize =
-                (accumulatedAudio.size >= minAudioBufferSize) && // 有足够数据
-                        (silenceFrames >= maxSilenceFrames || // 检测到静音
-                                accumulatedAudio.size >= maxAudioBufferSize || // 缓冲区满
-                                System.now().toEpochMilliseconds() - lastRecognitionTime >= recognitionCooldownMs) // 时间间隔
-
-            if (!shouldRecognize) {
-                return createEmptyResult(timestamp)
-            }
-
-            // 执行识别
-            val voskResult = processAudioWithVosk(accumulatedAudio)
-            val processingTime = System.now().toEpochMilliseconds() - startTime
-            performanceMonitor.recordProcessingTime(processingTime)
-            // 根据性能调整处理策略
-            if (performanceMonitor.shouldReduceQuality()) {
-                // 降低质量模式：跳过一些帧
-                if (recognitionCount % 2 == 0) {
-                    return createEmptyResult(timestamp)
-                }
-            }
-            // 根据结果类型处理
-            return when (voskResult.resultType) {
-                ResultType.FINAL -> {
-                    // 清空缓冲区
-                    accumulatedAudio = ByteArray(0)
+                if (accumulatedAudio.size > maxAudioBufferSize) {
                     silenceFrames = 0
-                    lastRecognitionTime = System.now().toEpochMilliseconds()
-
-                    // 创建结果
-                    createFinalResult(voskResult, timestamp, System.now().toEpochMilliseconds() - startTime)
+                    val res = processAccumulatedAudio(timestamp, LogManager.getCurrentTimeMillis(), forceFinal = true)
+                    accumulatedAudio = ByteArray(0)
+                    return res
                 }
-
-                ResultType.PARTIAL -> {
-                    // 部分结果，保留部分数据
-                    if (accumulatedAudio.size > maxAudioBufferSize / 2) {
-                        // 保留后半部分
-                        accumulatedAudio = accumulatedAudio.copyOfRange(
-                            accumulatedAudio.size / 2,
-                            accumulatedAudio.size
-                        )
-                    }
-                    createPartialResult(voskResult, timestamp, System.now().toEpochMilliseconds() - startTime)
-                }
-
-                else -> createEmptyResult(timestamp)
             }
-        } catch (e: Exception) {
-            logger.error("识别处理异常: ${e.message}")
-            return createErrorResult("识别处理异常: ${e.message}", timestamp)
+
+            val shouldCut = accumulatedAudio.size >= maxAudioBufferSize ||
+                    silenceFrames >= maxSilenceFrames ||
+                    (hasVoice && accumulatedAudio.size >= minAudioBufferSize)
+            if (!shouldCut) return createEmptyResult(timestamp)
+
+            return processAccumulatedAudio(timestamp, LogManager.getCurrentTimeMillis(), forceFinal = true)
+        }finally {
+            recognizerLock.unlock()
         }
     }
+    /**
+     * 处理累积的音频数据
+     */
+    private fun processAccumulatedAudio(
+        timestamp: Long,
+        startTime: Long,
+        forceFinal: Boolean = false
+    ): SpeechRecognizerApi.RecognitionResult {
+        val voskResult = processAudioWithVosk(accumulatedAudio, forceFinal)
+        val cost = System.now().toEpochMilliseconds() - startTime
+        lastRecognitionTime = System.now().toEpochMilliseconds()
+        accumulatedAudio = ByteArray(0)
+        silenceFrames = 0
 
-    // 新增滑动窗口方法
-    private fun slideAudioBuffer(newData: ByteArray, length: Int) {
-        // 移除旧数据，添加新数据
-        val slideSize = length.coerceAtMost(maxAudioBufferSize / 4)
-        val newBuffer = ByteArray(accumulatedAudio.size - slideSize + length)
-
-        // 复制保留的旧数据
-        accumulatedAudio.copyInto(newBuffer, 0, slideSize, accumulatedAudio.size)
-
-        // 添加新数据
-        newData.copyInto(newBuffer, accumulatedAudio.size - slideSize, 0, length)
-
-        accumulatedAudio = newBuffer
+        return when (voskResult.resultType) {
+            ResultType.FINAL -> createFinalResult(voskResult, timestamp, cost)
+            ResultType.PARTIAL -> createPartialResult(voskResult, timestamp, cost)
+            else -> createEmptyResult(timestamp)
+        }
     }
-
 
     /**
      * 创建最终结果
@@ -267,40 +235,134 @@ class VoskSpeechRecognizer : SpeechRecognizerApi {
     /**
      * 使用Vosk处理音频数据
      */
-    private fun processAudioWithVosk(audioData: ByteArray): VoskResult {
-        if (voskRecognizer == null) {
-            return VoskResult("", "", 0f, emptyList(), emptyList(), ResultType.ERROR)
+    private fun processAudioWithVosk(audioData: ByteArray, forceFinal: Boolean = false): VoskResult {
+        logger.debug("Vosk处理音频: 数据长度=${audioData.size}字节, forceFinal=$forceFinal")
+
+        // 检查音频数据质量
+        if (audioData.size < 640) { // 至少40ms的音频
+            logger.warn("音频数据太短，跳过处理: ${audioData.size}字节")
+            return VoskResult("", "", 0f, emptyList(), emptyList(), ResultType.EMPTY)
         }
+
+        // 预处理：增强音频信号
+        val enhancedAudio = enhanceAudioSignal(audioData)
+
+        val samples = convertAudioToShorts(enhancedAudio)
+        val sampleCount = enhancedAudio.size / 2
+
+        // 检查样本质量
+        if (!validateAudioQuality(samples, sampleCount)) {
+            logger.warn("音频质量不足，可能无法识别")
+        }
+
+        // 继续原有处理...
+        val r = vosk_recognizer_accept_waveform_s(voskRecognizer, samples, sampleCount)
+        nativeHeap.free(samples.rawValue)
         
-        try {
-            // 准备处理音频 - 将字节数组转换为短整型数组
-            val samples = convertAudioToShorts(audioData)
+        logger.debug("Vosk accept_waveform 返回值: $r")
+        
+        // 只有 r!=0 或 外部 forceFinal 时，才真正调用 result()+reset()
+        if (r != 0 || forceFinal) {
+            val json = vosk_recognizer_result(voskRecognizer)?.toKString() ?: "{}"
+            logger.debug("Vosk最终结果JSON: $json")
+            val result = parseFinalResult(json)
+            vosk_recognizer_reset(voskRecognizer)
+            return result
+        } else {
+            val partial = vosk_recognizer_partial_result(voskRecognizer)?.toKString() ?: "{}"
+            logger.debug("Vosk部分结果JSON: $partial")
+            val partialResult = parsePartialResult(partial)
             
-            // 调用Vosk处理音频
-            val processResult = vosk_recognizer_accept_waveform_s(
-                voskRecognizer, 
-                samples,
-                (audioData.size / 2)
-            )
-            
-            // 释放临时缓冲区
-            nativeHeap.free(samples.rawValue)
-            
-            // 获取并解析JSON结果
-            return if (processResult == 0) {
-                // 部分结果
-                val partialJson = vosk_recognizer_partial_result(voskRecognizer)?.toKString() ?: "{}"
-                parsePartialResult(partialJson)
-            } else {
-                // 最终结果
-                val finalJson = vosk_recognizer_result(voskRecognizer)?.toKString() ?: "{}"
-                parseFinalResult(finalJson)
+            // 如果部分结果有文本内容，并且是强制最终处理，则获取最终结果
+            if (forceFinal && partialResult.partialText.isNotBlank()) {
+                logger.debug("部分结果有内容且强制最终处理，获取最终结果")
+                val json = vosk_recognizer_result(voskRecognizer)?.toKString() ?: "{}"
+                logger.debug("强制获取的最终结果JSON: $json")
+                val finalResult = parseFinalResult(json)
+                vosk_recognizer_reset(voskRecognizer)
+                return finalResult
             }
-        } catch (e: Exception) {
-            logger.error("Vosk处理错误: ${e.message}")
-            return VoskResult("", "", 0f, emptyList(), emptyList(), ResultType.ERROR)
+            
+            return partialResult
         }
     }
+    // 新增：音频信号增强函数
+    private fun enhanceAudioSignal(audioData: ByteArray): ByteArray {
+        return audioData  // 直接返回原始数据，不做任何处理
+        val enhanced = ByteArray(audioData.size)
+
+        // 应用简单的增益和去直流偏移
+        var sum = 0L
+        for (i in audioData.indices step 2) {
+            if (i + 1 < audioData.size) {
+                val lowByte = audioData[i].toInt() and 0xFF
+                val highByte = audioData[i + 1].toInt() and 0xFF
+                val sample = lowByte or (highByte shl 8)
+                val signedSample = if (sample and 0x8000 != 0) sample - 0x10000 else sample
+                sum += signedSample
+            }
+        }
+
+        val dcOffset = (sum / (audioData.size / 2)).toInt()
+        logger.debug("检测到直流偏移: $dcOffset")
+
+        // 去除直流偏移并应用适度增益
+        for (i in audioData.indices step 2) {
+            if (i + 1 < audioData.size) {
+                val lowByte = audioData[i].toInt() and 0xFF
+                val highByte = audioData[i + 1].toInt() and 0xFF
+                val sample = lowByte or (highByte shl 8)
+                var signedSample = if (sample and 0x8000 != 0) sample - 0x10000 else sample
+
+                // 去直流偏移
+                signedSample -= dcOffset
+
+                // 应用适度增益（2倍），但避免削波
+                signedSample = (signedSample * 2).coerceIn(-32767, 32767)
+
+                // 转回无符号16位
+                val unsignedSample = if (signedSample < 0) signedSample + 0x10000 else signedSample
+
+                enhanced[i] = (unsignedSample and 0xFF).toByte()
+                enhanced[i + 1] = ((unsignedSample shr 8) and 0xFF).toByte()
+            }
+        }
+
+        return enhanced
+    }
+
+    // 新增：音频质量验证函数
+    private fun validateAudioQuality(samples: CPointer<ShortVar>, sampleCount: Int): Boolean {
+        if (sampleCount < 100) return false
+
+        var maxAbs = 0
+        var dynamicRange = 0
+        var minVal = Int.MAX_VALUE
+        var maxVal = Int.MIN_VALUE
+
+        for (i in 0 until sampleCount) {
+            val sample = samples[i].toInt()
+            val abs = kotlin.math.abs(sample)
+            if (abs > maxAbs) maxAbs = abs
+            if (sample < minVal) minVal = sample
+            if (sample > maxVal) maxVal = sample
+        }
+
+        dynamicRange = maxVal - minVal
+
+        val hasEnoughAmplitude = maxAbs > 200  // 最小振幅要求
+        val hasEnoughDynamicRange = dynamicRange > 100  // 最小动态范围要求
+
+        if (!hasEnoughAmplitude) {
+            logger.warn("音频振幅不足: maxAbs=$maxAbs (需要>200)")
+        }
+        if (!hasEnoughDynamicRange) {
+            logger.warn("音频动态范围不足: range=$dynamicRange (需要>100)")
+        }
+
+        return hasEnoughAmplitude && hasEnoughDynamicRange
+    }
+
     
     /**
      * 解析Vosk最终结果JSON
@@ -532,21 +594,36 @@ class VoskSpeechRecognizer : SpeechRecognizerApi {
     private fun accumulateAudio(newData: ByteArray, length: Int) {
         if (length <= 0) return
 
-        // 使用缓冲池分配内存
-        val newSize = accumulatedAudio.size + length
-        val newBuffer = AudioBufferPool.acquire(newSize)
         try {
-            // 复制数据
-            accumulatedAudio.copyInto(newBuffer, 0, 0, accumulatedAudio.size)
-            newData.copyInto(newBuffer, accumulatedAudio.size, 0, length)
-            // 释放旧缓冲区
+            // 直接使用常规字节数组，不使用缓冲池
+            val newSize = accumulatedAudio.size + length
+            
+            // 创建新字节数组并复制数据
+            val combinedData = ByteArray(newSize)
+            
+            // 复制旧数据
             if (accumulatedAudio.isNotEmpty()) {
-                AudioBufferPool.release(accumulatedAudio)
+                accumulatedAudio.copyInto(combinedData, 0, 0, accumulatedAudio.size)
             }
-            accumulatedAudio = newBuffer.copyOfRange(0, newSize)
-        } finally {
-            // 确保释放临时缓冲区
-            AudioBufferPool.release(newBuffer)
+            
+            // 复制新数据
+            newData.copyInto(combinedData, accumulatedAudio.size, 0, length)
+
+            // 更新引用
+            accumulatedAudio = combinedData
+            
+            // 定期记录缓冲区大小
+            if (recognitionCount % 100 == 0) {
+                logger.debug("音频累积成功，当前缓冲区大小: $newSize 字节")
+            }
+        } catch (e: Exception) {
+            val errorMsg = "音频累积异常: ${e.message ?: "未知错误"}"
+            logger.error(errorMsg)
+            e.printStackTrace()
+            
+            // 如果发生异常，尝试简单地保留原始数据
+            accumulatedAudio = ByteArray(0)
+            throw Exception(errorMsg)
         }
     }
     
@@ -556,16 +633,60 @@ class VoskSpeechRecognizer : SpeechRecognizerApi {
     private fun convertAudioToShorts(audioData: ByteArray): CPointer<ShortVar> {
         val halfLength = audioData.size / 2
         val samples = nativeHeap.allocArray<ShortVar>(halfLength)
-        
+
         for (i in 0 until halfLength) {
+            // 修复字节序问题 - 确保正确的小端序转换
             val lowByte = audioData[i * 2].toInt() and 0xFF
             val highByte = audioData[i * 2 + 1].toInt() and 0xFF
-            samples[i] = ((highByte shl 8) or lowByte).toShort()
+
+            // 正确的16位PCM转换（小端序）
+            val sample = (lowByte or (highByte shl 8)).toShort()
+            samples[i] = sample
         }
-        
+
+        // 添加详细调试
+        if (halfLength > 0) {
+            // 计算统计信息
+            var maxAbs = 0
+            var minVal = Short.MAX_VALUE.toInt()
+            var maxVal = Short.MIN_VALUE.toInt()
+            var nonZeroCount = 0
+            var sum = 0.0
+
+            for (i in 0 until halfLength) {
+                val sample = samples[i].toInt()
+                val abs = kotlin.math.abs(sample)
+                if (abs > maxAbs) maxAbs = abs
+                if (sample < minVal) minVal = sample
+                if (sample > maxVal) maxVal = sample
+                if (sample != 0) nonZeroCount++
+                sum += sample * sample
+            }
+
+            val rms = kotlin.math.sqrt(sum / halfLength)
+
+            logger.debug("""
+            音频统计详情:
+            - 样本数: $halfLength
+            - 振幅范围: $minVal 到 $maxVal
+            - 最大绝对值: $maxAbs
+            - RMS能量: ${rms.toInt()}
+            - 非零样本: $nonZeroCount/${halfLength} (${(nonZeroCount*100/halfLength)}%)
+            - 前5个样本: ${(0 until minOf(5, halfLength)).map { samples[it] }.joinToString(", ")}
+        """.trimIndent())
+
+            // 检查音频质量
+            if (maxAbs < 500) {
+                logger.warn("音频振幅过低，可能影响识别效果: maxAbs=$maxAbs")
+            }
+            if (rms < 100) {
+                logger.warn("音频RMS能量过低: rms=${rms.toInt()}")
+            }
+        }
+
         return samples
     }
-    
+
     /**
      * 计算音频能量
      */
@@ -635,17 +756,23 @@ class VoskSpeechRecognizer : SpeechRecognizerApi {
         logger.info("初始化Vosk语音识别器，模型路径: $modelPath")
         
         try {
+            // 检查模型路径是否存在
+            logger.info("检查模型路径是否存在: $modelPath")
+            
             // 加载Vosk模型
+            logger.info("正在加载Vosk模型...")
             voskModel = vosk_model_new(modelPath)
             if (voskModel == null) {
-                logger.error("Vosk模型加载失败")
+                logger.error("Vosk模型加载失败，路径: $modelPath")
                 return false
             }
+            logger.info("✅ Vosk模型加载成功")
             
             // 自动补全词表
             ensureVoskVocabulary(modelPath, registeredKeywords + shortCommandKeywords)
             
             // 创建Vosk识别器
+            logger.info("正在创建Vosk识别器，采样率: ${sampleRate}Hz")
             voskRecognizer = vosk_recognizer_new(voskModel, sampleRate.toFloat())
             if (voskRecognizer == null) {
                 logger.error("Vosk识别器创建失败")
@@ -653,19 +780,35 @@ class VoskSpeechRecognizer : SpeechRecognizerApi {
                 voskModel = null
                 return false
             }
-            
+            logger.info("✅ Vosk识别器创建成功")
+
+            logger.info("配置Vosk识别器参数...")
+            vosk_recognizer_set_endpointer_mode(voskRecognizer, VOSK_EP_ANSWER_SHORT)
+            vosk_recognizer_set_endpointer_delays(voskRecognizer,
+                /*t_start_max=*/0.5f,    // 从1.0f进一步降低到0.5f，更快开始识别
+                /*t_end=*/0.1f,          // 从0.3f降低到0.1f，更快结束
+                /*t_max=*/1.5f           // 从3.0f降低到1.5f，避免过长等待
+            )
+
             // 启用部分结果和关键词提取
             vosk_recognizer_set_words(voskRecognizer, 1)
+            logger.info("✅ Vosk识别器参数配置完成")
             
             // 添加默认的短命令关键词
             registeredKeywords.addAll(shortCommandKeywords)
             updateRecognizerKeywords()
             
             isInitialized = true
-            logger.info("Vosk语音识别器初始化成功，已加载${registeredKeywords.size}个默认关键词")
+            logger.info("✅ Vosk语音识别器初始化成功，已加载${registeredKeywords.size}个默认关键词")
+            logger.info("关键词列表: ${registeredKeywords.joinToString(", ")}")
+            
+            // 运行测试验证Vosk是否正常工作
+            testVoskRecognizer()
+            
             return true
         } catch (e: Exception) {
             logger.error("Vosk语音识别器初始化异常: ${e.message}")
+            e.printStackTrace()
             cleanup()
             return false
         }
@@ -721,6 +864,10 @@ class VoskSpeechRecognizer : SpeechRecognizerApi {
         }
         
         try {
+            // 暂时禁用关键词语法，使用完整语言模型
+            logger.info("暂时禁用关键词语法，使用完整语言模型")
+            // 注释掉关键词设置，让Vosk使用完整词汇表
+            /*
             // 构建关键词JSON数组 
             val keywordsJson = buildString {
                 append("[")
@@ -734,6 +881,7 @@ class VoskSpeechRecognizer : SpeechRecognizerApi {
             // 设置Vosk语法
             vosk_recognizer_set_grm(voskRecognizer, keywordsJson)
             logger.debug("已更新Vosk关键词语法: $keywordsJson")
+            */
         } catch (e: Exception) {
             logger.error("设置Vosk关键词失败: ${e.message}")
         }
@@ -880,4 +1028,45 @@ class VoskSpeechRecognizer : SpeechRecognizerApi {
             }
         }
     }
-} 
+
+    /**
+     * 测试Vosk识别器是否正常工作
+     * 使用简单的测试音频数据
+     */
+    fun testVoskRecognizer(): Boolean {
+        if (!isInitialized || voskRecognizer == null) {
+            logger.error("Vosk识别器未初始化，无法测试")
+            return false
+        }
+        
+        try {
+            logger.info("开始测试Vosk识别器...")
+            
+            // 创建一个简单的测试音频（静音）
+            val testAudioSize = 3200 // 200ms @ 16kHz
+            val testAudio = ByteArray(testAudioSize) { 0 }
+            
+            // 测试1：静音数据
+            logger.info("测试1：静音数据")
+            val result1 = processAudioWithVosk(testAudio, forceFinal = true)
+            logger.info("静音测试结果: ${result1.text}")
+            
+            // 测试2：随机噪音数据
+            logger.info("测试2：随机噪音数据")
+            val noiseAudio = ByteArray(testAudioSize) { (kotlin.random.Random.nextInt(-1000, 1000) and 0xFF).toByte() }
+            val result2 = processAudioWithVosk(noiseAudio, forceFinal = true)
+            logger.info("噪音测试结果: ${result2.text}")
+            
+            // 测试3：检查模型是否支持中文
+            logger.info("测试3：检查关键词设置")
+            logger.info("当前注册的关键词: ${registeredKeywords.joinToString(", ")}")
+            
+            logger.info("Vosk识别器测试完成")
+            return true
+        } catch (e: Exception) {
+            logger.error("Vosk识别器测试失败: ${e.message}")
+            e.printStackTrace()
+            return false
+        }
+    }
+}

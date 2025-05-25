@@ -8,15 +8,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import platform.posix.log
 import voice.api.KeywordDetectorApi
-import voice.audio.processing.WebRtcApmSingleton
-import voice.util.LogManager
-import voice.util.AudioDefaults
-import voice.util.AudioUtils
-import voice.audio.recognition.VoskSpeechRecognizer
-import voice.acquisition.portaudio.PortAudioDevice
 import voice.audio.processing.CallbackAudioProcessor
+import voice.util.AudioUtils
+import voice.util.LogManager
 
 /**
  * 关键词检测器
@@ -94,7 +89,10 @@ class KeywordDetector(
         audioProcessor.setProcessedAudioCallback { processedData, size ->
             // 使用Vosk检测处理后的音频
             if (isListening && size > 0) {
+                logger.warn("处理音频回调被触发，数据大小: $size voskDetector.detect(processedData)")
                 voskDetector.detect(processedData)
+                // 移除播放代码，避免音频设备冲突
+                // this.audioProcessor.audioDevice.play(AudioUtils.shortArrayToByteArray(processedData),size)
             }
         }
         
@@ -179,96 +177,7 @@ class KeywordDetector(
         _detectorState.value = KeywordDetectorApi.DetectorState.IDLE
         logger.info("关键词检测器已停止监听")
     }
-    
-    /**
-     * 用于API兼容性的检测方法 - 字节数组版本
-     * 此方法不在接口中定义，但为了兼容性提供
-     * @param audioData 音频数据(字节数组)
-     * @param length 数据长度
-     * @return 是否检测到关键词
-     */
-    fun detect(audioData: ByteArray, length: Int): Boolean {
-        // 在回调模式下，该方法仅作为兼容性API存在
-        // 实际处理已在audioProcessor.onAudioInput中完成
-        return false
-    }
-    
-    /**
-     * 处理音频帧 - 短整型数组版本
-     * @param audioFrame 音频数据(短整型数组)
-     * @param frameSize 帧大小
-     * @return 是否检测到关键词
-     */
-    override fun processAudioFrame(audioFrame: ShortArray, frameSize: Int): Boolean {
-        if (!isInitialized) {
-            return false
-        }
 
-        try {
-            // 基本输入检查
-            if (audioFrame.isEmpty() || frameSize <= 0) {
-                return false
-            }
-
-            // 简单的数据质量检查
-            var validSamples = 0
-            for (sample in audioFrame) {
-                if (kotlin.math.abs(sample.toInt()) > 50) { // 超过基本噪声阈值
-                    validSamples++
-                }
-            }
-
-            val validRatio = validSamples.toDouble() / audioFrame.size
-
-            // 如果有效数据太少，跳过处理
-            if (validRatio < 0.01) {
-                if (audioReadCounter++ % 500 == 0) {
-                    logger.debug("有效样本比例过低: ${(validRatio * 100).toInt()}%")
-                }
-                return false
-            }
-            // 获取当前设备实际采样率和通道数
-            val paDevice = PortAudioDevice.getInstance()
-            val currentRate = paDevice.getSampleRate()
-            val currentChannels = paDevice.getChannels()
-
-            // 获取/创建对应的 WebRTC APM 实例
-            // APM实例将根据实际的currentRate和currentChannels进行内部配置或重采样
-            val apm = WebRtcApmSingleton.getInstance(currentRate, currentChannels) ?: return false
-
-            // 使用APM处理音频
-            // WebRtcApm.processFrame 内部会处理重采样到APM的目标速率（如16kHz）
-            val processedData = apm.processFrame(audioFrame)
-
-            // 查询VAD结果 (APM内部的VAD是基于其处理速率的，例如16kHz)
-            val hasVoiceActivity = apm.isVoiceDetected()
-
-            // 计算处理后的能量 (能量计算也是基于APM处理后的数据)
-            val processedRms = apm.calculateEnergy(processedData)
-
-            // 语音判定：VAD + 能量阈值 + 数据质量
-            val isRealVoice = hasVoiceActivity &&
-                    processedRms > minValidRms &&
-                    processedRms < 1.0 && // 避免异常高能量
-                    validRatio > 0.1
-
-            // 简化日志输出
-            if (audioReadCounter++ % 1000 == 0 || (isRealVoice && audioReadCounter % 100 == 0)) {
-                logger.debug("音频状态: RMS=$processedRms, VAD=$hasVoiceActivity, 有效=${(validRatio*100).toInt()}%, 语音=$isRealVoice")
-            }
-
-            // 只有检测到真实语音时才进行关键词检测
-            return if (isRealVoice) {
-                voskDetector.detect(processedData)
-            } else {
-                false
-            }
-
-        } catch (e: Exception) {
-            logger.error("处理音频帧异常: ${e.message}")
-            return false
-        }
-    }
 
     /**
      * 设置敏感度

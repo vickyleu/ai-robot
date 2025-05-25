@@ -47,14 +47,6 @@ interface KeywordDetectorApi {
     fun release()
 
     /**
-     * 处理音频帧以检测关键词
-     * @param audioFrame 音频数据
-     * @param frameSize 帧大小
-     * @return 是否检测到关键词
-     */
-    fun processAudioFrame(audioFrame: ShortArray, frameSize: Int): Boolean
-    
-    /**
      * 设置灵敏度
      * @param sensitivity 灵敏度，0.0-1.0
      */
