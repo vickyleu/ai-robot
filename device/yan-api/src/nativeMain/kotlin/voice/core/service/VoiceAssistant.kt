@@ -17,16 +17,13 @@ import kotlinx.datetime.Clock.System
 import voice.acquisition.portaudio.PortAudioDevice
 import voice.api.KeywordDetectorApi
 import voice.api.VoiceAssistantApi
-import voice.audio.processing.WebRtcApm
 import voice.audio.processing.WebRtcApmSingleton
 import voice.audio.processing.CallbackAudioProcessor
 import voice.core.config.VoiceAssistantConfig
 import voice.detector.keyword.KeywordDetector
 import voice.synthesis.PiperSpeechSynthesizer
 import voice.util.LogManager
-import voice.util.AudioUtils
 import kotlin.time.ExperimentalTime
-import kotlin.concurrent.Volatile
 
 /**
  * 语音助手实现
@@ -465,61 +462,6 @@ class VoiceAssistant(
     }
 
     /**
-     * 播放激活提示音
-     */
-    private suspend fun playActivationSound() {
-        logger.info("播放激活提示音")
-
-        // 检查输入流状态
-        val inputStreamActive = PortAudioDevice.isInputStreamActive()
-        
-        if (inputStreamActive) {
-            // 输入流活动，使用系统命令播放嘟嘟声
-            val beepCmd = "echo -e \"\\007\\007\" > /dev/console || echo 'beep' > /dev/null"
-            try {
-                platform.posix.system(beepCmd)
-                logger.debug("系统命令播放激活提示音完成")
-            } catch (e: Exception) {
-                logger.error("使用系统命令播放激活提示音失败: ${e.message}")
-            }
-            return
-        }
-
-        // 如果输入流不活跃，尝试使用PortAudio播放
-        // 创建一个简单的哔声
-        val beepDuration = 200 // 毫秒
-        val sampleRate = config.sampleRate
-        val toneFrequency = 880.0 // Hz, A5音
-
-        // 计算需要的样本数
-        val numSamples = (beepDuration * sampleRate / 1000)
-
-        // 创建立体声哔声
-        val beep = ShortArray(numSamples * 2)
-
-        // 生成哔声（正弦波）- 立体声格式
-        for (i in 0 until numSamples) {
-            val time = i.toDouble() / sampleRate
-            val amplitude = 0.5 // 振幅为最大的50%
-            val sampleValue =
-                (Short.MAX_VALUE * amplitude * kotlin.math.sin(2.0 * kotlin.math.PI * toneFrequency * time)).toInt()
-                    .toShort()
-
-            // 左右声道
-            beep[i * 2] = sampleValue
-            beep[i * 2 + 1] = sampleValue
-        }
-
-        // 播放提示音
-        try {
-            audioDevice.play(AudioUtils.shortArrayToByteArray(beep), beep.size * 2)
-            logger.debug("提示音播放完成")
-        } catch (e: Exception) {
-            logger.error("播放提示音失败: ${e.message}")
-        }
-    }
-
-    /**
      * 提交文本命令
      * @param text 文本命令
      * @return 回复内容
@@ -553,138 +495,29 @@ class VoiceAssistant(
         _assistantState.value = VoiceAssistantApi.AssistantState.SPEAKING
 
         try {
-            // 检查输入流状态
-            val inputStreamActive = PortAudioDevice.isInputStreamActive()
-            
-            if (inputStreamActive) {
-                // 输入流活动时，直接使用系统命令合成和播放
-                var success = false
-                try {
-                    success=speechSynthesizer.speak(text)
-                    _assistantState.value = VoiceAssistantApi.AssistantState.LISTENING_FOR_KEYWORD
-                    return success
-                } catch (e: Exception) {
-                    delay(500) // 等待一段时间再重试
-                }
-                return success
-            } else {
-                // 仅在输入流不活动时才尝试使用PortAudio播放
-                // 使用额外尝试次数增加合成成功率
-                var success = false
-                var attempts = 0
-                val maxAttempts = 3
-
-                while (!success && attempts < maxAttempts) {
-                    attempts++
-                    
-                    // 再次检查输入流状态
-                    if (PortAudioDevice.isInputStreamActive()) {
-                        logger.warn("尝试播放时检测到输入流已变为活动状态，取消播放")
-                        break
-                    }
-                    
-                    // 尝试检查输出流
-                    val outputStreamActive = PortAudioDevice.isOutputStreamActive()
-                    
-                    if (!outputStreamActive) {
-                        // 尝试打开输出流
-                        val outputStreamOpened = audioDevice.openOutputStream(
-                            deviceIndex = -1,
-                            sampleRate = config.sampleRate,
-                            channels = config.channels
-                        )
-                        
-                        if (!outputStreamOpened) {
-                            logger.warn("无法打开输出流（尝试 #$attempts），等待后重试")
-                            delay(500) // 等待一段时间再重试
-                            continue
-                        }
-                    }
-                    
-                    // 合成并播放
-                    try {
-                        success = speechSynthesizer.speak(text)
-                        if (!success) {
-                            logger.warn("语音合成失败（尝试 #$attempts），等待后重试")
-                            delay(500) // 等待一段时间再重试
-                        }
-                    } catch (e: Exception) {
-                        logger.error("语音合成错误（尝试 #$attempts）: ${e.message}")
-                        delay(500) // 等待一段时间再重试
-                    }
-                }
-
+            // 尝试打开输出流
+            val outputStreamOpened = audioDevice.openOutputStream(
+                sampleRate = config.outputSampleRate,
+                channels = config.outChannels
+            )
+            var success=false
+            // 合成并播放
+            try {
+                success = speechSynthesizer.speak(text,config.outputSampleRate,config.outChannels)
                 if (!success) {
-                    logger.error("多次尝试后语音合成仍然失败")
+                    logger.warn("语音合成失败，等待后重试")
                 }
-                
-                _assistantState.value = VoiceAssistantApi.AssistantState.LISTENING_FOR_KEYWORD
-                return success
+            } catch (e: Exception) {
+                logger.error("语音合成错误: ${e.message}")
+                delay(500) // 等待一段时间再重试
             }
+            _assistantState.value = VoiceAssistantApi.AssistantState.LISTENING_FOR_KEYWORD
+            return success
         } catch (e: Exception) {
             logger.error("语音合成过程中发生异常: ${e.message}")
             _assistantState.value = VoiceAssistantApi.AssistantState.LISTENING_FOR_KEYWORD
             return false
         }
-    }
-
-    /**
-     * 播放应答提示音
-     */
-    private suspend fun playAcknowledgeTone() {
-        logger.info("播放应答提示音")
-
-        // 检查输入流状态
-        val inputStreamActive = PortAudioDevice.isInputStreamActive()
-        
-        if (inputStreamActive) {
-            // 输入流活动，使用系统命令播放嘟嘟声
-            val beepCmd = "echo -e \"\\007\" > /dev/console || echo 'beep' > /dev/null"
-            try {
-                platform.posix.system(beepCmd)
-                logger.debug("系统命令播放应答提示音完成")
-            } catch (e: Exception) {
-                logger.error("使用系统命令播放应答提示音失败: ${e.message}")
-            }
-            return
-        }
-
-        // 如果输入流不活跃，尝试使用PortAudio播放
-        // 创建一个简单的哔声
-        val beepDuration = 200 // 毫秒
-        val sampleRate = config.sampleRate
-        val toneFrequency = 980.0 // Hz, B5音，比激活音高一些
-
-        // 计算需要的样本数
-        val numSamples = (beepDuration * sampleRate / 1000)
-
-        // 创建立体声哔声
-        val beep = ShortArray(numSamples * 2)
-
-        // 生成哔声（正弦波），增加音量淡入淡出效果
-        for (i in 0 until numSamples) {
-            val time = i.toDouble() / sampleRate
-            // 计算淡入淡出的振幅包络
-            val fadeTime = 0.2 // 淡入淡出时间占比
-            val normalizedPos = i.toDouble() / numSamples
-            val envelope = when {
-                normalizedPos < fadeTime -> normalizedPos / fadeTime // 淡入
-                normalizedPos > (1.0 - fadeTime) -> (1.0 - normalizedPos) / fadeTime // 淡出
-                else -> 1.0 // 中间部分保持最大音量
-            }
-
-            val amplitude = 0.6 * envelope // 振幅为最大的60%
-            val sampleValue =
-                (Short.MAX_VALUE * amplitude * kotlin.math.sin(2.0 * kotlin.math.PI * toneFrequency * time)).toInt()
-                    .toShort()
-
-            // 左右声道
-            beep[i * 2] = sampleValue
-            beep[i * 2 + 1] = sampleValue
-        }
-
-        // 使用音频设备播放
-        audioDevice.play(AudioUtils.shortArrayToByteArray(beep), beep.size * 2)
     }
 
     /**

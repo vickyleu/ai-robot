@@ -88,7 +88,7 @@ object AudioApplication {
 
         try {
             // 预热WebRTC APM实例
-            WebRtcApmSingleton.getInstance(AudioDefaults.TARGET_SAMPLE_RATE, AudioDefaults.CHANNELS)?.let {
+            WebRtcApmSingleton.getInstance(AudioDefaults.INPUT_DEVICE_SAMPLE_RATE, AudioDefaults.INPUT_DEVICE_CHANNELS)?.let {
                 // 进行简单处理以确保实例正确初始化
                 if (it.isVoiceDetected()) {
                     println("[INFO] WebRTC APM VAD测试通过")
@@ -110,7 +110,7 @@ object AudioApplication {
         val audioDevice = PortAudioDevice.getInstance()
         
         try {
-            if (audioDevice.initialize("default", AudioDefaults.TARGET_SAMPLE_RATE)) {
+            if (audioDevice.initialize(AudioDefaults.INPUT_DEVICE_SAMPLE_RATE)) {
                 println("[INFO] PortAudio初始化成功")
             } else {
                 println("[WARN] PortAudio初始化失败，应用可能无法正常工作")

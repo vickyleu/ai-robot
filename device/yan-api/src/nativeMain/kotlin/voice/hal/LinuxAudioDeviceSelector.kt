@@ -88,40 +88,50 @@ class LinuxAudioDeviceSelector {
      * 创建最优化的Microsemi DAC配置
      */
     fun fixAlsaConfig(): Boolean {
-        logger.info("修复Microsemi DAC的ALSA麦克风配置...")
+        logger.info("修复ALSA音频配置以支持更好的兼容性...")
 
         try {
             // 确保没有其他进程占用音频设备
             killOtherAudioProcesses()
 
             // 检查设备访问权限
-            system("sudo chmod -R 777 /dev/snd/* 2>/dev/null || true")
+            system("sudo chmod -R 666 /dev/snd/* 2>/dev/null || true")
+            
+            // 重启ALSA服务
+            logger.info("重启ALSA服务...")
+            system("sudo systemctl restart alsa-state 2>/dev/null || true")
+            system("sudo alsactl restore 2>/dev/null || true")
+            
+            // 检查音量设置
+            logger.info("检查和设置音量...")
+            system("amixer")
 
-            // 🔧 关键修复：取消麦克风静音并提高增益
-            logger.info("取消麦克风静音...")
-            val unmuteResult = system("amixer set 'MIC SOUT MUTE' off 2>/dev/null")
-            if (unmuteResult != 0) {
-                logger.warn("取消静音命令执行失败，继续尝试...")
-            }
+            // 设置音量到合适水平
+            logger.info("设置音量到合适水平...")
+            system("amixer set 'Master' 80% 2>/dev/null || true")
+            system("amixer set 'PCM' 80% 2>/dev/null || true")
+            system("amixer set 'DAC' 80% 2>/dev/null || true")
+            
+            // 取消所有静音
+            logger.info("取消静音...")
+            system("amixer set 'Master' unmute 2>/dev/null || true")
+            system("amixer set 'PCM' unmute 2>/dev/null || true")
+            system("amixer set 'DAC' unmute 2>/dev/null || true")
+            system("amixer set 'MIC SOUT MUTE' off 2>/dev/null || true")
 
-            logger.info("设置麦克风增益到最大...")
-            val gainResult = system("amixer set 'MIC SOUT GAIN' 15 2>/dev/null")  // 改为最大值15
-            if (gainResult != 0) {
-                logger.warn("设置增益命令执行失败，继续尝试...")
-            }
-
-            // 确保DAC音量也是最大
-            logger.info("设置DAC音量到最大...")
-            system("amixer set 'DAC' 20 2>/dev/null || true")
-
+            // 设置麦克风增益
+            logger.info("设置麦克风增益...")
+            system("amixer set 'MIC SOUT GAIN' 12 2>/dev/null || true")  // 适中的增益值
+            system("amixer set 'Capture' 70% 2>/dev/null || true")
+            
             // 保存设置
             system("sudo alsactl store 2>/dev/null || true")
 
-            // 验证设置是否生效
-            logger.info("验证麦克风配置...")
-            system("amixer get 'MIC SOUT MUTE'")
-            system("amixer get 'MIC SOUT GAIN'")
-            system("amixer get 'DAC'")
+            // 验证设置
+            logger.info("验证音频配置...")
+            system("amixer get 'Master' 2>/dev/null || true")
+            system("amixer get 'PCM' 2>/dev/null || true")
+            
             return true
 
         } catch (e: Exception) {

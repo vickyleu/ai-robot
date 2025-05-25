@@ -532,6 +532,11 @@ val distDataDeb: TaskProvider<com.netflix.gradle.plugins.deb.Deb>? = if(jumpMode
             @Suppress("DEPRECATION")
             this.fileMode = 0x755
         }
+        from("src/linuxMain/resources/test_sound.wav") {
+            into("/tmp/yanshee/")
+            @Suppress("DEPRECATION")
+            this.fileMode = 0x755
+        }
         from("src/nativeInterop/cpp/libs/piper/") {
             into("/usr/local/lib/yanshee/")
             @Suppress("DEPRECATION")
@@ -657,6 +662,7 @@ val installDeb: TaskProvider<Task> = tasks.register<Task>("installDeb") {
                             when{
                                 line.startsWith("Warning: Permanently added")->Unit
                                 line.startsWith("Dwarf Error:")->Unit
+                                line.startsWith("ALSA lib ")->Unit
                                 // 不过滤语音识别相关的日志
                                 line.startsWith("[INFO][gc]") && !line.contains("vosk", ignoreCase = true) && !line.contains("alsa", ignoreCase = true) && !line.contains("speech", ignoreCase = true) && !line.contains("audio", ignoreCase = true) && !line.contains("mic", ignoreCase = true)->Unit
                                 line.startsWith("[Thread ") && !line.contains("vosk", ignoreCase = true) && !line.contains("alsa", ignoreCase = true) && !line.contains("speech", ignoreCase = true) && !line.contains("audio", ignoreCase = true) && !line.contains("mic", ignoreCase = true)->Unit
@@ -684,6 +690,7 @@ val installDeb: TaskProvider<Task> = tasks.register<Task>("installDeb") {
                             when{
                                 line.startsWith("Warning: Permanently added")->Unit
                                 line.startsWith("Dwarf Error:")->Unit
+                                line.startsWith("ALSA lib ")->Unit
                                 // 不过滤语音识别相关的日志
                                 line.startsWith("[INFO][gc]") && !line.contains("vosk", ignoreCase = true) && !line.contains("alsa", ignoreCase = true) && !line.contains("speech", ignoreCase = true) && !line.contains("audio", ignoreCase = true) && !line.contains("mic", ignoreCase = true)->Unit
                                 line.startsWith("[Thread ") && !line.contains("vosk", ignoreCase = true) && !line.contains("alsa", ignoreCase = true) && !line.contains("speech", ignoreCase = true) && !line.contains("audio", ignoreCase = true) && !line.contains("mic", ignoreCase = true)->Unit
@@ -718,6 +725,7 @@ val installDeb: TaskProvider<Task> = tasks.register<Task>("installDeb") {
                             when{
                                 line.startsWith("Warning: Permanently added")->Unit
                                 line.startsWith("Dwarf Error:")->Unit
+                                line.startsWith("ALSA lib ")->Unit
                                 line.startsWith("[INFO][gc]")->Unit
                                 line.startsWith("[Thread ")->Unit
                                 line.startsWith("[New Thread")->Unit
@@ -745,6 +753,7 @@ val installDeb: TaskProvider<Task> = tasks.register<Task>("installDeb") {
                             when{
                                 line.startsWith("Warning: Permanently added")->Unit
                                 line.startsWith("Dwarf Error:")->Unit
+                                line.startsWith("ALSA lib ")->Unit
                                 line.startsWith("[INFO][gc]")->Unit
                                 line.startsWith("[Thread ")->Unit
                                 line.startsWith("[New Thread")->Unit

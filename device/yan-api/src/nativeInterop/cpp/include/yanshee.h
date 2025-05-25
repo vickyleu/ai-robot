@@ -43,6 +43,23 @@ size_t soxr_wrapper_process(
         size_t in_size,
         float *out_data,
         size_t out_size);
+
+// 执行重采样：float输入到short输出 - 新增
+size_t soxr_wrapper_process_float_to_short(
+        SoxWrapper *wrapper,
+        const float *in_data,
+        size_t in_size,
+        short *out_data,
+        size_t out_size);
+
+// 执行重采样：float输入到float输出 - 新增
+size_t soxr_wrapper_process_float_to_float(
+        SoxWrapper *wrapper,
+        const float *in_data,
+        size_t in_size,
+        float *out_data,
+        size_t out_size);
+
 // WebRTC APM包装实现 ------------------------------------------------------------
 void my_webrtc_apm_set_key_pressed(void *apm, int key_pressed);
 // VAD 结果输出

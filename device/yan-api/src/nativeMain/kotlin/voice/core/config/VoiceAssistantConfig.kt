@@ -17,9 +17,10 @@ data class VoiceAssistantConfig(
     val keywordSensitivity: Float = 0.7f,
     
     // 语音识别设置
-    val sampleRate: Int = AudioDefaults.TARGET_SAMPLE_RATE,
-    val channels: Int = AudioDefaults.CHANNELS,
-    
+    val sampleRate: Int = AudioDefaults.INPUT_DEVICE_SAMPLE_RATE,
+    val outputSampleRate: Int = AudioDefaults.OUTPUT_DEVICE_SAMPLE_RATE,
+    val outChannels: Int = AudioDefaults.OUTPUT_DEVICE_CHANNELS,
+
     // 超时设置（毫秒）
     val keywordTimeout: Long = 10000L,
     val speechTimeout: Long = 5000L,

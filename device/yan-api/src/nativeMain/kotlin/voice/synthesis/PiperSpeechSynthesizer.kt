@@ -72,7 +72,7 @@ class PiperSpeechSynthesizer : SpeechSynthesizerApi {
         checkPiperLibLoaded()
         // 假设主流程已经初始化并启动了PortAudioDevice，若未启动则尝试启动
         if (audioPlayer.deviceState.value == voice.hal.AudioDevice.AudioDeviceState.IDLE) {
-            audioPlayer.initialize("default", AudioDefaults.TARGET_SAMPLE_RATE)
+            audioPlayer.initialize(AudioDefaults.INPUT_DEVICE_SAMPLE_RATE)
         }
     }
 
@@ -207,7 +207,7 @@ class PiperSpeechSynthesizer : SpeechSynthesizerApi {
      * @param outputWav 是否输出wav格式(否则输出raw PCM)
      * @return 合成的音频数据，失败返回空数组
      */
-    override fun synthesize(text: String, outputWav: Boolean): ByteArray {
+    override fun synthesize(text: String, outputWav: Boolean,sampleRate:Int,channel:Int): ByteArray {
         if (piperContext == null) {
             println("[ERROR] Piper未初始化")
             return ByteArray(0)
@@ -233,8 +233,8 @@ class PiperSpeechSynthesizer : SpeechSynthesizerApi {
                 text = text,
                 audio_buffer = audioBufferVar.ptr,
                 audio_length = audioLengthVar.ptr,
-                sampleRate = 16000,
-                channels = 1  // 先生成单声道
+                sampleRate = sampleRate,
+                channels = channel  // 先生成单声道
             )
 
             if (ret < 0) {
@@ -293,17 +293,19 @@ class PiperSpeechSynthesizer : SpeechSynthesizerApi {
         }
     }
 
+
     /**
      * 播放文本
      * @param text 要播放的文本
      * @return 播放是否成功
      */
-    override suspend fun speak(text: String): Boolean {
+    override suspend fun speak(text: String, outputSampleRate: Int, outChannels: Int): Boolean {
         if (isSpeakingFlag) {
             stopSpeaking()
         }
-
-        val audioData = synthesize(text)
+        val sampleRate=16_000
+        val channel = 1
+        val audioData = synthesize(text,true,outputSampleRate,outChannels)
         if (audioData.isEmpty()) {
             println("[WARN] 合成返回了空音频数据，无法播放")
             return false

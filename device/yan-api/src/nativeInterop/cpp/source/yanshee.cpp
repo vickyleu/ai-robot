@@ -1,5 +1,7 @@
 #include "yanshee.h"
 #include "webrtc_apm_wrapper.h"
+#include <stdio.h>
+#include <stdlib.h>
 
 
 // SOXR包装实现 ----------------------------------------------------------------
@@ -114,6 +116,64 @@ size_t soxr_wrapper_process(
 
     if (error) {
         fprintf(stderr, "SOXR process error: %s\n", soxr_strerror(error));
+        return 0;
+    }
+
+    return done;
+}
+
+size_t soxr_wrapper_process_float_to_short(
+        SoxWrapper* wrapper,
+        const float* in_data,
+        size_t in_size,
+        short* out_data,
+        size_t out_size) {
+
+    if (!wrapper || !wrapper->soxr) {
+        fprintf(stderr, "Invalid SoxWrapper or resampler not initialized\n");
+        return 0;
+    }
+
+    size_t done = 0;
+    soxr_error_t error;
+
+    error = soxr_process(
+            wrapper->soxr,
+            in_data, in_size / sizeof(float), NULL,
+            out_data, out_size / sizeof(short), &done
+    );
+
+    if (error) {
+        fprintf(stderr, "SOXR process float to short error: %s\n", soxr_strerror(error));
+        return 0;
+    }
+
+    return done;
+}
+
+size_t soxr_wrapper_process_float_to_float(
+        SoxWrapper* wrapper,
+        const float* in_data,
+        size_t in_size,
+        float* out_data,
+        size_t out_size) {
+
+    if (!wrapper || !wrapper->soxr) {
+        fprintf(stderr, "Invalid SoxWrapper or resampler not initialized\n");
+        return 0;
+    }
+
+    size_t done = 0;
+    soxr_error_t error;
+
+    error = soxr_process(
+            wrapper->soxr,
+            in_data, in_size, NULL,         // 输入：Float数据，样本数
+            out_data, out_size, &done       // 输出：Float数据，样本数
+    );
+
+    if (error) {
+        fprintf(stderr, "SOXR process float to float error: %s\n", soxr_strerror(error));
         return 0;
     }
 

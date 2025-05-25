@@ -3,13 +3,21 @@
 package voice.detector.keyword
 
 import kotlinx.cinterop.ExperimentalForeignApi
+import kotlinx.cinterop.refTo
+import kotlinx.cinterop.CPointer
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.datetime.Clock
+import platform.posix.fclose
+import platform.posix.fopen
+import platform.posix.fwrite
+import platform.posix.fflush
 import voice.api.KeywordDetectorApi
 import voice.audio.processing.CallbackAudioProcessor
+import voice.util.AudioDefaults
 import voice.util.AudioUtils
 import voice.util.LogManager
 
@@ -55,6 +63,25 @@ class KeywordDetector(
     // 添加计数器以限制日志
     private var audioReadCounter = 0
     
+    // 播放前音频文件写入 - 单个文件
+    private var playbackFile: CPointer<platform.posix.FILE>? = null
+    private var playbackFileInitialized = false
+    
+    // 音频累积机制 - 确保有足够长的音频用于识别
+    private val audioBuffer = mutableListOf<ShortArray>()
+    private var totalAudioSamples = 0
+    private val minAudioSamplesFor800ms = (AudioDefaults.WEBRTC_APM_SAMPLE_RATE * 1.5).toInt() // 从0.8秒增加到1.5秒，减少处理频率
+    
+    // 连续性检测 - 避免把间隔很久的音频当成一句话
+    private var lastAudioTime = 0L
+    private val maxSilenceGapMs = 1000L // 从500ms增加到1000ms，减少静音间隔重置
+    private var consecutiveAudioFrames = 0
+    private val minConsecutiveFrames = 2 // 从5降低到2，更快开始累积
+    
+    // Vosk处理保护 - 避免频繁调用导致内存崩溃
+    private var lastVoskProcessTime = 0L
+    private val minVoskProcessIntervalMs = 2000L // 最小2秒间隔
+    
     /**
      * 获取全局使用的音频处理器实例
      */
@@ -89,10 +116,168 @@ class KeywordDetector(
         audioProcessor.setProcessedAudioCallback { processedData, size ->
             // 使用Vosk检测处理后的音频
             if (isListening && size > 0) {
-                logger.warn("处理音频回调被触发，数据大小: $size voskDetector.detect(processedData)")
-                voskDetector.detect(processedData)
-                // 移除播放代码，避免音频设备冲突
-                // this.audioProcessor.audioDevice.play(AudioUtils.shortArrayToByteArray(processedData),size)
+                val currentTime = Clock.System.now().toEpochMilliseconds()
+                
+                // 减少日志频率，避免过多输出
+                if (audioReadCounter++ % 500 == 0) {
+                    logger.debug("处理音频回调: 数据大小=$size, 前5个样本=${processedData.take(5).joinToString(",")}")
+                }
+                
+                // 检查连续性：如果距离上次音频超过最大静音间隔，则重置累积
+                if (lastAudioTime > 0 && (currentTime - lastAudioTime) > maxSilenceGapMs) {
+                    if (audioBuffer.isNotEmpty()) {
+                        logger.debug("检测到静音间隔${currentTime - lastAudioTime}ms > ${maxSilenceGapMs}ms，重置音频累积")
+                        audioBuffer.clear()
+                        totalAudioSamples = 0
+                        consecutiveAudioFrames = 0
+                    }
+                }
+                
+                lastAudioTime = currentTime
+                consecutiveAudioFrames++
+                
+                // 只有连续帧数足够时才开始累积
+                if (consecutiveAudioFrames >= minConsecutiveFrames) {
+                    // 累积音频数据
+                    audioBuffer.add(processedData.copyOf())
+                    totalAudioSamples += processedData.size
+                    
+                    // 检查是否累积了足够的音频（至少800ms）
+                    if (totalAudioSamples >= minAudioSamplesFor800ms) {
+                        // 合并所有累积的音频数据
+                        val combinedAudio = ShortArray(totalAudioSamples)
+                        var offset = 0
+                        for (chunk in audioBuffer) {
+                            chunk.copyInto(combinedAudio, offset)
+                            offset += chunk.size
+                        }
+                        
+                        val combinedDurationMs = totalAudioSamples * 1000 / AudioDefaults.WEBRTC_APM_SAMPLE_RATE
+                        logger.info("累积完成，开始处理: ${totalAudioSamples}样本, 时长${combinedDurationMs}ms, 连续帧数${consecutiveAudioFrames}")
+                        
+                        // 检查Vosk处理间隔，避免频繁调用导致内存崩溃
+                        if (currentTime - lastVoskProcessTime < minVoskProcessIntervalMs) {
+                            logger.debug("Vosk处理间隔太短，跳过本次处理: ${currentTime - lastVoskProcessTime}ms < ${minVoskProcessIntervalMs}ms")
+                            // 清空缓冲区，准备下一轮累积
+                            audioBuffer.clear()
+                            totalAudioSamples = 0
+                            consecutiveAudioFrames = 0
+                            return@setProcessedAudioCallback
+                        }
+                        lastVoskProcessTime = currentTime
+                        
+                        // 检测关键词 - 使用累积的音频数据
+                        voskDetector.detect(combinedAudio)
+                        
+                        // 播放确认：将累积的音频重采样到48kHz/2ch进行播放
+                        val apm = audioProcessor.getApm()
+                        if (apm != null) {
+                            try {
+                                // combinedAudio是APM输出格式：16kHz/1ch（经过APM处理）
+                                // 需要转换到播放格式：48kHz/2ch
+                                
+                                // 记录原始音频音量
+                                val originalMaxAmp = combinedAudio.maxOfOrNull { kotlin.math.abs(it.toInt()) } ?: 0
+                                logger.debug("播放确认音频处理开始: 原始最大振幅=$originalMaxAmp, 样本数=${combinedAudio.size}")
+                                
+                                // 使用WebRtcApm的统一重采样方法，避免重复实现
+                                val resampledData = apm.processFrameWithOutputResampling(
+                                    audioData = combinedAudio,
+                                    inputSampleRate = AudioDefaults.WEBRTC_APM_SAMPLE_RATE,  // APM输出是16kHz
+                                    inputChannels = AudioDefaults.WEBRTC_APM_CHANNELS,       // APM输出是1ch
+                                    targetOutputSampleRate = AudioDefaults.OUTPUT_DEVICE_SAMPLE_RATE,  // 目标48kHz
+                                    targetOutputChannels = AudioDefaults.OUTPUT_DEVICE_CHANNELS        // 目标2ch
+                                )
+                                
+                                if (resampledData.isNotEmpty()) {
+                                    // 检查重采样结果质量
+                                    val resampledMaxAmp = resampledData.maxOfOrNull { kotlin.math.abs(it.toInt()) } ?: 0
+                                    val nonZeroCount = resampledData.count { it != 0.toShort() }
+                                    val zeroRatio = (resampledData.size - nonZeroCount).toFloat() / resampledData.size
+                                    
+                                    logger.debug("播放确认音频处理完成: 重采样后最大振幅=$resampledMaxAmp, 零值比例=$zeroRatio")
+                                    
+                                    // 验证音频质量
+                                    if (resampledMaxAmp == 0) {
+                                        logger.warn("重采样后音频全为0，跳过播放")
+                                    } else if (zeroRatio > 0.9f) {
+                                        logger.warn("重采样后零值过多(${zeroRatio})，可能存在问题")
+                                    } else {
+                                        // 音频质量正常，进行播放
+                                        val audioBytes = AudioUtils.shortArrayToByteArray(resampledData)
+                                        
+                                        // 写入播放前的音频文件用于调试
+                                        try {
+                                            if (!playbackFileInitialized) {
+                                                val filename = "/tmp/playback_audio.raw"
+                                                playbackFile = fopen(filename, "ab")
+                                                if (playbackFile != null) {
+                                                    playbackFileInitialized = true
+                                                    logger.info("播放前音频文件已创建(追加模式): $filename")
+                                                    logger.info("播放命令: aplay -f S16_LE -r ${AudioDefaults.OUTPUT_DEVICE_SAMPLE_RATE} -c ${AudioDefaults.OUTPUT_DEVICE_CHANNELS} $filename")
+                                                } else {
+                                                    logger.error("无法创建播放前音频文件")
+                                                }
+                                            }
+                                            
+                                            playbackFile?.let { file ->
+                                                val bytesWritten = fwrite(audioBytes.refTo(0), 1u, audioBytes.size.toUInt(), file)
+                                                fflush(file)
+                                                
+                                                val durationMs = (audioBytes.size / 2 / AudioDefaults.OUTPUT_DEVICE_CHANNELS * 1000) / AudioDefaults.OUTPUT_DEVICE_SAMPLE_RATE
+                                                logger.info("写入播放前音频: ${bytesWritten}字节, 播放时长约${durationMs}ms, 原始累积时长${combinedDurationMs}ms")
+                                            }
+                                        } catch (e: Exception) {
+                                            logger.error("写入播放前音频文件失败: ${e.message}")
+                                        }
+                                        
+                                        // 播放音频
+                                        val success = audioProcessor.audioDevice.play(audioBytes, audioBytes.size)
+                                        if (!success) {
+                                            logger.warn("音频播放失败")
+                                        } else {
+                                            logger.debug("播放确认音频成功: ${audioBytes.size}字节")
+                                        }
+                                    }
+                                } else {
+                                    logger.warn("重采样后音频数据为空")
+                                }
+                            } catch (e: Exception) {
+                                logger.error("音频重采样播放失败: ${e.message}")
+                                // 发生异常时，尝试简单的播放方式
+                                try {
+                                    // 简单格式转换：16kHz/1ch -> 48kHz/2ch
+                                    val simpleResample = ShortArray(combinedAudio.size * 6) { i ->
+                                        // 单声道转双声道 + 3倍重采样
+                                        combinedAudio[i / 6]
+                                    }
+                                    val audioBytes = AudioUtils.shortArrayToByteArray(simpleResample)
+                                    audioProcessor.audioDevice.play(audioBytes, audioBytes.size)
+                                    logger.info("使用简单重采样播放音频")
+                                } catch (fallbackE: Exception) {
+                                    logger.error("简单重采样播放也失败: ${fallbackE.message}")
+                                }
+                            }
+                        }
+                        
+                        // 清空缓冲区，准备下一轮累积
+                        audioBuffer.clear()
+                        totalAudioSamples = 0
+                        consecutiveAudioFrames = 0
+                        logger.debug("音频缓冲区已清空，开始新一轮累积")
+                    } else {
+                        // 还没有足够的音频，继续累积
+                        val currentDurationMs = totalAudioSamples * 1000 / AudioDefaults.WEBRTC_APM_SAMPLE_RATE
+                        if (audioReadCounter % 100 == 0) {
+                            logger.debug("累积连续音频中: ${totalAudioSamples}样本, 时长${currentDurationMs}ms / 800ms, 连续帧${consecutiveAudioFrames}")
+                        }
+                    }
+                } else {
+                    // 连续帧数不够，继续等待
+                    if (audioReadCounter % 200 == 0) {
+                        logger.debug("等待连续音频: 当前连续帧${consecutiveAudioFrames} / ${minConsecutiveFrames}")
+                    }
+                }
             }
         }
         
@@ -206,6 +391,29 @@ class KeywordDetector(
         if (isListening) {
             stopListening()
         }
+        
+        // 关闭播放前音频文件
+        playbackFile?.let {
+            try {
+                fclose(it)
+                logger.info("播放前音频文件已关闭")
+            } catch (e: Exception) {
+                logger.error("关闭播放前音频文件失败: ${e.message}")
+            }
+            playbackFile = null
+            playbackFileInitialized = false
+        }
+        
+        // 清理音频缓冲区
+        audioBuffer.clear()
+        totalAudioSamples = 0
+        
+        // 重置连续性检测
+        lastAudioTime = 0L
+        consecutiveAudioFrames = 0
+        
+        // 重置Vosk处理保护
+        lastVoskProcessTime = 0L
         
         if (isInitialized) {
             voskDetector.release()

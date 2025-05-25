@@ -61,7 +61,7 @@ class VoskSpeechRecognizer : SpeechRecognizerApi {
     private var voskRecognizer: CPointer<VoskRecognizer>? = null
     
     // 配置
-    private val sampleRate = AudioDefaults.TARGET_SAMPLE_RATE
+    private val sampleRate = AudioDefaults.INPUT_DEVICE_SAMPLE_RATE
     
     // 内部状态
     internal var isInitialized = false
@@ -164,11 +164,22 @@ class VoskSpeechRecognizer : SpeechRecognizerApi {
         startTime: Long,
         forceFinal: Boolean = false
     ): SpeechRecognizerApi.RecognitionResult {
-        val voskResult = processAudioWithVosk(accumulatedAudio, forceFinal)
-        val cost = System.now().toEpochMilliseconds() - startTime
-        lastRecognitionTime = System.now().toEpochMilliseconds()
+        // 记录处理前的缓冲区状态
+        val bufferSizeBefore = accumulatedAudio.size
+        logger.debug("开始处理累积音频: 缓冲区大小=${bufferSizeBefore}字节, forceFinal=$forceFinal")
+        
+        // 创建缓冲区副本用于处理，避免在处理过程中被修改
+        val audioToProcess = accumulatedAudio.copyOf()
+        
+        // 立即清空累积缓冲区，避免重复处理
         accumulatedAudio = ByteArray(0)
         silenceFrames = 0
+        
+        val voskResult = processAudioWithVosk(audioToProcess, forceFinal)
+        val cost = System.now().toEpochMilliseconds() - startTime
+        lastRecognitionTime = System.now().toEpochMilliseconds()
+        
+        logger.debug("音频处理完成: 处理了${audioToProcess.size}字节, 耗时${cost}ms, 结果类型=${voskResult.resultType}")
 
         return when (voskResult.resultType) {
             ResultType.FINAL -> createFinalResult(voskResult, timestamp, cost)
@@ -595,35 +606,42 @@ class VoskSpeechRecognizer : SpeechRecognizerApi {
         if (length <= 0) return
 
         try {
-            // 直接使用常规字节数组，不使用缓冲池
-            val newSize = accumulatedAudio.size + length
+            // 确保不超过最大缓冲区大小
+            val actualLength = minOf(length, newData.size)
             
-            // 创建新字节数组并复制数据
-            val combinedData = ByteArray(newSize)
+            // 如果累积的数据会超过最大缓冲区，先清理旧数据
+            if (accumulatedAudio.size + actualLength > maxAudioBufferSize) {
+                // 保留最新的一半数据，为新数据腾出空间
+                val keepSize = maxAudioBufferSize / 2
+                accumulatedAudio = accumulatedAudio.takeLast(keepSize).toByteArray()
+                logger.debug("缓冲区即将溢出，清理到${keepSize}字节")
+            }
+            
+            // 创建新的缓冲区
+            val newBuffer = ByteArray(accumulatedAudio.size + actualLength)
             
             // 复制旧数据
             if (accumulatedAudio.isNotEmpty()) {
-                accumulatedAudio.copyInto(combinedData, 0, 0, accumulatedAudio.size)
+                accumulatedAudio.copyInto(newBuffer, 0, 0, accumulatedAudio.size)
             }
             
-            // 复制新数据
-            newData.copyInto(combinedData, accumulatedAudio.size, 0, length)
+            // 复制新数据 - 确保只复制有效长度
+            newData.copyInto(newBuffer, accumulatedAudio.size, 0, actualLength)
 
-            // 更新引用
-            accumulatedAudio = combinedData
+            // 更新引用 - 这是关键，确保引用被正确更新
+            accumulatedAudio = newBuffer
             
-            // 定期记录缓冲区大小
-            if (recognitionCount % 100 == 0) {
-                logger.debug("音频累积成功，当前缓冲区大小: $newSize 字节")
+            // 定期记录缓冲区大小变化
+            if (recognitionCount % 200 == 0) {
+                logger.debug("音频累积: 新增${actualLength}字节, 总计${accumulatedAudio.size}字节")
             }
         } catch (e: Exception) {
             val errorMsg = "音频累积异常: ${e.message ?: "未知错误"}"
             logger.error(errorMsg)
-            e.printStackTrace()
             
-            // 如果发生异常，尝试简单地保留原始数据
+            // 发生异常时，重置缓冲区避免数据损坏
             accumulatedAudio = ByteArray(0)
-            throw Exception(errorMsg)
+            logger.warn("由于异常重置音频缓冲区")
         }
     }
     

@@ -38,7 +38,7 @@ interface AudioDevice {
      * @param sampleRate 采样率
      * @return 初始化是否成功
      */
-    fun initialize(deviceName: String = "", sampleRate: Int = AudioDefaults.TARGET_SAMPLE_RATE): Boolean
+    fun initialize(sampleRate: Int = AudioDefaults.INPUT_DEVICE_SAMPLE_RATE): Boolean
     
     /**
      * 开始音频流
@@ -64,35 +64,35 @@ interface AudioDevice {
      */
     fun getSampleRate(): Int
     
-    /**
-     * 列举可用的音频设备
-     * @return 输入设备索引和输出设备索引的对
-     */
-    fun listAudioDevices(): Pair<Int, Int>
+
+    fun initAudioDevices()
 
     /**
      * 打开带回调的音频输入流
-     * @param deviceIndex 设备索引，-1表示默认设备
      * @param sampleRate 采样率
      * @param channels 通道数
      * @param callback 音频数据回调
      * @return 是否成功打开
      */
     suspend fun openInputStreamWithCallback(
-        deviceIndex: Int = -1,
-        sampleRate: Int = AudioDefaults.TARGET_SAMPLE_RATE,
-        channels: Int = AudioDefaults.CHANNELS,
+        sampleRate: Int = AudioDefaults.INPUT_DEVICE_SAMPLE_RATE,
+        channels: Int = AudioDefaults.INPUT_DEVICE_CHANNELS,
         callback: AudioDataCallback?
     ): Boolean
     
     /**
      * 打开音频输出流
-     * @param deviceIndex 设备索引，-1表示默认设备
      * @param sampleRate 采样率
      * @param channels 通道数
      * @return 是否成功打开
      */
-    suspend fun openOutputStream(deviceIndex: Int, sampleRate: Int, channels: Int): Boolean
+    suspend fun openOutputStream(sampleRate: Int= AudioDefaults.OUTPUT_DEVICE_SAMPLE_RATE, channels: Int =AudioDefaults.OUTPUT_DEVICE_CHANNELS): Boolean
+    
+    /**
+     * 打开音频输出流（使用默认参数）
+     * @return 是否成功打开
+     */
+    suspend fun openOutputStream(): Boolean
     
     /**
      * 读取音频数据

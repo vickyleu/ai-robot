@@ -36,13 +36,13 @@ object WebRtcApmSingleton {
      * 获取APM实例 - 仅在非回调线程中使用
      * @param sampleRate 采样率
      * @param channels 通道数
-     * @param recreateIfNeeded 如果参数不匹配是否重新创建
+     * @param forceRecreate 如果参数不匹配是否重新创建
      * @return WebRtcApm实例或null
      */
     fun getInstance(
-        sampleRate: Int = AudioDefaults.TARGET_SAMPLE_RATE,
-        channels: Int = AudioDefaults.CHANNELS,
-        recreateIfNeeded: Boolean = false
+        sampleRate: Int = AudioDefaults.INPUT_DEVICE_SAMPLE_RATE,
+        channels: Int = AudioDefaults.INPUT_DEVICE_CHANNELS,
+        forceRecreate: Boolean = false
     ): WebRtcApm? {
         val key: Key = sampleRate to channels
         
@@ -58,7 +58,7 @@ object WebRtcApmSingleton {
                     instanceTimestamps[key] = System.now().toEpochMilliseconds()
                     logger.info("创建并缓存了新的APM实例: $sampleRate Hz, $channels 通道")
                 }
-            } else if (recreateIfNeeded) {
+            } else if (forceRecreate) {
                 // 需要重建 - 验证实例的实际参数
                 val currentRate = instance.getActualInputSampleRate()
                 val currentChannels = instance.getInputChannels()
@@ -108,8 +108,8 @@ object WebRtcApmSingleton {
      * @return WebRtcApm实例或null
      */
     fun getInstanceThreadSafe(
-        sampleRate: Int = AudioDefaults.TARGET_SAMPLE_RATE,
-        channels: Int = AudioDefaults.CHANNELS
+        sampleRate: Int = AudioDefaults.INPUT_DEVICE_SAMPLE_RATE,
+        channels: Int = AudioDefaults.INPUT_DEVICE_CHANNELS
     ): WebRtcApm? {
         val key: Key = sampleRate to channels
         
@@ -262,95 +262,8 @@ object WebRtcApmSingleton {
         logger.info("已释放 $releaseCount/${instancesToRelease.size} 个WebRTC APM实例")
     }
 
-    /**
-     * 处理音频帧的便捷方法 - 为确保线程安全，实现为无状态函数
-     * 
-     * @param audioData 输入音频数据
-     * @param sampleRate 采样率
-     * @param channels 通道数
-     * @return 处理后的音频数据
-     */
-    fun processFrame(
-        audioData: ShortArray,
-        sampleRate: Int = AudioDefaults.TARGET_SAMPLE_RATE,
-        channels: Int = AudioDefaults.CHANNELS
-    ): ShortArray {
-        // 确保不处理空数据
-        if (audioData.isEmpty()) {
-            return ShortArray(0)
-        }
-        
-        val key = sampleRate to channels
-        
-        // 记录正在处理的key
-        synchronized(lock) {
-            if (activeProcessingKeys.add(key) && activeProcessingKeys.size > 1) {
-                // 如果同时有多个不同参数的处理活动，记录日志
-                logger.debug("警告: 同时处理多种音频格式: $activeProcessingKeys")
-            }
-        }
-        
-        try {
-            // 获取或创建特定参数的APM实例
-            val instance = getInstanceThreadSafe(sampleRate, channels) 
-                ?: return audioData.copyOf() // 无法获取实例，返回原始数据的副本
-            
-            // 创建输入数据的副本，确保不修改原始数据
-            val inputCopy = audioData.copyOf()
-            
-            // 使用try-catch保护处理过程
-            return try {
-                val result = instance.processFrame(inputCopy)
-                
-                // 验证结果非空
-                if (result.isNotEmpty()) {
-                    result.copyOf() // 返回结果的副本，确保完全隔离
-                } else {
-                    inputCopy // 结果为空，返回输入副本
-                }
-            } catch (e: Exception) {
-                logger.error("处理音频帧异常: ${e.message}")
-                inputCopy // 出错时返回输入副本
-            }
-        } catch (e: Exception) {
-            logger.error("处理音频帧时发生异常: ${e.message}")
-            return audioData.copyOf() // 返回原始数据的副本
-        } finally {
-            // 清除处理记录
-            synchronized(lock) {
-                activeProcessingKeys.remove(key)
-            }
-        }
-    }
 
-    /**
-     * 查询 VAD 结果 - 线程安全版本
-     * 
-     * @param sampleRate 采样率
-     * @param channels 通道数 
-     * @return 是否检测到语音
-     */
-    fun isVoiceDetected(
-        sampleRate: Int = AudioDefaults.TARGET_SAMPLE_RATE,
-        channels: Int = AudioDefaults.CHANNELS
-    ): Boolean {
-        try {
-            // 获取匹配参数的实例
-            val instance = getInstanceThreadSafe(sampleRate, channels)
-                ?: return false // 无法获取实例，默认返回false
-            
-            return try {
-                instance.isVoiceDetected()
-            } catch (e: Exception) {
-                logger.error("VAD检测异常: ${e.message}")
-                false
-            }
-        } catch (e: Exception) {
-            logger.error("获取VAD状态异常: ${e.message}")
-            return false
-        }
-    }
-    
+
     /**
      * 获取当前缓存的实例数量和状态
      * 

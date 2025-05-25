@@ -5,6 +5,7 @@ package voice.audio.processing
 
 import com.airobot.webrtcapminterop.*
 import kotlinx.cinterop.*
+import voice.util.AudioDefaults
 import voice.util.AudioUtils
 import voice.util.LogManager
 import kotlin.math.abs
@@ -16,18 +17,23 @@ class WebRtcApm {
     // APM内部处理参数
     private var apmSampleRate: Int = 0
     private var apmChannels: Int = 0
-    private var apmFrameSize: Int = 0 // 10ms frame size for APM
 
-    // 音频缓冲区
+    // 音频缓冲区 - 动态分配，不再固定大小
     private var inputFloatBuffer: CPointer<FloatVar>? = null
     private var outputFloatBuffer: CPointer<FloatVar>? = null
     private var inputArrayPointer: CPointer<CPointerVar<FloatVar>>? = null
     private var outputArrayPointer: CPointer<CPointerVar<FloatVar>>? = null
+    private var currentBufferSize: Int = 0
 
     // SOXR重采样器
     private var soxrWrapper: CPointer<SoxWrapper>? = null
     private var resamplerInitialized = false
     private var currentInputRate: Int = 0
+
+    // 输出重采样器
+    private var outputSoxrWrapper: CPointer<SoxWrapper>? = null
+    private var outputResamplerInitialized = false
+    private var outputSampleRate: Int = 48000
 
     // 输入参数
     private var actualInputSampleRate: Int = 0
@@ -37,15 +43,13 @@ class WebRtcApm {
     private var vadLogCounter: Int = 0
     private var consecutiveVadPositive: Int = 0
     private var lastVadResult: Boolean = false
-    private var vadDebounceFrames: Int = 10  // 保持10帧去抖动，确保稳定性
+    private var vadDebounceFrames: Int = 3  // 减少到3帧，快速响应
 
     fun initialize(sampleRate: Int, channels: Int): Boolean {
         if (apmHandle != null) {
             logger.warn("WebRTC APM 已经初始化，使用先前配置: ${this.apmSampleRate}Hz, ${this.apmChannels}ch")
-            // 如果外部尝试用不同参数重复初始化，可以选择释放旧的或返回错误/false
             if (this.actualInputSampleRate != sampleRate || this.inputChannels != channels) {
                 logger.warn("警告: 尝试使用不同的参数重新初始化已有的APM实例。旧参数: ${this.actualInputSampleRate}/${this.inputChannels}, 新参数: $sampleRate/$channels. 建议先释放再初始化。")
-                // 或者可以先release()再继续
             }
             return true
         }
@@ -54,22 +58,11 @@ class WebRtcApm {
         this.actualInputSampleRate = sampleRate
         this.inputChannels = channels
 
-        // WebRTC APM 配置参数 (例如，如果APM固定在16kHz处理，这里就需要决策)
-        // 现在的逻辑是APM可以处理输入采样率，但内部转换和处理帧大小需要注意
-        // 假设APM可以原生处理传入的sampleRate，或者我们总是重采样到特定速率
-        // 决定APM实际工作的采样率和通道数
-        // **重要决策点**：WebRTC APM通常推荐/固定工作在8, 16, 32, 48kHz。
-        // 如果传入的sampleRate是APM支持的，就直接用。否则，需先重采样。
-        // 此处我们假设APM将以传入的sampleRate运行，或者SOXR会处理到APM支持的速率。
-        // 为了简化并遵循之前日志看到的 "WebRTC APM 统一以 16 kHz / 单声道 进行内部处理"
-        // 我们将目标APM处理采样率固定为16kHz，通道固定为单声道。
-        // 这意味着如果输入不是16kHz/1ch，则必须进行重采样和声道转换。
+        // WebRTC APM 内部固定处理参数
+        this.apmSampleRate = AudioDefaults.WEBRTC_APM_SAMPLE_RATE // APM 内部固定处理16kHz
+        this.apmChannels = AudioDefaults.WEBRTC_APM_CHANNELS     // APM 内部固定处理单声道
 
-        this.apmSampleRate = 16000 // APM 内部固定处理16kHz
-        this.apmChannels = 1     // APM 内部固定处理单声道
-        this.apmFrameSize = this.apmSampleRate / 100  // 固定为 10 ms 帧 (160 样本 @ 16kHz)
-
-        logger.info("APM配置: 目标处理采样率=${this.apmSampleRate}Hz, 目标处理通道数=${this.apmChannels}, 帧大小=${this.apmFrameSize}样本")
+        logger.info("APM配置: 输入=${this.actualInputSampleRate}Hz/${this.inputChannels}ch, APM内部处理=${this.apmSampleRate}Hz/${this.apmChannels}ch")
 
         try {
             // 创建APM实例
@@ -83,43 +76,48 @@ class WebRtcApm {
             memScoped {
                 val config = alloc<APMConfig>()
 
-                // 启用所有主要功能
-                config.noise_suppression.enabled = true
-                config.noise_suppression.level = kNsHigh
+                // 只保留VAD和键盘检测功能，启用瞬态抑制
+                config.noise_suppression.enabled = false
+                config.noise_suppression.level = kNsLow
 
-                config.high_pass_filter.enabled = true
+                config.high_pass_filter.enabled = false
 
-                config.gain_controller.enabled = true
+                config.gain_controller.enabled = false
                 config.gain_controller.mode = kAgcAdaptiveDigital
-                config.gain_controller.target_level_dbfs = 3
-                config.gain_controller.compression_gain_db = 9
-                config.gain_controller.enable_limiter = true
+                config.gain_controller.target_level_dbfs = 6
+                config.gain_controller.compression_gain_db = 3
+                config.gain_controller.enable_limiter = false
 
-                config.pre_amplifier.enabled = false
-                config.pre_amplifier.fixed_gain_factor = 1.0f
+                config.pre_amplifier.enabled = true
+                config.pre_amplifier.fixed_gain_factor = 1.5f // 进一步降低放大倍数，避免过度放大
 
-                config.voice_detection.enabled = true
+                config.voice_detection.enabled = true // 保留VAD功能
 
-                config.echo_canceller.enabled = true
-                config.echo_canceller.mobile_mode = false
-                config.echo_canceller.enforce_high_pass_filtering = true
-
-                config.transient_suppression.enabled = true
-                config.residual_echo_detector.enabled = true
+                config.echo_canceller.enabled = false
+                config.transient_suppression.enabled = true // 启用瞬态抑制，有助于屏蔽键盘声
+                config.residual_echo_detector.enabled = false
 
                 webrtc_apm_apply_config(apmHandle, config.ptr)
             }
 
-            // 准备APM处理 - 使用APM配置的采样率和通道数
+            // 准备APM处理
             webrtc_apm_prepare(apmHandle, this.apmSampleRate, this.apmChannels)
 
-            // 分配缓冲区 - 根据APM的帧大小
+            // 启用键盘声检测
+            try {
+                my_webrtc_apm_set_key_pressed(apmHandle, 0)
+                logger.info("WebRTC APM 键盘声检测已启用")
+            } catch (e: Exception) {
+                logger.warn("启用键盘声检测失败: ${e.message}")
+            }
+
+            // 分配缓冲区
             allocateBuffers()
 
-            // 初始化重采样器 (根据当前实际输入参数和APM目标参数)
+            // 初始化重采样器
             initializeResampler()
 
-            logger.info("WebRTC APM 初始化成功: 实际输入=$actualInputSampleRate Hz/$inputChannels ch, APM配置=${this.apmSampleRate} Hz/${this.apmChannels} ch")
+            logger.info("WebRTC APM 初始化成功")
             return true
         } catch (e: Exception) {
             logger.error("WebRTC APM 初始化失败: ${e.message}")
@@ -129,11 +127,11 @@ class WebRtcApm {
     }
 
     private fun allocateBuffers() {
-        // 缓冲区大小基于APM的处理帧大小 (apmFrameSize)
-        inputFloatBuffer = nativeHeap.allocArray<FloatVar>(apmFrameSize)
-        outputFloatBuffer = nativeHeap.allocArray<FloatVar>(apmFrameSize)
-        inputArrayPointer = nativeHeap.allocArray<CPointerVar<FloatVar>>(this.apmChannels.coerceAtLeast(1)) // 支持多通道输入到APM（如果APM配置如此）
-        outputArrayPointer = nativeHeap.allocArray<CPointerVar<FloatVar>>(this.apmChannels.coerceAtLeast(1)) // 支持多通道输出从APM
+        // 缓冲区大小基于当前数据大小
+        inputFloatBuffer = nativeHeap.allocArray<FloatVar>(currentBufferSize)
+        outputFloatBuffer = nativeHeap.allocArray<FloatVar>(currentBufferSize)
+        inputArrayPointer = nativeHeap.allocArray<CPointerVar<FloatVar>>(this.apmChannels.coerceAtLeast(1))
+        outputArrayPointer = nativeHeap.allocArray<CPointerVar<FloatVar>>(this.apmChannels.coerceAtLeast(1))
 
         // 当前APM固定为单声道，所以只设置第一个指针
         if (this.apmChannels == 1) {
@@ -141,11 +139,17 @@ class WebRtcApm {
             outputArrayPointer!![0] = outputFloatBuffer
         } else {
             // 如果APM配置为多通道，则需要为每个通道设置缓冲区指针
-            // 这里简化为单通道逻辑，实际多通道APM需要更复杂处理
             logger.warn("当前APM配置为 ${this.apmChannels} 通道，但缓冲区分配仅完整支持单通道演示。")
-            inputArrayPointer!![0] = inputFloatBuffer // 至少保证第一个通道
+            inputArrayPointer!![0] = inputFloatBuffer
             outputArrayPointer!![0] = outputFloatBuffer
         }
+    }
+
+    private fun releaseBuffers() {
+        inputFloatBuffer?.let { nativeHeap.free(it.rawValue); inputFloatBuffer = null }
+        outputFloatBuffer?.let { nativeHeap.free(it.rawValue); outputFloatBuffer = null }
+        inputArrayPointer?.let { nativeHeap.free(it.rawValue); inputArrayPointer = null }
+        outputArrayPointer?.let { nativeHeap.free(it.rawValue); outputArrayPointer = null }
     }
 
     private fun initializeResampler() {
@@ -185,9 +189,9 @@ class WebRtcApm {
 
             currentInputRate = actualInputSampleRate
             resamplerInitialized = true
-            logger.info("SOXR重采样器初始化成功: ${actualInputSampleRate}Hz -> ${apmSampleRate}Hz")
+            logger.info("输入SOXR重采样器初始化成功: ${actualInputSampleRate}Hz -> ${apmSampleRate}Hz (INT16->FLOAT32)")
         } catch (e: Exception) {
-            logger.error("初始化SOXR重采样器失败: ${e.message}")
+            logger.error("初始化输入SOXR重采样器失败: ${e.message}")
             releaseResampler()
             throw e
         }
@@ -202,144 +206,298 @@ class WebRtcApm {
     }
 
     /**
-     * 标准音频处理流程：立体声->单声道->重采样->WebRTC APM
+     * 带输出重采样的音频处理流程 - 修复SOXR崩溃和饱和问题
      */
-    fun processFrame(audioData: ShortArray): ShortArray {
+    fun processFrameWithOutputResampling(
+        audioData: ShortArray, 
+        inputSampleRate: Int = this.actualInputSampleRate,
+        inputChannels: Int = this.inputChannels,
+        targetOutputSampleRate: Int, 
+        targetOutputChannels: Int = AudioDefaults.OUTPUT_DEVICE_CHANNELS
+    ): ShortArray {
         if (apmHandle == null) {
             logger.error("WebRTC APM 未初始化")
-            return audioData // 返回原始数据或空数组
+            return audioData
         }
 
         if (audioData.isEmpty()) {
             return audioData
         }
 
-        // 快速能量检测，跳过处理低能量帧
-        var maxAmplitude = 0
-        for (i in 0 until minOf(audioData.size, 100)) {
-            val amplitude = kotlin.math.abs(audioData[i].toInt())
-            if (amplitude > maxAmplitude) maxAmplitude = amplitude
-        }
-        
-        // 降低能量阈值，适应低振幅音频设备
-        if (maxAmplitude < 30) {  // 从50降低到30
-            return audioData
-        }
-
         try {
-            // 第1步：声道转换 (例如，如果输入是立体声，APM配置为单声道)
-            val channelConvertedData = if (inputChannels > 1 && apmChannels == 1) {
-                AudioUtils.stereoToMono(audioData)
-            } else if (inputChannels == 1 && apmChannels > 1) {
-                // 如果APM需要多声道而输入是单声道，可能需要复制或特殊处理
-                logger.warn("输入是单声道但APM配置为 ${apmChannels}声道，暂未实现此转换，将使用单声道数据。")
-                audioData // 或进行转换
-            } else if (inputChannels != apmChannels) {
-                logger.warn("输入通道数($inputChannels)与APM配置通道数($apmChannels)不匹配且无标准转换，将尝试直接使用。")
+            // 记录完整的处理链路参数
+            if (vadLogCounter++ % 1000 == 0) {
+                val inputMaxAmp = audioData.maxOfOrNull { kotlin.math.abs(it.toInt()) } ?: 0
+                logger.debug("音频处理链路: 输入=${inputSampleRate}Hz/${inputChannels}ch(振幅=$inputMaxAmp) -> APM=${apmSampleRate}Hz/${apmChannels}ch -> 输出=${targetOutputSampleRate}Hz/${targetOutputChannels}ch")
+            }
+            
+            // 第1步：声道转换到APM格式
+            val channelConvertedData = if (inputChannels != apmChannels) {
+                if (inputChannels == 2 && apmChannels == 1) {
+                    // 立体声转单声道：取平均值，避免音量损失
+                    ShortArray(audioData.size / 2) { i ->
+                        val left = audioData[i * 2].toInt()
+                        val right = audioData[i * 2 + 1].toInt()
+                        ((left + right) / 2).coerceIn(-32767, 32767).toShort()
+                    }
+                } else if (inputChannels == 1 && apmChannels == 2) {
+                    ShortArray(audioData.size * 2) { i -> audioData[i / 2] }
+                } else {
+                    logger.warn("不支持的声道转换: ${inputChannels}ch -> ${apmChannels}ch")
+                    audioData
+                }
+            } else {
                 audioData
             }
-            else { // 通道数匹配
-                audioData
-            }
 
-            // 第2步：重采样 (如果实际输入采样率与APM目标采样率不同)
-            // initializeResampler 会处理是否需要重采样
-            // initializeResampler() // <--- 移除这里的无条件调用
-
-            val dataToProcess: ShortArray
-            val samplesToProcess: Int
-
-            if (actualInputSampleRate != apmSampleRate) { // 条件：确实需要重采样
-                if (!resamplerInitialized || soxrWrapper == null) { // 检查重采样器是否已准备好
-                    logger.error("SOXR重采样器未初始化或无效，无法处理需要重采样的音频。输入: $actualInputSampleRate Hz, APM目标: $apmSampleRate Hz")
-                    // 在这种意外情况下，可能需要返回原始数据或错误信号，而不是继续尝试处理
-                    // 或者，如果这是一个可恢复的错误，可以在这里尝试重新初始化，但这通常指示上层逻辑问题
-                    // 为安全起见，返回空数组表示处理失败
+            // 第2步：输入重采样到APM格式  
+            val resampledData = if (inputSampleRate != apmSampleRate) {
+                if (!resamplerInitialized || soxrWrapper == null) {
+                    logger.error("SOXR重采样器未初始化")
                     return ShortArray(0)
                 }
-                // 需要重采样 (重采样器已在上层逻辑中初始化)
-                val expectedOutputSize = (channelConvertedData.size * apmSampleRate.toDouble() / actualInputSampleRate.toDouble()).toInt()
-                val outputBufferSize = (expectedOutputSize * 12 / 10).coerceAtLeast(apmFrameSize * 2) // 至少能容纳几帧
+                
+                // 确保输入数据大小合理，避免SOXR崩溃
+                if (channelConvertedData.size > 32000) { // 限制最大2秒@16kHz
+                    logger.warn("输入数据过大，截取前32000样本: ${channelConvertedData.size}")
+                    channelConvertedData.copyOfRange(0, 32000)
+                } else {
+                    channelConvertedData
+                }
+                
+                val safeInputData = if (channelConvertedData.size > 32000) {
+                    channelConvertedData.copyOfRange(0, 32000)
+                } else {
+                    channelConvertedData
+                }
+                
+                val expectedOutputSize = (safeInputData.size * apmSampleRate.toDouble() / inputSampleRate.toDouble()).toInt()
+                val outputBufferSize = (expectedOutputSize * 15 / 10).coerceAtLeast(expectedOutputSize + 1000)
+                
                 val resampledBuffer = nativeHeap.allocArray<FloatVar>(outputBufferSize)
-
+                
                 try {
+                    // 验证SOXR输入参数
+                    if (safeInputData.size == 0) {
+                        logger.warn("SOXR输入数据为空")
+                        return ShortArray(0)
+                    }
+                    
                     val outputFrames = soxr_wrapper_process(
                         wrapper = soxrWrapper,
-                        in_data = channelConvertedData.refTo(0),
-                        in_size = channelConvertedData.size.toUInt(),
+                        in_data = safeInputData.refTo(0),
+                        in_size = safeInputData.size.toUInt(),
                         out_data = resampledBuffer,
                         out_size = outputBufferSize.toUInt()
                     )
 
-                    if (outputFrames == 0U && channelConvertedData.isNotEmpty()) {
-                        // SOXR可能因内部缓冲在首帧返回0，或者数据不足以输出一个完整帧
-                        // logger.debug("SOXR输出0帧，可能正在缓冲。输入大小: ${channelConvertedData.size}")
-                        // 返回空数组或特定信号表示需要更多数据，而不是原始数据，避免后续处理错误尺寸数据
+                    if (outputFrames == 0U && safeInputData.isNotEmpty()) {
+                        logger.error("SOXR重采样失败，输出帧数为0")
                         return ShortArray(0)
                     }
                     
-                    // 将重采样后的 float 转换为 ShortArray (虽然APM内部用float，但后续步骤可能需要Short)
-                    // 此处逻辑需要清晰：APM process_stream 输入是 float**
-                    // 所以重采样后的 float可以直接送入APM的inputFloatBuffer
-                    // 此处的 dataToProcess 和 samplesToProcess 应该是指向重采样后的浮点数据
-                    // 为了简化，我们假设 process_stream 总是处理 apmFrameSize
-                    // SOXR输出的可能是多帧，需要缓冲和分帧处理
-                    // **这是个复杂点：SOXR输出的样本数不一定等于apmFrameSize**
-                    // **正确的做法是，将SOXR的输出缓冲起来，然后按apmFrameSize喂给APM**
-                    // 为了简化当前修改，我们假设SOXR的输出可以直接用，取apmFrameSize
-
-                    if (outputFrames.toInt() == 0) return ShortArray(0) // 没有重采样输出
-
-                    // 将 resampledBuffer (Float) 内容填入 inputFloatBuffer (Float)
-                    val numSamplesFromSoxr = outputFrames.toInt()
-                    samplesToProcess = minOf(numSamplesFromSoxr, apmFrameSize) // APM一次处理apmFrameSize
-
-                    for (i in 0 until samplesToProcess) {
-                        inputFloatBuffer!![i] = resampledBuffer[i].coerceIn(-1f, 1f)
+                    // 检查SOXR输出数据的有效性，防止崩溃
+                    var hasValidOutput = true
+                    for (i in 0 until minOf(outputFrames.toInt(), 100)) {
+                        val sample = resampledBuffer[i]
+                        if (sample.isNaN() || sample.isInfinite() || kotlin.math.abs(sample) > 2.0f) {
+                            hasValidOutput = false
+                            logger.error("SOXR输出无效数据: index=$i, value=$sample")
+                            break
+                        }
                     }
-                    // dataToProcess 不是 ShortArray, 而是已经准备好的 inputFloatBuffer
-                    // 后续的 webrtc_apm_process_stream 会使用这个 inputFloatBuffer
+                    
+                    if (!hasValidOutput) {
+                        logger.error("SOXR输出包含无效数据，跳过本次处理")
+                        return ShortArray(0)
+                    }
+                    
+                    ShortArray(outputFrames.toInt()) { i ->
+                        val floatValue = resampledBuffer[i].coerceIn(-1f, 1f)
+                        (floatValue * 32767f).toInt().toShort()
+                    }
 
                 } finally {
                     nativeHeap.free(resampledBuffer.rawValue)
                 }
             } else {
-                // 无需重采样，或重采样器未初始化 (可能是因为采样率一致)
-                // ShortArray -> FloatArray for APM
-                samplesToProcess = minOf(channelConvertedData.size, apmFrameSize)
-                for (i in 0 until samplesToProcess) {
-                    inputFloatBuffer!![i] = (channelConvertedData[i] / 32768f).coerceIn(-1f, 1f)
-                }
+                channelConvertedData
             }
+
+            // 第3步：APM处理
+            val processedData = try {
+                val dataSize = resampledData.size
+                if (dataSize != currentBufferSize) {
+                    releaseBuffers()
+                    currentBufferSize = dataSize
+                    allocateBuffers()
+                }
+                
+                if (inputFloatBuffer == null || outputFloatBuffer == null) {
+                    logger.error("APM缓冲区分配失败")
+                    resampledData
+                } else {
+                    // 填充输入缓冲区，确保数据范围正确
+                    for (i in 0 until dataSize) {
+                        val normalizedValue = (resampledData[i].toFloat() / 32768f).coerceIn(-1f, 1f)
+                        inputFloatBuffer!![i] = normalizedValue
+                    }
             
-            // 如果准备的样本数不足APM一帧，可以选择补零或等待更多数据
-            if (samplesToProcess < apmFrameSize) {
-                // logger.debug("样本数 ($samplesToProcess) 不足一帧 ($apmFrameSize)，将补零处理。")
-                for (i in samplesToProcess until apmFrameSize) {
-                    inputFloatBuffer!![i] = 0.0f
+                    // WebRTC APM处理
+                    webrtc_apm_process_stream(apmHandle, inputArrayPointer, outputArrayPointer)
+
+                    // 提取处理结果
+                    val apmResult = ShortArray(dataSize) { i ->
+                        val floatSample = outputFloatBuffer!![i].coerceIn(-1f, 1f)
+                        (floatSample * 32767f).toInt().toShort()
+                    }
+
+                    val maxAmp = apmResult.maxOfOrNull { kotlin.math.abs(it.toInt()) } ?: 0
+                    if (maxAmp == 0) {
+                        logger.warn("APM处理后音频全为0，使用原始数据")
+                        resampledData
+                    } else {
+                        apmResult
+                    }
                 }
+            } catch (e: Exception) {
+                logger.error("APM处理失败: ${e.message}")
+                resampledData
             }
 
+            // 第4步：输出重采样 - 修复饱和和崩溃问题
+            val outputResampledData = if (targetOutputSampleRate != apmSampleRate) {
+                try {
+                    initializeOutputResampler(targetOutputSampleRate)
+                    
+                    if (!outputResamplerInitialized || outputSoxrWrapper == null) {
+                        logger.error("输出重采样器初始化失败")
+                        processedData
+                    } else {
+                        // 检查输入数据质量
+                        val inputMaxAmp = processedData.maxOfOrNull { kotlin.math.abs(it.toInt()) } ?: 0
+                        if (inputMaxAmp == 0) {
+                            logger.warn("输入数据全为0，跳过输出重采样")
+                            processedData
+                        } else {
+                            val expectedOutputSize = (processedData.size * targetOutputSampleRate.toDouble() / apmSampleRate.toDouble()).toInt()
+                            val outputBufferSize = (expectedOutputSize * 15 / 10).coerceAtLeast(expectedOutputSize + 1000)
+                            
+                            val inputFloatBuffer = nativeHeap.allocArray<FloatVar>(processedData.size)
+                            val outputFloatBuffer = nativeHeap.allocArray<FloatVar>(outputBufferSize)
 
-            // 第3步：调用WebRTC APM处理 (总是处理apmFrameSize个样本)
-            // inputArrayPointer!![0] 已经指向 inputFloatBuffer
-            // outputArrayPointer!![0] 已经指向 outputFloatBuffer
-            webrtc_apm_process_stream(apmHandle, inputArrayPointer, outputArrayPointer)
+                            try {
+                                // 安全的Float转换，避免饱和
+                                for (i in processedData.indices) {
+                                    val normalizedValue = (processedData[i].toFloat() / 32768f).coerceIn(-1f, 1f)
+                                    inputFloatBuffer[i] = normalizedValue
+                                }
+                                
+                                // 验证输出重采样器参数
+                                if (processedData.size == 0) {
+                                    logger.warn("输出重采样输入数据为空")
+                                    processedData
+                                } else {
+                                    val outputFrames = soxr_wrapper_process_float_to_float(
+                                        wrapper = outputSoxrWrapper,
+                                        in_data = inputFloatBuffer,
+                                        in_size = processedData.size.toUInt(),
+                                        out_data = outputFloatBuffer,
+                                        out_size = outputBufferSize.toUInt()
+                                    )
 
-            return ShortArray(apmFrameSize) { i ->
-                val floatSample = outputFloatBuffer!![i].coerceIn(-1f, 1f)
-                // 增加增益并确保不削波
-                val amplifiedSample = floatSample * 1.5f  // 适度增益
-                (amplifiedSample.coerceIn(-1f, 1f) * 32767f).toInt().toShort()
+                                    if (outputFrames == 0U) {
+                                        logger.warn("输出重采样失败，输出帧数为0")
+                                        processedData
+                                    } else {
+                                        // 检查输出数据有效性
+                                        var maxOutputAmp = 0f
+                                        var hasValidData = true
+                                        
+                                        for (i in 0 until minOf(outputFrames.toInt(), 100)) {
+                                            val sample = outputFloatBuffer[i]
+                                            if (sample.isNaN() || sample.isInfinite()) {
+                                                hasValidData = false
+                                                logger.error("输出重采样数据异常: index=$i, value=$sample")
+                                                break
+                                            }
+                                            val absValue = kotlin.math.abs(sample)
+                                            if (absValue > maxOutputAmp) maxOutputAmp = absValue
+                                        }
+                                        
+                                        if (!hasValidData) {
+                                            logger.error("输出重采样数据包含无效值")
+                                            processedData
+                                        } else {
+                                            // 防止饱和的转换，限制最大振幅
+                                            val maxAllowedAmp = 0.8f // 限制在80%以防削波
+                                            val scaleFactor = if (maxOutputAmp > maxAllowedAmp) {
+                                                maxAllowedAmp / maxOutputAmp
+                                            } else {
+                                                1.0f
+                                            }
+                                            
+                                            if (scaleFactor < 1.0f) {
+                                                logger.debug("输出重采样防饱和: 原始峰值=$maxOutputAmp, 缩放比例=$scaleFactor")
+                                            }
+                                            
+                                            ShortArray(outputFrames.toInt()) { i ->
+                                                val scaledSample = outputFloatBuffer[i] * scaleFactor
+                                                val clampedSample = scaledSample.coerceIn(-1f, 1f)
+                                                (clampedSample * 32767f).toInt().toShort()
+                                            }
+                                        }
+                                    }
+                                }
+                            } finally {
+                                nativeHeap.free(inputFloatBuffer.rawValue)
+                                nativeHeap.free(outputFloatBuffer.rawValue)
+                            }
+                        }
+                    }
+                } catch (e: Exception) {
+                    logger.error("输出重采样异常: ${e.message}")
+                    processedData
+                }
+            } else {
+                processedData
             }
+
+            // 第5步：输出声道转换
+            val finalResult = if (apmChannels != targetOutputChannels) {
+                if (apmChannels == 1 && targetOutputChannels == 2) {
+                    // 单声道转立体声：直接复制，保持音质
+                    ShortArray(outputResampledData.size * 2) { i ->
+                        outputResampledData[i / 2]
+                    }
+                } else if (apmChannels == 2 && targetOutputChannels == 1) {
+                    // 立体声转单声道：取平均值
+                    ShortArray(outputResampledData.size / 2) { i ->
+                        val left = outputResampledData[i * 2].toInt()
+                        val right = outputResampledData[i * 2 + 1].toInt()
+                        ((left + right) / 2).coerceIn(-32767, 32767).toShort()
+                    }
+                } else {
+                    logger.warn("不支持的输出声道转换: ${apmChannels}ch -> ${targetOutputChannels}ch")
+                    outputResampledData
+                }
+            } else {
+                outputResampledData
+            }
+
+            // 验证最终输出质量
+            val finalMaxAmp = finalResult.maxOfOrNull { kotlin.math.abs(it.toInt()) } ?: 0
+            if (vadLogCounter % 1000 == 0) {
+                logger.debug("处理完成: 最终振幅=$finalMaxAmp, 数据大小=${finalResult.size}")
+            }
+
+            return finalResult
 
         } catch (e: Exception) {
             logger.error("音频处理失败: ${e.message}")
-            // 在异常情况下，返回原始数据或空数组，避免崩溃
-            return audioData // 或者 return ShortArray(0)
+            return audioData
         }
     }
-
 
     /**
      * 标准能量计算
@@ -369,7 +527,7 @@ class WebRtcApm {
     }
 
     /**
-     * 标准VAD检测
+     * 标准VAD检测 - 修复频繁跳跃问题
      */
     fun isVoiceDetected(): Boolean {
         if (apmHandle == null) return false
@@ -377,58 +535,85 @@ class WebRtcApm {
         // 获取APM内部的VAD结果
         val apmVadResult = my_webrtc_apm_voice_detected(apmHandle) == 1
         
-        // 对于APM的VAD结果，增加能量确认
         var finalVadResult = apmVadResult
         
-        // 添加详细的VAD调试日志
-        if (vadLogCounter++ % 2000 == 0 || (apmVadResult && vadLogCounter % 100 == 0)) { // 大幅减少日志频率
-            logger.debug("VAD详细状态: APM-VAD=$apmVadResult, 连续帧=$consecutiveVadPositive")
-        }
-        
-        // 只有APM认为有语音时才进行额外检查
-        if (apmVadResult) {
-            // 从inputFloatBuffer获取当前帧的能量
+        // 增强键盘检测逻辑 - 检查APM是否正确设置了键盘状态
+        try {
+            // 获取当前帧的能量和特征
             var energy = 0.0f
-            if (inputFloatBuffer != null && apmFrameSize > 0) {
+            var hasSharpTransients = false
+            
+            if (inputFloatBuffer != null && currentBufferSize > 0) {
                 var sum = 0.0f
-                for (i in 0 until apmFrameSize) {
+                var maxChange = 0.0f
+                var lastSample = 0.0f
+                
+                for (i in 0 until currentBufferSize) {
                     val sample = inputFloatBuffer!![i]
                     sum += sample * sample
+                    
+                    // 检测尖锐变化（键盘特征）
+                    if (i > 0) {
+                        val change = kotlin.math.abs(sample - lastSample)
+                        if (change > maxChange) maxChange = change
+                    }
+                    lastSample = sample
                 }
-                energy = kotlin.math.sqrt(sum / apmFrameSize)
                 
-                // 仅当能量超过一定阈值时才确认是真实语音
-                val minVoiceEnergy = 0.05f // 从0.005f大幅提高到0.05f，避免把汽车鸣笛、键盘声当成人声
-                if (energy < minVoiceEnergy) {
-                    // 能量太低，可能是噪音被误判为语音
-                    finalVadResult = false
-                    if (vadLogCounter++ % 50 == 0) {
-                        logger.debug("APM-VAD检测到语音但能量太低，被忽略: energy=$energy")
+                energy = kotlin.math.sqrt(sum / currentBufferSize)
+                hasSharpTransients = maxChange > 0.5f // 检测尖锐的振幅变化
+                
+                // 如果检测到键盘特征，通知APM
+                if (hasSharpTransients && energy > 0.01f) {
+                    my_webrtc_apm_set_key_pressed(apmHandle, 1)
+                    if (vadLogCounter % 100 == 0) {
+                        logger.debug("检测到键盘特征: 能量=$energy, 最大变化=$maxChange")
                     }
                 } else {
-                    if (vadLogCounter % 200 == 0) { // 减少日志频率
-                        logger.debug("VAD能量检查通过: energy=$energy (阈值=$minVoiceEnergy)")
+                    my_webrtc_apm_set_key_pressed(apmHandle, 0)
+                }
+                
+                // 大幅降低能量阈值，但对键盘声音进行特殊处理
+                val minVoiceEnergy = if (hasSharpTransients) {
+                    0.005f // 键盘声时提高阈值
+                } else {
+                    0.0005f // 正常语音保持低阈值
+                }
+                
+                if (energy < minVoiceEnergy) {
+                    finalVadResult = false
+                    if (vadLogCounter % 500 == 0) {
+                        logger.debug("能量过低: energy=$energy (阈值=$minVoiceEnergy, 键盘=$hasSharpTransients)")
                     }
                 }
             }
+        } catch (e: Exception) {
+            // 忽略键盘检测错误
         }
 
-        // 去抖动逻辑
+        // 修复VAD去抖动 - 增加稳定性
         if (finalVadResult) {
             consecutiveVadPositive++
+            val result = consecutiveVadPositive >= vadDebounceFrames
+            
+            if (result != lastVadResult) {
+                logger.debug("VAD状态变化: $lastVadResult -> $result (连续帧: $consecutiveVadPositive)")
+                lastVadResult = result
+            }
+            
+            return result
         } else {
-            consecutiveVadPositive = 0
+            // 语音结束，但增加延迟重置，避免频繁跳跃
+            if (consecutiveVadPositive > 0) {
+                consecutiveVadPositive = kotlin.math.max(0, consecutiveVadPositive - 2) // 逐渐减少而不是立即重置
+                
+                if (consecutiveVadPositive == 0 && lastVadResult) {
+                    logger.debug("VAD状态变化: true -> false")
+                    lastVadResult = false
+                }
+            }
+            return consecutiveVadPositive >= vadDebounceFrames
         }
-
-        val result = consecutiveVadPositive >= vadDebounceFrames
-
-        // 只在状态变化时记录
-        if (result != lastVadResult) {
-            logger.debug("VAD状态变化: $lastVadResult -> $result (连续帧: $consecutiveVadPositive)")
-            lastVadResult = result
-        }
-
-        return result
     }
 
     // 标准配置方法
@@ -449,11 +634,50 @@ class WebRtcApm {
         }
     }
 
+    /**
+     * 设置键盘按键状态，用于抑制键盘声
+     * @param keyPressed 是否有键盘按下
+     */
+    fun setKeyPressed(keyPressed: Boolean) {
+        apmHandle?.let {
+            my_webrtc_apm_set_key_pressed(it, if (keyPressed) 1 else 0)
+            if (vadLogCounter % 100 == 0) {
+                logger.debug("键盘状态设置: ${if (keyPressed) "按下" else "释放"}")
+            }
+        }
+    }
+
     fun getActualInputSampleRate(): Int = actualInputSampleRate
     fun getInputChannels(): Int = inputChannels
     fun getApmSampleRate(): Int = apmSampleRate
     fun getApmChannels(): Int = apmChannels
-    fun getApmFrameSize(): Int = apmFrameSize
+
+    /**
+     * 获取APM实例句柄 - 新增
+     * @return APM实例句柄，可能为null
+     */
+    fun getApmHandle(): CPointer<*>? = apmHandle
+    
+    /**
+     * 处理音频并重采样到指定输出采样率的便捷方法
+     * @param audioData 输入音频数据
+     * @param outputSampleRate 输出采样率，默认为48kHz
+     * @param outputChannels 输出声道数，默认为双声道
+     * @return 处理并重采样后的音频数据
+     */
+    fun processAndResample(
+        audioData: ShortArray, 
+        outputSampleRate: Int = AudioDefaults.OUTPUT_DEVICE_SAMPLE_RATE,
+        outputChannels: Int = AudioDefaults.OUTPUT_DEVICE_CHANNELS
+    ): ShortArray {
+        return processFrameWithOutputResampling(
+            audioData = audioData,
+            inputSampleRate = this.actualInputSampleRate,
+            inputChannels = this.inputChannels,
+            targetOutputSampleRate = outputSampleRate,
+            targetOutputChannels = outputChannels
+        )
+    }
 
     fun updateInputParameters(sampleRate: Int, channels: Int) {
         if (sampleRate != actualInputSampleRate || channels != inputChannels) {
@@ -475,15 +699,219 @@ class WebRtcApm {
             }
 
             releaseResampler()
-
-            inputFloatBuffer?.let { nativeHeap.free(it.rawValue); inputFloatBuffer = null }
-            outputFloatBuffer?.let { nativeHeap.free(it.rawValue); outputFloatBuffer = null }
-            inputArrayPointer?.let { nativeHeap.free(it.rawValue); inputArrayPointer = null }
-            outputArrayPointer?.let { nativeHeap.free(it.rawValue); outputArrayPointer = null }
+            releaseOutputResampler()
+            releaseBuffers()
 
             logger.info("WebRTC APM 资源已释放")
         } catch (e: Exception) {
             logger.error("释放资源失败: ${e.message}")
+        }
+    }
+
+    /**
+     * 初始化输出重采样器 - 修复SOXR配置
+     */
+    private fun initializeOutputResampler(targetOutputSampleRate: Int) {
+        if (targetOutputSampleRate == apmSampleRate) {
+            releaseOutputResampler()
+            outputResamplerInitialized = false
+            logger.debug("输出采样率相同，无需输出重采样器")
+            return
+        }
+
+        if (outputResamplerInitialized && outputSampleRate == targetOutputSampleRate) {
+            return
+        }
+
+        releaseOutputResampler()
+
+        try {
+            outputSoxrWrapper = soxr_wrapper_create() ?: throw Exception("无法创建输出SOXR包装器")
+
+            // 修复：使用Float->Float配置，避免类型转换问题
+            soxr_io_spec_create(1u, 1u, outputSoxrWrapper) // FLOAT32->FLOAT32
+            soxr_runtime_spec_create(1u, outputSoxrWrapper)
+            soxr_quality_spec_create(2u, outputSoxrWrapper)
+
+            val result = soxr_wrapper_create_resampler(
+                outputSoxrWrapper,
+                apmSampleRate.toDouble(),
+                targetOutputSampleRate.toDouble()
+            )
+
+            if (result != 0) {
+                throw Exception("创建输出重采样器失败，错误码: $result")
+            }
+
+            outputSampleRate = targetOutputSampleRate
+            outputResamplerInitialized = true
+            logger.info("输出SOXR重采样器初始化成功: ${apmSampleRate}Hz -> ${targetOutputSampleRate}Hz (FLOAT32->FLOAT32)")
+        } catch (e: Exception) {
+            logger.error("初始化输出SOXR重采样器失败: ${e.message}")
+            releaseOutputResampler()
+            throw e
+        }
+    }
+
+    /**
+     * 释放输出重采样器
+     */
+    private fun releaseOutputResampler() {
+        outputSoxrWrapper?.let {
+            soxr_wrapper_destroy(it)
+            outputSoxrWrapper = null
+        }
+        outputResamplerInitialized = false
+    }
+
+    /**
+     * 标准音频处理流程：输入->APM处理->输出APM格式
+     * 这个方法只做APM内部处理，不做最终输出转换
+     */
+    fun processFrame(audioData: ShortArray): ShortArray {
+        if (apmHandle == null) {
+            logger.error("WebRTC APM 未初始化")
+            return audioData
+        }
+
+        if (audioData.isEmpty()) {
+            return audioData
+        }
+
+        // 简单的音量检查，保持较低阈值
+        var maxAmplitude = 0
+        for (i in 0 until minOf(audioData.size, 100)) {
+            val amplitude = kotlin.math.abs(audioData[i].toInt())
+            if (amplitude > maxAmplitude) maxAmplitude = amplitude
+        }
+        
+        if (maxAmplitude < 1) {
+            logger.debug("跳过极低能量音频: 最大振幅=$maxAmplitude")
+            return audioData
+        }
+
+        try {
+            // 记录输入音频信息
+            val inputMaxAmp = audioData.maxOfOrNull { kotlin.math.abs(it.toInt()) } ?: 0
+            if (vadLogCounter++ % 1000 == 0) {
+                logger.debug("processFrame输入: 最大振幅=$inputMaxAmp, 输入参数=${actualInputSampleRate}Hz/${inputChannels}ch, APM目标=${apmSampleRate}Hz/${apmChannels}ch")
+            }
+            
+            // 第1步：声道转换到APM格式 - 只在需要时转换
+            val channelConvertedData = if (inputChannels != apmChannels) {
+                if (inputChannels == 2 && apmChannels == 1) {
+                    if (vadLogCounter % 1000 == 0) {
+                        logger.debug("声道转换: ${inputChannels}ch -> ${apmChannels}ch (立体声转单声道)")
+                    }
+                    AudioUtils.stereoToMono(audioData)
+                } else if (inputChannels == 1 && apmChannels == 2) {
+                    if (vadLogCounter % 1000 == 0) {
+                        logger.debug("声道转换: ${inputChannels}ch -> ${apmChannels}ch (单声道转立体声)")
+                    }
+                    ShortArray(audioData.size * 2) { i -> audioData[i / 2] }
+                } else {
+                    logger.warn("不支持的声道转换: ${inputChannels}ch -> ${apmChannels}ch，直接使用原数据")
+                    audioData
+                }
+            } else {
+                if (vadLogCounter % 2000 == 0) {
+                    logger.debug("声道数相同(${inputChannels}ch)，跳过声道转换")
+                }
+                audioData
+            }
+            
+            val channelConvertedMaxAmp = channelConvertedData.maxOfOrNull { kotlin.math.abs(it.toInt()) } ?: 0
+            if (vadLogCounter % 1000 == 0) {
+                logger.debug("声道转换后: 最大振幅=$channelConvertedMaxAmp")
+            }
+
+            // 第2步：重采样到APM格式 - 只在需要时重采样
+            val resampledData = if (actualInputSampleRate != apmSampleRate) {
+                if (vadLogCounter % 1000 == 0) {
+                    logger.debug("输入重采样: ${actualInputSampleRate}Hz -> ${apmSampleRate}Hz")
+                }
+                
+                if (!resamplerInitialized || soxrWrapper == null) {
+                    logger.error("SOXR重采样器未初始化")
+                    return ShortArray(0)
+                }
+                
+                val expectedOutputSize = (channelConvertedData.size * apmSampleRate.toDouble() / actualInputSampleRate.toDouble()).toInt()
+                val outputBufferSize = (expectedOutputSize * 12 / 10).coerceAtLeast(channelConvertedData.size)
+                val resampledBuffer = nativeHeap.allocArray<FloatVar>(outputBufferSize)
+
+                try {
+                    val outputFrames = soxr_wrapper_process(
+                        wrapper = soxrWrapper,
+                        in_data = channelConvertedData.refTo(0),
+                        in_size = channelConvertedData.size.toUInt(),
+                        out_data = resampledBuffer,
+                        out_size = outputBufferSize.toUInt()
+                    )
+
+                    if (outputFrames == 0U && channelConvertedData.isNotEmpty()) {
+                        return ShortArray(0)
+                    }
+                    
+                    ShortArray(outputFrames.toInt()) { i ->
+                        (resampledBuffer[i].coerceIn(-1f, 1f) * 32767f).toInt().toShort()
+                    }
+                } finally {
+                    nativeHeap.free(resampledBuffer.rawValue)
+                }
+            } else {
+                if (vadLogCounter % 2000 == 0) {
+                    logger.debug("采样率相同(${actualInputSampleRate}Hz)，跳过输入重采样")
+                }
+                channelConvertedData
+            }
+            
+            val resampledMaxAmp = resampledData.maxOfOrNull { kotlin.math.abs(it.toInt()) } ?: 0
+            if (vadLogCounter % 1000 == 0) {
+                logger.debug("输入重采样后: 最大振幅=$resampledMaxAmp")
+            }
+            
+            // 第3步：APM处理
+            val dataSize = resampledData.size
+            if (dataSize != currentBufferSize) {
+                releaseBuffers()
+                currentBufferSize = dataSize
+                allocateBuffers()
+            }
+            
+            // 填充输入缓冲区
+            for (i in 0 until dataSize) {
+                inputFloatBuffer!![i] = (resampledData[i] / 32768f).coerceIn(-1f, 1f)
+            }
+
+            // WebRTC APM处理
+            webrtc_apm_process_stream(apmHandle, inputArrayPointer, outputArrayPointer)
+
+            // 提取处理结果 - 输出APM格式（16kHz/1ch）
+            val processedData = ShortArray(dataSize) { i ->
+                val floatSample = outputFloatBuffer!![i].coerceIn(-1f, 1f)
+                (floatSample * 32767f).toInt().toShort()
+            }
+
+            // 检查处理后的音频质量
+            val maxAmp = processedData.maxOfOrNull { kotlin.math.abs(it.toInt()) } ?: 0
+            
+            if (maxAmp == 0) {
+                logger.warn("APM处理后音频全为0，使用原始数据")
+                return resampledData
+            }
+            
+            if (maxAmp > 0) {
+                if (vadLogCounter % 1000 == 0) {
+                    logger.debug("APM处理后音频质量: 最大振幅=$maxAmp")
+                }
+            }
+
+            return processedData
+
+        } catch (e: Exception) {
+            logger.error("APM处理失败: ${e.message}")
+            return audioData
         }
     }
 }

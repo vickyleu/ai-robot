@@ -159,7 +159,6 @@ class VoskKeywordDetector {
 
             // 调用识别器处理整个缓冲区
             val result = recognizer.recognize(audioBuffer, audioBuffer.size, currentTime)
-
             // 检查结果中的关键词
             if (result.success && result.text.isNotBlank()) {
                 logger.info("Vosk识别结果: \"${result.text}\"")

@@ -26,14 +26,14 @@ interface SpeechSynthesizerApi {
      * @param outputWav 是否输出wav格式(否则输出raw PCM)
      * @return 合成的音频数据，失败返回空数组
      */
-    fun synthesize(text: String, outputWav: Boolean = false): ByteArray
+    fun synthesize(text: String, outputWav: Boolean = false,sampleRate:Int,channel:Int): ByteArray
     
     /**
      * 播放文本
      * @param text 要播放的文本
      * @return 播放是否成功
      */
-    suspend fun speak(text: String): Boolean
+    suspend fun speak(text: String,outputSampleRate:Int,outChannels:Int): Boolean
     
     /**
      * 停止播放
