@@ -92,26 +92,23 @@ object AudioUtils {
      * 将立体声音频转换为单声道
      * 通过计算左右声道的平均值实现
      *
-     * @param stereo 立体声音频数据
+     * @param stereoData 立体声音频数据
      * @return 单声道音频数据
      */
     fun stereoToMono(stereoData: ShortArray): ShortArray {
         val monoLength = stereoData.size / 2
         val monoData = ShortArray(monoLength)
+        
         for (i in 0 until monoLength) {
-            // 根据幅度决定权重
-            val left = stereoData[i*2].toInt()
-            val right = stereoData[i*2+1].toInt()
-            val leftWeight = abs(left)
-            val rightWeight = abs(right)
-
-            if (leftWeight + rightWeight > 0) {
-                monoData[i] = ((left * leftWeight + right * rightWeight) /
-                        (leftWeight + rightWeight)).toShort()
-            } else {
-                monoData[i] = 0
-            }
+            // 使用简单平均值，避免复杂权重计算导致数据丢失
+            val left = stereoData[i * 2].toInt()
+            val right = stereoData[i * 2 + 1].toInt()
+            
+            // 计算平均值并限制在Short范围内
+            val average = (left + right) / 2
+            monoData[i] = average.coerceIn(-32768, 32767).toShort()
         }
+        
         return monoData
     }
     

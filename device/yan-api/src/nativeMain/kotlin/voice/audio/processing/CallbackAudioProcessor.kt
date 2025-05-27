@@ -15,6 +15,7 @@ import kotlinx.datetime.Clock
 import voice.util.AudioUtils
 import kotlin.concurrent.Volatile
 import kotlinx.cinterop.refTo
+import kotlinx.datetime.Clock.System
 import platform.posix.fopen
 import platform.posix.fwrite
 import platform.posix.fflush
@@ -50,11 +51,9 @@ class CallbackAudioProcessor : PortAudioDevice.AudioDataCallback {
     @Volatile
     private var apmFullyInitialized = false
     
-    // 音频参数 - 每次接收到新数据时可能会被安全访问
+    // 音频参数 - 使用AudioDefaults预定义格式
     @Volatile
-    private var sampleRate = AudioDefaults.INPUT_DEVICE_SAMPLE_RATE
-    @Volatile
-    private var channels = AudioDefaults.INPUT_DEVICE_CHANNELS
+    private var inputFormat = AudioDefaults.Formats.INPUT_DEVICE
     
     // 上一次处理异常的时间，用于限制日志频率
     private var lastErrorLogTime = 0L
@@ -65,7 +64,7 @@ class CallbackAudioProcessor : PortAudioDevice.AudioDataCallback {
     
     // 回调函数 - 保持与现有代码兼容的命名，增加同步保护
     private val callbackLock = SynchronizedObject()
-    private var processedAudioCallback: ((ShortArray, Int) -> Unit)? = null
+    private var processedAudioCallback: (suspend (ShortArray, Int) -> Unit)? = null
     private var vadCallback: ((Boolean) -> Unit)? = null
     
     // 原始录音文件保存
@@ -80,9 +79,9 @@ class CallbackAudioProcessor : PortAudioDevice.AudioDataCallback {
     /**
      * 初始化音频处理器
      */
-    fun initialize(sampleRate: Int, channels: Int): Boolean {
-        this.sampleRate = sampleRate
-        this.channels = channels
+    suspend fun initialize(sampleRate: Int, channels: Int): Boolean {
+        // 更新输入格式
+        inputFormat = AudioDefaults.AudioFormat(sampleRate, channels)
         
         synchronized(processingLock) {
             try {
@@ -121,7 +120,7 @@ class CallbackAudioProcessor : PortAudioDevice.AudioDataCallback {
                 apmReady = true
                 apmFullyInitialized = true
                 
-                logger.info("音频处理器初始化成功: 输入=${sampleRate}Hz/${channels}ch, APM=${AudioDefaults.WEBRTC_APM_SAMPLE_RATE}Hz/${AudioDefaults.WEBRTC_APM_CHANNELS}ch")
+                logger.info("音频处理器初始化成功: 输入=${inputFormat}, APM=${AudioDefaults.Formats.WEBRTC_APM}")
                 _processingState.value = ProcessingState.IDLE
                 return true
             } catch (e: Exception) {
@@ -145,7 +144,7 @@ class CallbackAudioProcessor : PortAudioDevice.AudioDataCallback {
         
         try {
             // 确保音频设备初始化
-            if (!audioDevice.initialize(sampleRate)) {
+            if (!audioDevice.initialize(inputFormat.sampleRate)) {
                 logger.error("初始化音频设备失败")
                 return false
             }
@@ -154,7 +153,7 @@ class CallbackAudioProcessor : PortAudioDevice.AudioDataCallback {
             audioDevice.setAudioCallback(this)
             
             // 打开输入流，使用回调模式
-            val success = audioDevice.openInputStreamWithCallback(sampleRate, channels, this)
+            val success = audioDevice.openInputStreamWithCallback(inputFormat.sampleRate, inputFormat.channels, this)
             if (!success) {
                 logger.error("打开音频输入流失败")
                 return false
@@ -164,7 +163,7 @@ class CallbackAudioProcessor : PortAudioDevice.AudioDataCallback {
             audioDevice.start()
             
             _processingState.value = ProcessingState.PROCESSING
-            logger.info("音频处理器开始工作: ${sampleRate}Hz, ${channels}ch")
+            logger.info("音频处理器开始工作: ${inputFormat}")
             return true
         } catch (e: Exception) {
             logger.error("启动音频处理器失败: ${e.message}")
@@ -176,138 +175,108 @@ class CallbackAudioProcessor : PortAudioDevice.AudioDataCallback {
     /**
      * 处理PortAudio回调的音频数据
      */
-    override fun onAudioInput(data: ShortArray, frameCount: Int) {
-        // 保存原始录音数据到文件
-        try {
-            if (!rawRecordingInitialized) {
-                val filename = "/tmp/raw_recording.raw"
-                rawRecordingFile = fopen(filename, "wb")
-                if (rawRecordingFile != null) {
-                    rawRecordingInitialized = true
-                    logger.info("原始录音文件已创建: $filename")
-                    logger.info("播放命令: aplay -f S16_LE -r ${sampleRate} -c ${channels} $filename")
-                } else {
-                    logger.error("无法创建原始录音文件")
-                }
-            }
-            
-            rawRecordingFile?.let { file ->
-                val audioBytes = AudioUtils.shortArrayToByteArray(data)
-                val bytesWritten = fwrite(audioBytes.refTo(0), 1u, audioBytes.size.toUInt(), file)
-                fflush(file)
+    override suspend fun onAudioInput(audioData: ShortArray, frameCount: Int) {
+        // 检查APM是否完全初始化
+        if (!apmFullyInitialized || apm == null) {
+            // APM未完全初始化，但仍然写入原始录音用于调试
+            writeRawRecording(audioData)
+            return
+        }
+        
+        synchronized(processingLock) {
+            try {
+                _processingState.value = ProcessingState.PROCESSING
                 
-                if (audioReadCounter % 1000 == 0) {
-                    logger.debug("写入原始录音: ${bytesWritten}字节, 帧数=$frameCount")
+                // 基本参数验证
+                if (audioData.isEmpty() || frameCount <= 0) {
+                    return
                 }
-            }
-        } catch (e: Exception) {
-            logger.error("保存原始录音失败: ${e.message}")
-        }
-        
-        // 检查原始输入数据
-        if (audioReadCounter++ % 1000 == 0) {
-            val rawSamples = data.take(10).joinToString(", ")
-            val rawMax = data.maxOfOrNull { kotlin.math.abs(it.toInt()) } ?: 0
-            logger.debug("原始音频: 前10个样本=$rawSamples, 最大振幅=$rawMax")
-        }
-
-        if (_processingState.value != ProcessingState.PROCESSING) {
-            if (audioReadCounter % 1000 == 0) {
-                logger.warn("处理器未在PROCESSING状态，当前状态: ${_processingState.value}")
-            }
-            return
-        }
-        
-        // 严格检查APM是否完全就绪 - 双重验证，防止背景噪音进入识别
-        if (!apmReady || !apmFullyInitialized) {
-            if (audioReadCounter % 1000 == 0) {
-                logger.debug("APM未完全就绪，跳过音频处理 (apmReady=$apmReady, apmFullyInitialized=$apmFullyInitialized)")
-            }
-            return
-        }
-        
-        // 获取本地APM副本
-        val localApm = synchronized(processingLock) { apm }
-
-        if (localApm == null) {
-            logger.warn("APM实例为空，直接传递原始音频")
-            sendProcessedAudio(data, frameCount)
-            return
-        }
-        
-        // 双重验证APM实例的有效性
-        val apmHandle = localApm.getApmHandle()
-        if (apmHandle == null) {
-            if (audioReadCounter % 1000 == 0) {
-                logger.warn("APM句柄为空，跳过处理")
-            }
-            return
-        }
-        
-        if (data.isEmpty() || frameCount <= 0) return
-
-        try {
-            // 检测音频振幅
-            val maxAmplitude = calculateMaxAmplitude(data, frameCount)
-            
-            if (maxAmplitude > 100) {
-                if (audioReadCounter % 100 == 0) {
-                    logger.debug("检测到有效音频，最大振幅: $maxAmplitude")
+                
+                // 写入原始录音文件 - 移到前面，确保总是记录
+                writeRawRecording(audioData)
+                
+                // 音频质量检查
+                val maxAmplitude = audioData.maxOfOrNull { kotlin.math.abs(it.toInt()) } ?: 0
+                
+                // 降低最小振幅阈值，适应低音量环境
+                if (maxAmplitude < 100) {
+                    return
                 }
-            }
-
-            // 创建输入数据副本
-            val inputCopy = data.copyOf()
-
-            // 检测语音 - 使用APM VAD和振幅阈值
-            val amplitude = calculateMaxAmplitude(data, frameCount)
-            val apmVad = try { localApm.isVoiceDetected() } catch (e: Exception) { 
-                logger.error("VAD检测异常: ${e.message}")
-                false 
-            }
-            
-            // 注意：键盘检测现在完全由WebRTC APM内部处理，我们不需要手动检测
-            // APM的isVoiceDetected()方法内部会自动处理键盘声抑制
-            
-            // 简化的VAD逻辑：主要依赖APM的判断
-            val hasVoice = if (apmVad) {
-                amplitude > 100  // 降低阈值，因为APM已经过滤了键盘声
-            } else {
-                amplitude > 800  // APM认为不是语音，需要更高阈值才能覆盖
-            }
-            
-            if (audioReadCounter % 200 == 0) {
-                logger.debug("VAD状态: 振幅=$amplitude, APM-VAD=$apmVad, 最终结果=$hasVoice")
-            }
-            
-            // 处理检测到的语音
-            if (hasVoice) {
-                try {
-                    val processedData = localApm.processFrame(inputCopy)
-                    
-                    sendProcessedAudio(data = processedData, frameCount = processedData.size)
-                    sendVadResult(hasVoice)
-                    
-                    if (audioReadCounter % 100 == 0) {
-                        logger.debug("成功处理语音: 振幅=$amplitude, 处理后数据大小=${processedData.size}")
-                    }
+                
+                // 记录调试信息
+                if (audioReadCounter++ % 500 == 0) {
+                    val firstTenSamples = audioData.take(10).joinToString(",")
+                    logger.debug("原始音频: 前10个样本=$firstTenSamples, 最大振幅=$maxAmplitude")
+                }
+                
+                // 使用APM处理音频 - 确保APM已完全初始化
+                val currentApm = apm
+                if (currentApm == null || !apmFullyInitialized) {
+                    logger.debug("APM未就绪，跳过音频处理")
+                    return
+                }
+                
+                val processedAudio = try {
+                    // 使用标准的processFrame方法，避免复杂的输出重采样
+                    currentApm.processFrame(audioData)
                 } catch (e: Exception) {
-                    val now = Clock.System.now().toEpochMilliseconds()
-                    if (now - lastErrorLogTime > errorLogThrottleMs) {
-                        logger.error("处理音频数据异常: ${e.message}")
-                        lastErrorLogTime = now
+                    logger.error("音频处理异常: ${e.message}")
+                    return
+                }
+                
+                // 检查处理结果
+                val processedMaxAmp = processedAudio.maxOfOrNull { kotlin.math.abs(it.toInt()) } ?: 0
+                
+                if (processedMaxAmp == 0) {
+                    logger.debug("处理后音频为空，跳过")
+                    return
+                }
+                
+                // VAD检测 - 确保APM已完全初始化
+                val vadResult = try {
+                    currentApm.isVoiceDetected()
+                } catch (e: Exception) {
+                    logger.warn("VAD检测异常: ${e.message}")
+                    false
+                }
+                
+                // 音频质量验证
+                val rms = calculateRms(processedAudio)
+                val isValidAudio = processedMaxAmp >= 200 && rms >= minValidRms
+                
+                // 最终VAD结果
+                val finalVadResult = vadResult && isValidAudio
+                
+                // 记录调试信息
+                if (audioReadCounter % 100 == 0) {
+                    logger.debug("检测到有效音频，最大振幅: $processedMaxAmp")
+                    if (finalVadResult) {
+                        logger.debug("VAD状态: 振幅=$processedMaxAmp, APM-VAD=$vadResult, 最终结果=$finalVadResult")
                     }
                 }
-            } else {
-                if (audioReadCounter % 1000 == 0) {
-                    logger.debug("未检测到语音，跳过处理: 振幅=$amplitude")
+                
+                // 发送处理后的音频数据
+                synchronized(callbackLock) {
+                    processedAudioCallback?.invoke(processedAudio, frameCount)
+                    vadCallback?.invoke(finalVadResult)
                 }
-            }
-        } catch (e: Exception) {
-            val now = Clock.System.now().toEpochMilliseconds()
-            if (now - lastErrorLogTime > errorLogThrottleMs) {
-                logger.error("处理音频数据异常: ${e.message}")
-                lastErrorLogTime = now
+                
+                if (audioReadCounter % 100 == 0) {
+                    logger.debug("成功处理语音: 振幅=$processedMaxAmp, 处理后数据大小=${processedAudio.size}")
+                    if (finalVadResult) {
+                        logger.debug("发送处理后的音频数据: frameCount=$frameCount")
+                    }
+                }
+                
+            } catch (e: Exception) {
+                val currentTime = System.now().toEpochMilliseconds()
+                if (currentTime - lastErrorLogTime > errorLogThrottleMs) {
+                    logger.error("音频处理回调异常: ${e.message}")
+                    lastErrorLogTime = currentTime
+                }
+                _processingState.value = ProcessingState.ERROR
+            } finally {
+                _processingState.value = ProcessingState.IDLE
             }
         }
     }
@@ -315,7 +284,7 @@ class CallbackAudioProcessor : PortAudioDevice.AudioDataCallback {
     /**
      * 安全发送处理后的音频数据
      */
-    private fun sendProcessedAudio(data: ShortArray, frameCount: Int) {
+    private suspend fun sendProcessedAudio(data: ShortArray, frameCount: Int) {
         val callback = synchronized(callbackLock) { processedAudioCallback }
         if (callback != null) {
             try {
@@ -359,7 +328,7 @@ class CallbackAudioProcessor : PortAudioDevice.AudioDataCallback {
      * 设置处理后音频的回调
      * 保持与现有代码的兼容性
      */
-    fun setProcessedAudioCallback(callback: (ShortArray, Int) -> Unit) {
+    fun setProcessedAudioCallback(callback: suspend (ShortArray, Int) -> Unit) {
         synchronized(callbackLock) {
             this.processedAudioCallback = callback
         }
@@ -502,5 +471,50 @@ class CallbackAudioProcessor : PortAudioDevice.AudioDataCallback {
         
         _processingState.value = ProcessingState.IDLE
         logger.info("音频处理器资源已释放")
+    }
+    
+    /**
+     * 写入原始录音文件
+     */
+    private fun writeRawRecording(audioData: ShortArray) {
+        try {
+            if (!rawRecordingInitialized) {
+                val filename = "/tmp/raw_recording.raw"
+                rawRecordingFile = fopen(filename, "wb")
+                if (rawRecordingFile != null) {
+                    rawRecordingInitialized = true
+                    logger.info("原始录音文件已创建: $filename")
+                    logger.info("播放命令: aplay -f S16_LE -r ${inputFormat.sampleRate} -c ${inputFormat.channels} $filename")
+                } else {
+                    logger.error("无法创建原始录音文件")
+                }
+            }
+            
+            rawRecordingFile?.let { file ->
+                val audioBytes = AudioUtils.shortArrayToByteArray(audioData)
+                val bytesWritten = fwrite(audioBytes.refTo(0), 1u, audioBytes.size.toUInt(), file)
+                fflush(file)
+                
+                if (audioReadCounter % 1000 == 0) {
+                    logger.debug("写入原始录音: ${bytesWritten}字节, 帧数=${audioData.size}")
+                }
+            }
+        } catch (e: Exception) {
+            logger.error("保存原始录音失败: ${e.message}")
+        }
+    }
+    
+    /**
+     * 计算RMS能量
+     */
+    private fun calculateRms(audioData: ShortArray): Double {
+        if (audioData.isEmpty()) return 0.0
+        
+        var sum = 0.0
+        for (sample in audioData) {
+            sum += (sample * sample).toDouble()
+        }
+        
+        return kotlin.math.sqrt(sum / audioData.size) / Short.MAX_VALUE
     }
 } 

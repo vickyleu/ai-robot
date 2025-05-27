@@ -299,46 +299,68 @@ class VoskSpeechRecognizer : SpeechRecognizerApi {
     }
     // 新增：音频信号增强函数
     private fun enhanceAudioSignal(audioData: ByteArray): ByteArray {
-        return audioData  // 直接返回原始数据，不做任何处理
+        if (audioData.size < 4) return audioData  // 太短的音频直接返回
+        
         val enhanced = ByteArray(audioData.size)
-
-        // 应用简单的增益和去直流偏移
-        var sum = 0L
+        val samples = mutableListOf<Short>()
+        
+        // 转换为样本数组进行处理
         for (i in audioData.indices step 2) {
             if (i + 1 < audioData.size) {
                 val lowByte = audioData[i].toInt() and 0xFF
                 val highByte = audioData[i + 1].toInt() and 0xFF
                 val sample = lowByte or (highByte shl 8)
                 val signedSample = if (sample and 0x8000 != 0) sample - 0x10000 else sample
-                sum += signedSample
+                samples.add(signedSample.toShort())
             }
         }
-
-        val dcOffset = (sum / (audioData.size / 2)).toInt()
-        logger.debug("检测到直流偏移: $dcOffset")
-
-        // 去除直流偏移并应用适度增益
-        for (i in audioData.indices step 2) {
-            if (i + 1 < audioData.size) {
-                val lowByte = audioData[i].toInt() and 0xFF
-                val highByte = audioData[i + 1].toInt() and 0xFF
-                val sample = lowByte or (highByte shl 8)
-                var signedSample = if (sample and 0x8000 != 0) sample - 0x10000 else sample
-
-                // 去直流偏移
-                signedSample -= dcOffset
-
-                // 应用适度增益（2倍），但避免削波
-                signedSample = (signedSample * 2).coerceIn(-32767, 32767)
-
-                // 转回无符号16位
-                val unsignedSample = if (signedSample < 0) signedSample + 0x10000 else signedSample
-
+        
+        if (samples.isEmpty()) return audioData
+        
+        // 查找第一个有意义的音频数据（非零且振幅足够）
+        var startIndex = 0
+        val minAmplitude = 100  // 最小有效振幅
+        for (i in samples.indices) {
+            if (kotlin.math.abs(samples[i].toInt()) > minAmplitude) {
+                startIndex = i
+                break
+            }
+        }
+        
+        // 如果找到有效开始位置，去掉前面的静音
+        val processedSamples = if (startIndex > 0) {
+            logger.debug("检测到前置静音${startIndex}样本，将其移除")
+            samples.subList(startIndex, samples.size)
+        } else {
+            samples
+        }
+        
+        // 应用增益（适度增强信号）
+        val gainFactor = 1.5  // 1.5倍增益
+        val processedWithGain = processedSamples.map { sample ->
+            val amplified = (sample.toInt() * gainFactor).toInt()
+            amplified.coerceIn(-32767, 32767).toShort()
+        }
+        
+        // 转换回字节数组
+        val finalSize = minOf(enhanced.size, processedWithGain.size * 2)
+        for (i in 0 until finalSize step 2) {
+            val sampleIndex = i / 2
+            if (sampleIndex < processedWithGain.size) {
+                val sample = processedWithGain[sampleIndex].toInt()
+                val unsignedSample = if (sample < 0) sample + 0x10000 else sample
                 enhanced[i] = (unsignedSample and 0xFF).toByte()
-                enhanced[i + 1] = ((unsignedSample shr 8) and 0xFF).toByte()
+                if (i + 1 < enhanced.size) {
+                    enhanced[i + 1] = ((unsignedSample shr 8) and 0xFF).toByte()
+                }
             }
         }
-
+        
+        // 如果处理后的数据比原数据短，用静音填充剩余部分
+        for (i in finalSize until enhanced.size) {
+            enhanced[i] = 0
+        }
+        
         return enhanced
     }
 

@@ -60,7 +60,7 @@ void soxr_quality_spec_create(unsigned quality, SoxWrapper* wrapper) {
 int soxr_wrapper_create_resampler(
         SoxWrapper* wrapper,
         double input_rate,
-        double output_rate) {
+        double output_rate,unsigned channels) {
 
     if (!wrapper) {
         fprintf(stderr, "Invalid SoxWrapper\n");
@@ -78,7 +78,7 @@ int soxr_wrapper_create_resampler(
 
     // 使用规格创建重采样器
     wrapper->soxr = soxr_create(
-            input_rate, output_rate, 1,  // 采样率和通道数
+            input_rate, output_rate, channels,  // 采样率和通道数
             &error,
             wrapper->io_spec,
             wrapper->quality_spec,
@@ -108,10 +108,16 @@ size_t soxr_wrapper_process(
     size_t done = 0;
     soxr_error_t error;
 
+    // 确保输入参数有效性
+    if (!in_data || in_size == 0 || !out_data || out_size == 0) {
+        fprintf(stderr, "Invalid input parameters to soxr_wrapper_process\n");
+        return 0;
+    }
+
     error = soxr_process(
             wrapper->soxr,
-            in_data, in_size / sizeof(short), NULL,
-            out_data, out_size / sizeof(short), &done
+            in_data, in_size, NULL,         // 输入：short数据，样本数
+            out_data, out_size, &done       // 输出：float数据，样本数
     );
 
     if (error) {
@@ -137,10 +143,16 @@ size_t soxr_wrapper_process_float_to_short(
     size_t done = 0;
     soxr_error_t error;
 
+    // 确保输入参数有效性
+    if (!in_data || in_size == 0 || !out_data || out_size == 0) {
+        fprintf(stderr, "Invalid input parameters to soxr_wrapper_process_float_to_short\n");
+        return 0;
+    }
+
     error = soxr_process(
             wrapper->soxr,
-            in_data, in_size / sizeof(float), NULL,
-            out_data, out_size / sizeof(short), &done
+            in_data, in_size, NULL,         // 输入：float数据，样本数
+            out_data, out_size, &done       // 输出：short数据，样本数
     );
 
     if (error) {
@@ -165,6 +177,12 @@ size_t soxr_wrapper_process_float_to_float(
 
     size_t done = 0;
     soxr_error_t error;
+
+    // 确保输入参数有效性
+    if (!in_data || in_size == 0 || !out_data || out_size == 0) {
+        fprintf(stderr, "Invalid input parameters to soxr_wrapper_process_float_to_float\n");
+        return 0;
+    }
 
     error = soxr_process(
             wrapper->soxr,

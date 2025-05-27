@@ -395,7 +395,7 @@ class VoiceAssistant(
      * 设置回声消除功能开关
      * @param enabled 是否启用回声消除
      */
-    fun setEchoCancellationEnabled(enabled: Boolean) {
+    suspend fun setEchoCancellationEnabled(enabled: Boolean) {
         try {
             // 使用回调音频处理器管理的APM
             setApmEchoCancellation(enabled)
@@ -410,7 +410,7 @@ class VoiceAssistant(
     /**
      * 内部方法：设置所有APM实例的回声消除状态
      */
-    private fun setApmEchoCancellation(enabled: Boolean) {
+    private suspend fun setApmEchoCancellation(enabled: Boolean) {
         try {
             // 使用WebRtcApmSingleton全局设置
             val singleton = WebRtcApmSingleton

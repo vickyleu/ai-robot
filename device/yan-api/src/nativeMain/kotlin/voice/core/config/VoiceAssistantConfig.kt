@@ -16,10 +16,15 @@ data class VoiceAssistantConfig(
     val keywords: List<String> = listOf("小度", "你好", "嗨", "在吗", "小兔子"),
     val keywordSensitivity: Float = 0.7f,
     
-    // 语音识别设置
-    val sampleRate: Int = AudioDefaults.INPUT_DEVICE_SAMPLE_RATE,
-    val outputSampleRate: Int = AudioDefaults.OUTPUT_DEVICE_SAMPLE_RATE,
-    val outChannels: Int = AudioDefaults.OUTPUT_DEVICE_CHANNELS,
+    // 音频配置 - 使用AudioDefaults预定义格式
+    val inputFormat: AudioDefaults.AudioFormat = AudioDefaults.Formats.INPUT_DEVICE,
+    val outputFormat: AudioDefaults.AudioFormat = AudioDefaults.Formats.OUTPUT_DEVICE,
+    
+    // 向后兼容的属性
+    val sampleRate: Int = inputFormat.sampleRate,
+    val channels: Int = inputFormat.channels,
+    val outputSampleRate: Int = outputFormat.sampleRate,
+    val outChannels: Int = outputFormat.channels,
 
     // 超时设置（毫秒）
     val keywordTimeout: Long = 10000L,

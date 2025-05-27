@@ -55,17 +55,21 @@ fun initSignalHandler() {
  */
 fun runVoiceDemo() {
     logger.info("启动语音助手Demo...")
-    // 全局一次性初始化所有底层资源
-    try {
-        AudioApplication.initialize()
-    } catch (e: Exception) {
-        logger.warn("AudioApplication.initialize() 失败: ${e.message}")
-    }
-    println("启动中，请稍候...")
-    
+
     // 创建主协程作用域
     mainScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-    
+
+    mainScope!!.launch {
+        // 全局一次性初始化所有底层资源
+        try {
+            AudioApplication.initialize()
+        } catch (e: Exception) {
+            logger.warn("AudioApplication.initialize() 失败: ${e.message}")
+        }
+        println("启动中，请稍候...")
+
+    }
+
     try {
         // 设置语音助手配置
         val config = VoiceAssistantConfig()

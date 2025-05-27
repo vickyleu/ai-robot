@@ -22,7 +22,7 @@ object AudioApplication {
      * 初始化应用程序
      * 注册资源管理器，确保程序退出时释放资源
      */
-    fun initialize() {
+    suspend fun initialize() {
         if (isInitialized) return
 
         // 注册退出清理
@@ -83,7 +83,7 @@ object AudioApplication {
     /**
      * 预热音频处理资源
      */
-    private fun preloadResources() {
+    private suspend fun preloadResources() {
         println("[INFO] 预热音频处理资源...")
 
         try {

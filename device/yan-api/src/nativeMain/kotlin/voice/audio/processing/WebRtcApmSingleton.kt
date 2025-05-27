@@ -39,7 +39,7 @@ object WebRtcApmSingleton {
      * @param forceRecreate 如果参数不匹配是否重新创建
      * @return WebRtcApm实例或null
      */
-    fun getInstance(
+    suspend fun getInstance(
         sampleRate: Int = AudioDefaults.INPUT_DEVICE_SAMPLE_RATE,
         channels: Int = AudioDefaults.INPUT_DEVICE_CHANNELS,
         forceRecreate: Boolean = false
@@ -107,7 +107,7 @@ object WebRtcApmSingleton {
      * @param channels 通道数
      * @return WebRtcApm实例或null
      */
-    fun getInstanceThreadSafe(
+    suspend fun getInstanceThreadSafe(
         sampleRate: Int = AudioDefaults.INPUT_DEVICE_SAMPLE_RATE,
         channels: Int = AudioDefaults.INPUT_DEVICE_CHANNELS
     ): WebRtcApm? {
@@ -155,7 +155,7 @@ object WebRtcApmSingleton {
      * @param channels 通道数
      * @return 新创建的WebRtcApm实例或null
      */
-    private fun createNewInstance(sampleRate: Int, channels: Int): WebRtcApm? {
+    private suspend fun createNewInstance(sampleRate: Int, channels: Int): WebRtcApm? {
         try {
             val newInstance = WebRtcApm()
             if (newInstance.initialize(sampleRate, channels)) {

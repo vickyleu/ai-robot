@@ -2,6 +2,7 @@
 
 package voice.acquisition.portaudio
 
+import com.airobot.alsainterop.usleep
 import com.airobot.portaudiointerop.PaAlsaStreamInfo
 import com.airobot.portaudiointerop.PaStreamCallbackTimeInfo
 import com.airobot.portaudiointerop.PaStreamParameters
@@ -25,6 +26,7 @@ import com.airobot.portaudiointerop.paNoError
 import com.airobot.portaudiointerop.paOutputUnderflowed
 import com.airobot.portaudiointerop.paPrimingOutput
 import com.airobot.portaudiointerop.paUseHostApiSpecificDeviceSpecification
+import kotlinx.atomicfu.atomic
 import kotlinx.atomicfu.locks.SynchronizedObject
 import kotlinx.atomicfu.locks.synchronized
 import kotlinx.cinterop.COpaquePointerVar
@@ -83,6 +85,12 @@ class PortAudioDevice private constructor() : AudioDevice {
 
     // 设备级别的互斥锁
     private val deviceMutex = Mutex()
+
+
+    // 播放状态控制 - 使用Kotlin Native的原子类型
+    private val isPlaybackActive = atomic(false)
+    private val isRecordingActive = atomic(false)
+
     // 单例实现
     companion object {
         @Volatile
@@ -443,6 +451,8 @@ class PortAudioDevice private constructor() : AudioDevice {
                     inputStreamActive = false
                     outputStreamActive = false
                 }
+            }finally {
+                cleanupBufferPool()
             }
         }
     }
@@ -456,7 +466,7 @@ class PortAudioDevice private constructor() : AudioDevice {
          * @param data 音频数据
          * @param frameCount 帧数
          */
-        fun onAudioInput(data: ShortArray, frameCount: Int)
+        suspend fun onAudioInput(audioData: ShortArray, frameCount: Int)
     }
 
     // 音频回调相关
@@ -580,7 +590,7 @@ class PortAudioDevice private constructor() : AudioDevice {
      * @param safeAudioData 安全的Kotlin ShortArray
      * @param frameCount 帧数
      */
-    private fun onSafeAudioInput(safeAudioData: ShortArray, frameCount: Int) {
+    private suspend fun onSafeAudioInput(safeAudioData: ShortArray, frameCount: Int) {
         // 获取回调引用
         val callback = synchronized(callbackLock) { audioCallback }
         if (callback != null) {
@@ -912,108 +922,333 @@ class PortAudioDevice private constructor() : AudioDevice {
             }
         }
     }
-    
+    // 内存池管理 - 使用Kotlin Native兼容的方式
+    private val nativeBufferPool = mutableMapOf<Int, CPointer<ShortVar>>()
+    private val bufferReuseCount = mutableMapOf<Int, Int>()
+    private val poolAccessLock = SynchronizedObject()
+    private val maxPoolSize = 3 // 减少缓存大小避免内存碎片
+    private val maxBufferSize = 48000 // 降低单次分配上限
+    private fun getOrCreateNativeBuffer(size: Int): CPointer<ShortVar>? {
+        // 检查大小限制
+        if (size > maxBufferSize) {
+            logger.error("请求的缓冲区大小过大: $size, 最大允许: $maxBufferSize")
+            return null
+        }
+
+        return synchronized(poolAccessLock) {
+            try {
+                val cached = nativeBufferPool[size]
+                if (cached != null) {
+                    // 增加重用计数
+                    bufferReuseCount[size] = (bufferReuseCount[size] ?: 0) + 1
+
+                    // 如果重用次数过多，重新分配以避免碎片化
+                    if (bufferReuseCount[size]!! > 20) {
+                        try {
+                            nativeHeap.free(cached.rawValue)
+                            nativeBufferPool.remove(size)
+                            bufferReuseCount.remove(size)
+                            logger.debug("重新分配缓冲区以避免碎片化: $size")
+                        } catch (e: Exception) {
+                            logger.warn("释放旧缓冲区失败: ${e.message}")
+                        }
+                        null
+                    } else {
+                        cached
+                    }
+                } else {
+                    if (nativeBufferPool.size >= maxPoolSize) {
+                        clearOldestBuffer()
+                    }
+
+                    // 检查内存健康状况
+                    if (!checkMemoryHealth()) {
+                        logger.warn("内存状况不佳，拒绝分配新缓冲区")
+                        return null
+                    }
+
+                    val newBuffer = nativeHeap.allocArray<ShortVar>(size)
+                    nativeBufferPool[size] = newBuffer
+                    bufferReuseCount[size] = 1
+                    newBuffer
+                }
+            } catch (e: Exception) {
+                logger.error("缓冲区管理失败: ${e.message}")
+                null
+            }
+        }
+    }
+
     /**
      * 播放音频数据
      * @param audioData 音频数据
      * @param length 数据长度
      * @return 播放是否成功
      */
-    override fun play(audioData: ByteArray, length: Int): Boolean {
-        // 确保所有播放操作都在synchronized块内
-        return synchronized(portAudioLock) {
-            // 首先尝试使用PortAudio播放
-            var portAudioSuccess = false
-            
-            if (_deviceState.value != AudioDeviceState.ACTIVE) {
-                logger.warn("音频设备未处于活动状态，无法播放音频数据")
-            } else {
-                // 若输出流未打开，尝试打开
-                if (outputStreamPtr.value == null) {
-                    // 安全检查：确保不在打开输出流时尝试播放
-                    if (outputStreamActive) {
-                        logger.warn("输出流正在打开中，暂时无法播放音频")
-                    } else {
-                        logger.info("输出流不存在，尝试打开新的输出流")
-                        val success = runBlocking {
-                            openOutputStream()
-                        }
-                        if (!success) {
-                            logger.error("无法打开输出流，播放失败")
-                        } else {
-                            logger.info("成功打开输出流")
-                        }
-                    }
-                }
+    /**
+     * 线程安全的缓冲区获取
+     */
 
-                // 如果流成功打开，尝试写入数据
-                if (outputStreamPtr.value != null) {
-                    try {
-                        // 转换数据格式
-                        val shortArray = voice.util.AudioUtils.byteArrayToShortArray(audioData.copyOfRange(0, length))
-                        
-                        // 记录音频信号强度
-                        val maxAmplitude = shortArray.maxOfOrNull { kotlin.math.abs(it.toInt()) } ?: 0
-                        logger.info("正在播放音频数据: ${length}字节, 最大振幅: $maxAmplitude, 样本数: ${shortArray.size}")
-                        
-                        // 检查输出流状态
-                        if (outputStreamPtr.value == null) {
-                            logger.error("输出流为空，无法播放")
-                            return@synchronized false
-                        }
-                        
-                        // 处理音频数据格式转换
-                        val outputChannels = AudioDefaults.OUTPUT_DEVICE_CHANNELS
-                        val processedShortArray = if (shortArray.size % outputChannels != 0) {
-                            // 如果数据不是双声道格式，需要转换
-                            if (outputChannels == 2) {
-                                // 单声道转双声道：每个样本复制到左右声道
-                                val stereoArray = ShortArray(shortArray.size * 2)
-                                for (i in shortArray.indices) {
-                                    stereoArray[i * 2] = shortArray[i]     // 左声道
-                                    stereoArray[i * 2 + 1] = shortArray[i] // 右声道
-                                }
-                                stereoArray
-                            } else {
-                                // 直接使用原数据
-                                shortArray
-                            }
-                        } else {
-                            // 已经是正确的双声道格式，直接使用
-                            shortArray
-                        }
-                        
-                        val nativeBuf = nativeHeap.allocArray<ShortVar>(processedShortArray.size)
-                        for (i in processedShortArray.indices) nativeBuf[i] = processedShortArray[i]
-                        val framesToWrite = processedShortArray.size / outputChannels
-                        
-                        logger.info("准备写入音频: ${processedShortArray.size}个样本, ${framesToWrite}帧, 通道数: ${outputChannels}")
-
-                        val written = writeAudio(nativeBuf, framesToWrite)
-                        nativeHeap.free(nativeBuf.rawValue)
-
-                        if (written == framesToWrite) {
-                            logger.info("成功写入 $written 帧音频数据")
-                            portAudioSuccess = true
-                        } else {
-                            logger.error("写入音频数据不完整: $written / $framesToWrite")
-                        }
-                    } catch (e: Exception) {
-                        logger.error("写入音频数据异常: ${e.message}")
-                    }
+    /**
+     * 清理最旧的缓冲区
+     */
+    private fun clearOldestBuffer() {
+        val oldestEntry = bufferReuseCount.maxByOrNull { it.value }
+        oldestEntry?.let { (size, _) ->
+            nativeBufferPool[size]?.let { buffer ->
+                try {
+                    nativeHeap.free(buffer.rawValue)
+                    nativeBufferPool.remove(size)
+                    bufferReuseCount.remove(size)
+                    logger.debug("清理最旧缓冲区: $size")
+                } catch (e: Exception) {
+                    logger.warn("清理缓冲区失败: ${e.message}")
                 }
             }
-            
-            // 如果PortAudio播放失败，记录错误但不创建临时文件
-            if (!portAudioSuccess) {
-                logger.error("PortAudio播放失败，无法播放音频数据")
-                return false
-            }
-            
-            return portAudioSuccess
         }
     }
-    
+
+    /**
+     * 内存健康检查
+     */
+    private fun checkMemoryHealth(): Boolean {
+        return try {
+            val testSize = 1024
+            val testBuffer = nativeHeap.allocArray<ShortVar>(testSize)
+            nativeHeap.free(testBuffer.rawValue)
+            true
+        } catch (e: Exception) {
+            logger.warn("内存健康检查失败: ${e.message}")
+            false
+        }
+    }
+
+    /**
+     * 清理所有缓冲区池
+     */
+    private fun cleanupBufferPool() {
+        synchronized(poolAccessLock) {
+            try {
+                nativeBufferPool.values.forEach { buffer ->
+                    try {
+                        nativeHeap.free(buffer.rawValue)
+                    } catch (e: Exception) {
+                        logger.warn("释放单个缓冲区失败: ${e.message}")
+                    }
+                }
+                nativeBufferPool.clear()
+                bufferReuseCount.clear()
+                logger.info("缓冲区池清理完成")
+            } catch (e: Exception) {
+                logger.error("清理缓冲区池失败: ${e.message}")
+            }
+        }
+    }
+
+    /**
+     * 安全的音频播放方法
+     */
+    override fun play(audioData: ByteArray, length: Int): Boolean {
+        // 防止并发播放
+        if (!isPlaybackActive.compareAndSet(false, true)) {
+            logger.warn("播放正在进行中，跳过当前请求")
+            return false
+        }
+
+        return try {
+            synchronized(portAudioLock) {
+                playInternal(audioData, length)
+            }
+        } finally {
+            isPlaybackActive.value = false
+        }
+    }
+
+    /**
+     * 内部播放实现
+     */
+    private fun playInternal(audioData: ByteArray, length: Int): Boolean {
+        if (_deviceState.value != AudioDeviceState.ACTIVE) {
+            logger.warn("音频设备未处于活动状态")
+            return false
+        }
+
+        // 验证数据
+        if (length <= 0 || length > audioData.size || length > maxBufferSize * 2) {
+            logger.error("无效的音频数据长度: $length")
+            return false
+        }
+
+        // 如果输入流活跃，警告但继续
+        if (synchronized(streamStateLock) { inputStreamActive }) {
+            logger.warn("输入流活跃，可能影响播放质量")
+        }
+
+        // 确保输出流存在
+        if (outputStreamPtr.value == null) {
+            if (synchronized(streamStateLock) { outputStreamActive }) {
+                logger.warn("输出流正在打开中，暂时无法播放音频")
+                return false
+            } else {
+                logger.info("输出流不存在，尝试打开新的输出流")
+                val success = runBlocking { openOutputStream() }
+                if (!success) {
+                    logger.error("无法打开输出流，播放失败")
+                    return false
+                }
+            }
+        }
+
+        return try {
+            playAudioSafely(audioData, length)
+        } catch (e: OutOfMemoryError) {
+            logger.error("内存不足，清理缓存后重试")
+            cleanupBufferPool()
+            // 尝试简化播放
+            playAudioSimple(audioData, length)
+        } catch (e: Exception) {
+            logger.error("播放失败: ${e.message}")
+            false
+        }
+    }
+
+    /**
+     * 安全的音频播放实现
+     */
+    private fun playAudioSafely(audioData: ByteArray, length: Int): Boolean {
+        // 转换音频数据
+        val shortArray = voice.util.AudioUtils.byteArrayToShortArray(
+            audioData.copyOfRange(0, length)
+        )
+
+        if (shortArray.isEmpty()) {
+            logger.warn("转换后音频数据为空")
+            return false
+        }
+
+        val maxAmplitude = shortArray.maxOfOrNull { kotlin.math.abs(it.toInt()) } ?: 0
+        logger.info("播放音频: ${length}字节, 振幅: $maxAmplitude, 样本: ${shortArray.size}")
+
+        // 处理声道转换 - 播放的音频数据来自APM处理后，通常是单声道16kHz
+        val outputChannels = AudioDefaults.OUTPUT_DEVICE_CHANNELS
+        // 根据数据来源确定输入声道数：如果是从processAndResample来的，应该是48kHz/2ch
+        // 但如果是其他来源，可能不同。这里需要根据实际情况判断
+        val inputChannels = if (shortArray.size > 0) {
+            // 简单启发式判断：如果数据长度与48kHz/2ch的预期不符，可能是其他格式
+            // 更安全的做法是在调用时明确传入格式信息
+            AudioDefaults.OUTPUT_DEVICE_CHANNELS // 假设播放数据已经是输出格式
+        } else {
+            1 // 默认单声道
+        }
+        val processedArray = processAudioChannels(shortArray, inputChannels, outputChannels)
+
+        // 获取缓冲区
+        val nativeBuffer = getOrCreateNativeBuffer(processedArray.size)
+            ?: return playAudioSimple(audioData, length)
+
+        // 复制数据
+        for (i in processedArray.indices) {
+            nativeBuffer[i] = processedArray[i]
+        }
+
+        val framesToWrite = processedArray.size / outputChannels
+        logger.debug("写入音频: ${processedArray.size}样本, ${framesToWrite}帧")
+
+        val written = writeAudio(nativeBuffer, framesToWrite)
+
+        return if (written == framesToWrite) {
+            logger.info("成功写入 $written 帧")
+            true
+        } else {
+            logger.error("写入不完整: $written/$framesToWrite")
+            false
+        }
+    }
+
+    /**
+     * 简化播放方法 - 用于内存不足时的备用方案
+     */
+    private fun playAudioSimple(audioData: ByteArray, length: Int): Boolean {
+        return try {
+            val chunkSize = 4096 // 使用更小的块
+            var offset = 0
+            var success = true
+
+            while (offset < length && success) {
+                val currentChunk = minOf(chunkSize, length - offset)
+                val chunk = audioData.copyOfRange(offset, offset + currentChunk)
+
+                success = playChunkDirect(chunk)
+                offset += currentChunk
+
+                if (offset < length) {
+                    usleep(5u) // 给系统时间处理
+                }
+            }
+            success
+        } catch (e: Exception) {
+            logger.error("简化播放失败: ${e.message}")
+            false
+        }
+    }
+
+    /**
+     * 直接播放音频块
+     */
+    private fun playChunkDirect(chunk: ByteArray): Boolean {
+        return try {
+            val shortArray = voice.util.AudioUtils.byteArrayToShortArray(chunk)
+            val outputChannels = AudioDefaults.OUTPUT_DEVICE_CHANNELS
+            // 播放时假设数据已经是输出格式
+            val inputChannels = AudioDefaults.OUTPUT_DEVICE_CHANNELS
+            val processedArray = processAudioChannels(shortArray, inputChannels, outputChannels)
+
+            // 直接分配，用完立即释放
+            val buffer = nativeHeap.allocArray<ShortVar>(processedArray.size)
+            try {
+                for (i in processedArray.indices) {
+                    buffer[i] = processedArray[i]
+                }
+                val frames = processedArray.size / outputChannels
+                writeAudio(buffer, frames) == frames
+            } finally {
+                nativeHeap.free(buffer.rawValue)
+            }
+        } catch (e: Exception) {
+            logger.error("直接播放块失败: ${e.message}")
+            false
+        }
+    }
+
+    /**
+     * 处理音频声道转换
+     */
+    private fun processAudioChannels(input: ShortArray, inputChannels: Int, targetChannels: Int): ShortArray {
+        return when {
+            inputChannels == targetChannels -> {
+                // 声道数相同，直接返回
+                input
+            }
+            inputChannels == 1 && targetChannels == 2 -> {
+                // 单声道转双声道：每个样本复制为左右声道
+                ShortArray(input.size * 2) { i ->
+                    input[i / 2]
+                }
+            }
+            inputChannels == 2 && targetChannels == 1 -> {
+                // 双声道转单声道：取左右声道平均值
+                ShortArray(input.size / 2) { i ->
+                    val left = input[i * 2].toInt()
+                    val right = input[i * 2 + 1].toInt()
+                    ((left + right) / 2).coerceIn(-32767, 32767).toShort()
+                }
+            }
+            else -> {
+                logger.warn("不支持的声道转换: ${inputChannels}ch -> ${targetChannels}ch，返回原始数据")
+                input
+            }
+        }
+    }
     /**
      * 异步播放音频数据
      * @param audioData 音频数据
@@ -1074,20 +1309,48 @@ class PortAudioDevice private constructor() : AudioDevice {
      */
     private suspend fun playShortArray(buffer: ShortArray) {
         try {
+            val outputChannels = AudioDefaults.OUTPUT_DEVICE_CHANNELS
             // 分批次播放数据
-            val chunkSize = 1024
-            val tempBuffer = nativeHeap.allocArray<ShortVar>(chunkSize)
+            val chunkSizeSamples = 1024 * outputChannels  // 确保是完整的帧
+            val tempBuffer = nativeHeap.allocArray<ShortVar>(chunkSizeSamples)
 
             var offset = 0
             var shouldContinue = true
             while (offset < buffer.size && _playbackState.value == PlaybackState.PLAYING && shouldContinue) {
-                val remainingFrames = buffer.size - offset
-                val framesToPlay = minOf(chunkSize, remainingFrames)
+                val remainingSamples = buffer.size - offset
+                val samplesToPlay = minOf(chunkSizeSamples, remainingSamples)
+                
+                // 确保样本数是通道数的倍数（完整的帧）
+                val actualSamplesToPlay = (samplesToPlay / outputChannels) * outputChannels
+                if (actualSamplesToPlay == 0 && remainingSamples > 0) {
+                    // 如果剩余样本不足一帧，补零到一帧
+                    val framesToPlay = 1
+                    for (i in 0 until outputChannels) {
+                        tempBuffer[i] = if (offset + i < buffer.size) buffer[offset + i] else 0
+                    }
+                    
+                    synchronized(portAudioLock) {
+                        if (outputStreamPtr.value == null) {
+                            logger.error("输出流已关闭，播放中断")
+                            shouldContinue = false
+                        } else {
+                            val result = Pa_WriteStream(outputStreamPtr.value, tempBuffer, framesToPlay.toUInt())
+                            if (result != paNoError && result != paOutputUnderflowed) {
+                                logger.error("播放音频失败: ${Pa_GetErrorText(result)?.toKString()}")
+                                shouldContinue = false
+                            }
+                        }
+                    }
+                    break // 处理完最后的不完整帧
+                }
 
                 // 复制数据到临时缓冲区
-                for (i in 0 until framesToPlay) {
+                for (i in 0 until actualSamplesToPlay) {
                     tempBuffer[i] = buffer[offset + i]
                 }
+
+                // 计算实际的帧数
+                val framesToPlay = actualSamplesToPlay / outputChannels
 
                 // 写入音频数据
                 synchronized(portAudioLock) {
@@ -1104,7 +1367,7 @@ class PortAudioDevice private constructor() : AudioDevice {
                 }
 
                 if (shouldContinue) {
-                    offset += framesToPlay
+                    offset += actualSamplesToPlay
 
                     // 短暂延迟，避免过度占用CPU
                     delay(5)
@@ -1185,6 +1448,9 @@ class PortAudioDevice private constructor() : AudioDevice {
         runBlocking {
             deviceMutex.withLock {
                 try {
+                    // 清理缓冲区池
+                    cleanupBufferPool()
+
                     // 关闭流
                     closeStreams()
 
@@ -1202,6 +1468,9 @@ class PortAudioDevice private constructor() : AudioDevice {
                         outputStreamActive = false
                     }
 
+                    isPlaybackActive.value = false
+                    isRecordingActive.value = false
+
                     // 终止PortAudio
                     if (portAudioInitialized) {
                         try {
@@ -1215,19 +1484,15 @@ class PortAudioDevice private constructor() : AudioDevice {
 
                     // 安全释放内存
                     try {
-                        if (inputStreamPtr.value != null) {
-                            nativeHeap.free(inputStreamPtr.rawPtr)
-                            logger.info("已释放inputStreamPtr内存")
-                        }
+                        nativeHeap.free(inputStreamPtr.rawPtr)
+                        logger.info("已释放inputStreamPtr内存")
                     } catch (e: Exception) {
                         logger.error("释放inputStreamPtr内存时出错: ${e.message}")
                     }
-                    
+
                     try {
-                        if (outputStreamPtr.value != null) {
-                            nativeHeap.free(outputStreamPtr.rawPtr)
-                            logger.info("已释放outputStreamPtr内存")
-                        }
+                        nativeHeap.free(outputStreamPtr.rawPtr)
+                        logger.info("已释放outputStreamPtr内存")
                     } catch (e: Exception) {
                         logger.error("释放outputStreamPtr内存时出错: ${e.message}")
                     }

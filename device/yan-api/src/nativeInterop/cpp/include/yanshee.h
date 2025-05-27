@@ -34,7 +34,7 @@ void soxr_quality_spec_create(unsigned quality, SoxWrapper *wrapper);
 int soxr_wrapper_create_resampler(
         SoxWrapper *wrapper,
         double input_rate,
-        double output_rate);
+        double output_rate,unsigned channels);
 
 // 执行重采样
 size_t soxr_wrapper_process(
