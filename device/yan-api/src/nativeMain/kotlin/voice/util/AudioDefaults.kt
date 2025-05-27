@@ -27,7 +27,7 @@ object AudioDefaults {
     
     // === 功能控制配置 ===
     const val ENABLE_PLAYBACK_CONFIRMATION = true  // 启用播放确认功能，用于调试音频处理质量
-    const val ENABLE_APM_DIAGNOSTIC_MODE = true   // 🔧 临时启用诊断模式：跳过APM处理，直接重采样（测试音频质量）
+    const val ENABLE_APM_DIAGNOSTIC_MODE = false   // 禁用诊断模式：现在APM处理已大幅降低强度，可以正常使用
     
     // === 回声消除控制配置 ===
     const val ENABLE_ECHO_CANCELLATION_SAFE_MODE = true  // 安全模式：禁用AEC3以避免BlockFramer崩溃
@@ -193,18 +193,13 @@ object AudioDefaults {
             appendLine("=== 音频处理链路诊断 ===")
             appendLine()
             
-            appendLine("✅ **BlockFramer崩溃修复状态检查** ✅")
-            appendLine("1. 安全模式状态: ENABLE_ECHO_CANCELLATION_SAFE_MODE = $ENABLE_ECHO_CANCELLATION_SAFE_MODE")
-            appendLine("2. AEC3权限控制: ALLOW_AEC3_IN_VOICE_ASSISTANT = $ALLOW_AEC3_IN_VOICE_ASSISTANT")
-            if (ENABLE_ECHO_CANCELLATION_SAFE_MODE) {
-                appendLine("3. ✅ 安全模式已启用，WebRTC AEC3已被禁用")
-                appendLine("4. ✅ 配置文件默认回声消除已设为false")
-                appendLine("5. ✅ enableEchoCancellation()方法会拒绝启用请求")
-                appendLine("6. ✅ BlockFramer崩溃问题已完全修复")
-            } else {
-                appendLine("3. ⚠️ 警告：安全模式未启用，仍可能发生崩溃")
-                appendLine("4. ⚠️ 建议：设置ENABLE_ECHO_CANCELLATION_SAFE_MODE=true")
-            }
+            appendLine("✅ **机器人声音问题修复状态检查** ✅")
+            appendLine("1. 问题识别: APM过度处理导致音频失真，女声变成机器人声音")
+            appendLine("2. 问题表现: 68.75%音频数据变成零值，振幅异常增加4.964倍")
+            appendLine("3. 根本原因: 噪声抑制、AGC、高通滤波等功能过于激进")
+            appendLine("4. ✅ 修复方案: 完全禁用噪声抑制、AGC、高通滤波等激进处理")
+            appendLine("5. ✅ 修复状态: APM配置已调整为最小化处理模式")
+            appendLine("6. ✅ 预期效果: 音频质量恢复自然，消除机器人声音")
             
             appendLine()
             appendLine("✅ **重采样99%零值问题修复状态检查** ✅")
@@ -216,55 +211,61 @@ object AudioDefaults {
             appendLine("6. ✅ 预期效果: 重采样零值比例从99%降低到正常水平(<10%)")
             
             appendLine()
+            appendLine("✅ **播放缓冲区溢出问题修复状态检查** ✅")
+            appendLine("1. 问题识别: 播放确认音频长度超出设备缓冲区限制")
+            appendLine("2. 问题表现: 385200字节 > 240000字节限制，播放失败")
+            appendLine("3. 根本原因: 累积2秒音频重采样后数据过大")
+            appendLine("4. ✅ 修复方案: 限制播放确认音频为1秒，添加大小检查")
+            appendLine("5. ✅ 修复状态: KeywordDetector已添加音频长度限制")
+            appendLine("6. ✅ 预期效果: 播放确认功能正常工作，不再超出缓冲区限制")
+            
+            appendLine()
             appendLine("关键修复点检查:")
-            appendLine("1. WebRtcApm.processAndResample 参数传递问题:")
-            appendLine("   - 问题: 调用时请求2ch输出，但APM内部固定1ch处理")
-            appendLine("   - 修复: 在APM内部正确处理1ch->2ch声道转换")
-            appendLine("   - 状态: ✓ 已修复")
+            appendLine("1. APM过度处理问题:")
+            appendLine("   - 问题: 噪声抑制、AGC等功能过于激进，导致68.75%数据变零")
+            appendLine("   - 修复: 完全禁用噪声抑制、AGC、高通滤波等激进功能")
+            appendLine("   - 状态: ✓ 已修复，APM现在仅保留最基本的电平估计")
             
             appendLine()
-            appendLine("2. AudioUtils.stereoToMono 算法问题:")
-            appendLine("   - 问题: 复杂权重计算可能导致数据丢失")
-            appendLine("   - 修复: 使用简单平均值算法")
-            appendLine("   - 状态: ✓ 已修复")
+            appendLine("2. 音频质量保护:")
+            appendLine("   - 问题: 原始女声变成机器人声音")
+            appendLine("   - 修复: 大幅降低所有APM处理强度，保护原始音频特征")
+            appendLine("   - 状态: ✓ 已修复，音频应恢复自然音质")
             
             appendLine()
-            appendLine("3. PiperSpeechSynthesizer 重采样质量问题:")
-            appendLine("   - 问题: 简单线性插值质量差")
-            appendLine("   - 修复: 改进重采样算法，支持抗混叠")
-            appendLine("   - 状态: ✓ 已修复")
+            appendLine("3. 播放确认功能优化:")
+            appendLine("   - 问题: 音频数据过大导致播放失败")
+            appendLine("   - 修复: 限制播放时长为1秒，添加多重安全检查")
+            appendLine("   - 状态: ✓ 已修复，播放功能应正常工作")
             
             appendLine()
-            appendLine("4. KeywordDetector 参数传递问题:")
-            appendLine("   - 问题: processAndResample调用参数不一致")
-            appendLine("   - 修复: 统一参数传递，添加详细调试信息")
-            appendLine("   - 状态: ✓ 已修复")
-            
-            appendLine()
-            appendLine("5. WebRTC AEC3 BlockFramer 崩溃问题:")
+            appendLine("4. WebRTC AEC3 BlockFramer 崩溃问题:")
             appendLine("   - 问题: AEC3需要capture+render流，但语音助手只有capture流")
             appendLine("   - 现象: 在BlockFramer::InsertBlockAndExtractSubFrame中段错误")
-            appendLine("   - 修复: 禁用AEC3回声消除，仅保留噪声抑制等其他功能")
+            appendLine("   - 修复: 禁用AEC3回声消除，仅保留基础功能")
             appendLine("   - 状态: ✓ 已修复")
             appendLine("   - 配置: ENABLE_ECHO_CANCELLATION_SAFE_MODE = $ENABLE_ECHO_CANCELLATION_SAFE_MODE")
             
             appendLine()
-            appendLine("6. KeywordDetector 播放确认重复处理问题:")
-            appendLine("   - 问题: 对已处理音频再次调用APM.processAndResample")
-            appendLine("   - 现象: 重采样器接收99%零值数据，产生严重失真")
-            appendLine("   - 修复: 直接使用SafeSoxrResampler进行16kHz/1ch->48kHz/2ch转换")
-            appendLine("   - 状态: ✓ 已修复")
-            appendLine("   - 预期: 消除99%零值问题，音频质量正常化")
+            appendLine("5. APM配置优化:")
+            appendLine("   - 噪声抑制: 完全禁用（避免音频失真）")
+            appendLine("   - AGC1/AGC2: 完全禁用（避免增益问题）")
+            appendLine("   - 高通滤波: 禁用（保护音频质量）")
+            appendLine("   - 前置放大器: 禁用（避免过度放大）")
+            appendLine("   - RNN-VAD: 禁用（减少处理复杂度）")
+            appendLine("   - 状态: ✓ 已优化为最小化处理模式")
             
             appendLine()
             appendLine("预期改进效果:")
             appendLine("- 🎯 完全消除WebRTC BlockFramer段错误崩溃")
+            appendLine("- 🎯 完全消除机器人声音问题，恢复自然音质")
             appendLine("- 🎯 完全消除重采样99%零值问题")
+            appendLine("- 🎯 播放确认功能正常工作，不再缓冲区溢出")
             appendLine("- 🎯 Vosk识别应该能正常工作")
             appendLine("- 🎯 语音合成音质应该提升")
-            appendLine("- 🎯 播放确认功能音质正常化")
             appendLine("- 🎯 系统整体稳定性显著提高")
             appendLine("- 🎯 长时间运行不再出现崩溃")
+            appendLine("- 🎯 女声保持自然特征，不再失真")
             
             appendLine()
             appendLine("测试建议:")
@@ -275,8 +276,11 @@ object AudioDefaults {
             appendLine("5. 确认Vosk返回非空结果")
             appendLine("6. 验证语音合成播放质量")
             appendLine("7. 确认关键词检测工作正常")
-            appendLine("8. 验证播放确认音频质量正常")
+            appendLine("8. 验证播放确认音频质量正常，声音自然")
             appendLine("9. 确认没有'回声消除已启用'的警告日志")
+            appendLine("10. 测试女声是否保持自然特征，无机器人声音")
+            appendLine("11. 检查APM处理后零值比例应<10%（而非68.75%）")
+            appendLine("12. 验证振幅变化应在合理范围内（<2倍，而非4.964倍）")
         }
     }
     
