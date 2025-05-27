@@ -209,17 +209,3 @@ void soxr_wrapper_destroy(SoxWrapper* wrapper) {
 
     free(wrapper);
 }
-
-// WebRTC APM包装实现 ------------------------------------------------------------
-void my_webrtc_apm_set_key_pressed(void *apm, int key_pressed){
-    webrtc_apm_set_key_pressed(apm, key_pressed!=0);
-}
-// VAD 结果输出
-int my_webrtc_apm_voice_detected(void *apm){
-    return webrtc_apm_voice_detected(apm)?1:0;
-}
-// 快捷开关 AEC (Echo Canceller)
-void my_webrtc_apm_enable_aec(void *apm, int enable){
-    webrtc_apm_enable_aec(apm, enable!=0);
-}
-

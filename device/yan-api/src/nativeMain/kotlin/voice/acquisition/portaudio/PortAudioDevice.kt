@@ -927,7 +927,7 @@ class PortAudioDevice private constructor() : AudioDevice {
     private val bufferReuseCount = mutableMapOf<Int, Int>()
     private val poolAccessLock = SynchronizedObject()
     private val maxPoolSize = 3 // 减少缓存大小避免内存碎片
-    private val maxBufferSize = 48000 // 降低单次分配上限
+    private val maxBufferSize = (48000*2.5).toInt() // 降低单次分配上限
     private fun getOrCreateNativeBuffer(size: Int): CPointer<ShortVar>? {
         // 检查大小限制
         if (size > maxBufferSize) {
@@ -1075,7 +1075,7 @@ class PortAudioDevice private constructor() : AudioDevice {
 
         // 验证数据
         if (length <= 0 || length > audioData.size || length > maxBufferSize * 2) {
-            logger.error("无效的音频数据长度: $length")
+            logger.error("无效的音频数据长度: $length (最大: ${maxBufferSize * 2}) ${audioData.size}")
             return false
         }
 

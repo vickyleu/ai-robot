@@ -7,4 +7,28 @@ headerFilter = webrtc_apm_wrapper.h  yanshee.h
 package = com.airobot.webrtcapminterop
 # 下面定义不透明指针类型
 ---
-struct WebRtcApm {}; 
+struct WebRtcApm {};
+
+
+                                  /* The 5 standard qualities found in SoX: */
+#define SOXR_QQ                 0   /* 'Quick' cubic interpolation. */
+#define SOXR_LQ                 1   /* 'Low' 16-bit with larger rolloff. */
+#define SOXR_MQ                 2   /* 'Medium' 16-bit with medium rolloff. */
+#define SOXR_HQ                 SOXR_20_BITQ /* 'High quality'. */
+#define SOXR_VHQ                SOXR_28_BITQ /* 'Very high quality'. */
+
+#define SOXR_16_BITQ            3
+#define SOXR_20_BITQ            4
+#define SOXR_24_BITQ            5
+#define SOXR_28_BITQ            6
+#define SOXR_32_BITQ            7
+                                /* Reserved for internal use (to be removed): */
+#define SOXR_LSR0Q              8     /* 'Best sinc'. */
+#define SOXR_LSR1Q              9     /* 'Medium sinc'. */
+#define SOXR_LSR2Q              10    /* 'Fast sinc'. */
+
+#define SOXR_LINEAR_PHASE       0x00
+#define SOXR_INTERMEDIATE_PHASE 0x10
+#define SOXR_MINIMUM_PHASE      0x30
+
+#define SOXR_STEEP_FILTER       0x40

@@ -808,9 +808,6 @@ class VoskSpeechRecognizer : SpeechRecognizerApi {
             }
             logger.info("✅ Vosk模型加载成功")
             
-            // 自动补全词表
-            ensureVoskVocabulary(modelPath, registeredKeywords + shortCommandKeywords)
-            
             // 创建Vosk识别器
             logger.info("正在创建Vosk识别器，采样率: ${sampleRate}Hz")
             voskRecognizer = vosk_recognizer_new(voskModel, sampleRate.toFloat())
@@ -836,8 +833,7 @@ class VoskSpeechRecognizer : SpeechRecognizerApi {
             
             // 添加默认的短命令关键词
             registeredKeywords.addAll(shortCommandKeywords)
-            updateRecognizerKeywords()
-            
+
             isInitialized = true
             logger.info("✅ Vosk语音识别器初始化成功，已加载${registeredKeywords.size}个默认关键词")
             logger.info("关键词列表: ${registeredKeywords.joinToString(", ")}")
@@ -883,10 +879,6 @@ class VoskSpeechRecognizer : SpeechRecognizerApi {
                     registeredKeywords.add(command)
                 }
             }
-            
-            // 更新Vosk识别器的关键词
-            updateRecognizerKeywords()
-            
             logger.info("已更新关键词，共${registeredKeywords.size}个：${registeredKeywords.joinToString(", ")}")
             return true
         } catch (e: Exception) {
@@ -895,37 +887,7 @@ class VoskSpeechRecognizer : SpeechRecognizerApi {
         }
     }
     
-    /**
-     * 更新Vosk识别器的关键词配置
-     */
-    private fun updateRecognizerKeywords() {
-        if (voskRecognizer == null || registeredKeywords.isEmpty()) {
-            return
-        }
-        
-        try {
-            // 暂时禁用关键词语法，使用完整语言模型
-            logger.info("暂时禁用关键词语法，使用完整语言模型")
-            // 注释掉关键词设置，让Vosk使用完整词汇表
-            /*
-            // 构建关键词JSON数组 
-            val keywordsJson = buildString {
-                append("[")
-                registeredKeywords.forEachIndexed { index, keyword ->
-                    if (index > 0) append(", ")
-                    append("\"").append(keyword.replace("\"", "\\\"")).append("\"")
-                }
-                append("]")
-            }
-            
-            // 设置Vosk语法
-            vosk_recognizer_set_grm(voskRecognizer, keywordsJson)
-            logger.debug("已更新Vosk关键词语法: $keywordsJson")
-            */
-        } catch (e: Exception) {
-            logger.error("设置Vosk关键词失败: ${e.message}")
-        }
-    }
+
     
     /**
      * 重置识别器状态
@@ -965,109 +927,6 @@ class VoskSpeechRecognizer : SpeechRecognizerApi {
         accumulatedAudio = ByteArray(0)
     }
 
-    private fun ensureVoskVocabulary(modelPath: String, keywords: List<String>) {
-        val vocabPath = "$modelPath/words.txt"
-        val lines = mutableSetOf<String>()
-        logger.info("检查Vosk词表文件: $vocabPath")
-        logger.info("需要确保的关键词: ${keywords.joinToString(", ")}")
-        
-        // 首先检查词表文件是否存在
-        val file = fopen(vocabPath, "r")
-        if (file == null) {
-            // 文件不存在，自动创建并写入所有关键词
-            logger.info("词表文件不存在，尝试创建新文件...")
-            val wfile = fopen(vocabPath, "w")
-            if (wfile != null) {
-                for (word in keywords.distinct()) {
-                    fputs("$word 1.0\n", wfile)
-                    lines.add("$word 1.0")
-                    logger.info("已添加词: $word")
-                }
-                fclose(wfile)
-                logger.info("已成功创建词表文件并写入${keywords.size}个关键词")
-            } else {
-                logger.error("""
-                    无法创建Vosk词表文件: $vocabPath 
-                    请手动执行以下命令:
-                      sudo touch $vocabPath
-                      sudo chown pi:pi $vocabPath
-                      sudo chmod 666 $vocabPath
-                """.trimIndent())
-            }
-            return
-        }
-        
-        // 读取现有词表文件内容
-        memScoped {
-            val buffer = allocArray<ByteVar>(512)
-            while (fgets(buffer, 512, file) != null) {
-                val line = buffer.toKString().trim()
-                if (line.isNotEmpty()) lines.add(line)
-            }
-        }
-        fclose(file)
-        logger.info("已读取词表文件，包含${lines.size}个词条")
-
-        // 检查并添加缺失的关键词
-        var changed = false
-        val missingWords = mutableListOf<String>()
-        for (word in keywords) {
-            if (lines.none { it.split(" ")[0] == word }) {
-                lines.add("$word 1.0")
-                missingWords.add(word)
-                changed = true
-                logger.info("发现缺失词: $word，将添加到词表")
-            }
-        }
-        
-        // 如果有新增词，更新词表文件
-        if (changed) {
-            logger.info("需要更新词表文件，添加${missingWords.size}个缺失词...")
-            val wfile = fopen(vocabPath, "w")
-            if (wfile != null) {
-                for (line in lines) {
-                    fputs(line + "\n", wfile)
-                }
-                fclose(wfile)
-                logger.info("词表文件更新成功！已添加: ${missingWords.joinToString(", ")}")
-                
-                // 检查关键词"音量大"和"音量小"是否被成功添加
-                val criticalWords = listOf("音量大", "音量小")
-                val addedCriticalWords = criticalWords.filter { word -> lines.any { it.startsWith(word) } }
-                if (addedCriticalWords.size == criticalWords.size) {
-                    logger.info("关键词「音量大」和「音量小」已成功添加到词表中")
-                } else {
-                    val missing = criticalWords.filter { !addedCriticalWords.contains(it) }
-                    logger.error("关键词添加不完整，仍缺少: ${missing.joinToString(", ")}")
-                    
-                    // 再次尝试添加缺失的关键词
-                    val retryFile = fopen(vocabPath, "a")
-                    if (retryFile != null) {
-                        for (word in missing) {
-                            fputs("$word 1.0\n", retryFile)
-                            logger.info("重试添加词: $word")
-                        }
-                        fclose(retryFile)
-                        logger.info("已重试添加缺失的关键词")
-                    }
-                }
-            } else {
-                logger.error("无法打开词表文件进行写入，请检查文件权限: $vocabPath")
-            }
-        } else {
-            logger.info("词表已包含所有关键词，无需更新")
-            
-            // 即使不需要更新，也检查关键词是否存在
-            val criticalWords = listOf("音量大", "音量小")
-            for (word in criticalWords) {
-                if (lines.any { it.startsWith(word) }) {
-                    logger.info("词表中已包含关键词: $word")
-                } else {
-                    logger.warn("词表中缺少关键词: $word，但未能添加")
-                }
-            }
-        }
-    }
 
     /**
      * 测试Vosk识别器是否正常工作

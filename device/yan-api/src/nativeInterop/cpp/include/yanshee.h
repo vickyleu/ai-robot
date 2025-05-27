@@ -60,13 +60,6 @@ size_t soxr_wrapper_process_float_to_float(
         float *out_data,
         size_t out_size);
 
-// WebRTC APM包装实现 ------------------------------------------------------------
-void my_webrtc_apm_set_key_pressed(void *apm, int key_pressed);
-// VAD 结果输出
-int my_webrtc_apm_voice_detected(void *apm);
-// 快捷开关 AEC (Echo Canceller)
-void my_webrtc_apm_enable_aec(void *apm, int enable);
-
 #ifdef __cplusplus
 }
 #endif

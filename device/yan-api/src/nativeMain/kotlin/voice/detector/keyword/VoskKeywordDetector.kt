@@ -64,7 +64,7 @@ class VoskKeywordDetector {
             }
             
             // 预定义一些关键词
-            val defaultKeywords = listOf("小度", "你好", "嗨", "在吗", "小兔子")
+            val defaultKeywords = listOf("小度", "你好")
             keywords.addAll(defaultKeywords)
             
             // 更新关键词

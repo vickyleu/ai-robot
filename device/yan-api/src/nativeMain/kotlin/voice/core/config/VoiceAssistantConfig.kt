@@ -13,7 +13,7 @@ import kotlin.time.ExperimentalTime
  */
 data class VoiceAssistantConfig(
     // 关键词设置
-    val keywords: List<String> = listOf("小度", "你好", "嗨", "在吗", "小兔子"),
+    val keywords: List<String> = listOf("小度", "你好","在吗"),
     val keywordSensitivity: Float = 0.7f,
     
     // 音频配置 - 使用AudioDefaults预定义格式
@@ -54,8 +54,8 @@ data class VoiceAssistantConfig(
     // 调试模式
     val debugMode: Boolean = false,
 
-    // 回声消除设置
-    val enableEchoCancellation: Boolean = true,                  // 是否启用回声消除
+    // 回声消除设置 - 默认禁用以避免BlockFramer崩溃
+    val enableEchoCancellation: Boolean = !AudioDefaults.ENABLE_ECHO_CANCELLATION_SAFE_MODE,  // 安全模式下禁用回声消除
 
     // 初始关键词
     val initialKeywords: List<String> = listOf("小度", "你好", "嗨", "在吗", "小兔子"),

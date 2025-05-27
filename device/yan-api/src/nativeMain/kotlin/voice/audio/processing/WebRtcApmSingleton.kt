@@ -189,6 +189,14 @@ object WebRtcApmSingleton {
      * @param enable 是否启用回声消除
      */
     fun enableEchoCancellation(enable: Boolean) {
+        if (enable && AudioDefaults.ENABLE_ECHO_CANCELLATION_SAFE_MODE) {
+            // 安全模式下拒绝启用回声消除
+            logger.error("🚫 单例模式：拒绝启用回声消除（安全模式）")
+            logger.error("🚫 配置：ENABLE_ECHO_CANCELLATION_SAFE_MODE = ${AudioDefaults.ENABLE_ECHO_CANCELLATION_SAFE_MODE}")
+            logger.info("单例模式：回声消除保持禁用状态")
+            return
+        }
+        
         val instances = synchronized(lock) {
             instanceMap.values.toList() // 创建副本以避免长时间持有锁
         }
