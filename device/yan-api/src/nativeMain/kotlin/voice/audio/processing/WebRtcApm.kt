@@ -593,9 +593,15 @@ class SafeSoxrResampler(
         val outputBufferSize = (expectedOutputSize * 12 / 10).coerceAtLeast(inputData.size)
         
         // 安全性检查
-        if (outputBufferSize <= 0 || outputBufferSize > 200000) {
-            logger.error("计算的输出缓冲区大小异常: $outputBufferSize")
+        if (outputBufferSize <= 0) {
+            logger.error("计算的输出缓冲区大小无效: $outputBufferSize")
             return inputData
+        }
+        
+        // 如果缓冲区太大，使用简单重采样避免内存问题
+        if (outputBufferSize > 500000) {  // 增加限制到500000，但超出时使用简单重采样
+            logger.warn("计算的输出缓冲区大小过大($outputBufferSize)，使用简单插值重采样")
+            return simpleResample(inputData)
         }
         
         // 增强的输入数据预处理：增益boost避免SOXR下溢
@@ -689,18 +695,21 @@ class SafeSoxrResampler(
     
     /**
      * 简单线性插值重采样 - 作为SOXR的备用方案
+     * 注意：这个方法只处理采样率转换，不处理声道转换
+     * 声道转换应该在调用此方法之前或之后单独处理
      */
     private fun simpleResample(inputData: ShortArray): ShortArray {
         if (inputSampleRate == outputSampleRate) {
+            logger.debug("采样率相同，跳过重采样: ${inputSampleRate}Hz")
             return inputData
         }
         
         val ratio = outputSampleRate.toDouble() / inputSampleRate.toDouble()
         val outputSize = (inputData.size * ratio).toInt()
         
-        logger.debug("使用简单插值重采样: ${inputData.size} -> ${outputSize}样本, 比例=${"%.3f".format( ratio)}")
+        logger.debug("使用简单插值重采样: ${inputData.size} -> ${outputSize}样本, 比例=${"%.3f".format( ratio)} (${inputSampleRate}Hz -> ${outputSampleRate}Hz)")
         
-        return ShortArray(outputSize) { i ->
+        val result = ShortArray(outputSize) { i ->
             val sourceIndex = i / ratio
             val lowerIndex = sourceIndex.toInt()
             val upperIndex = (lowerIndex + 1).coerceAtMost(inputData.size - 1)
@@ -714,6 +723,9 @@ class SafeSoxrResampler(
                 (lower + (upper - lower) * fraction).toInt().coerceIn(-32767, 32767).toShort()
             }
         }
+        
+        logger.debug("简单重采样完成: 输入${inputData.size}样本 -> 输出${result.size}样本")
+        return result
     }
     
     /**
@@ -880,54 +892,47 @@ class WebRtcApm : AutoCloseable {
 
                     // === 噪声抑制配置 - 降低强度避免过度处理 ===
                     noise_suppression.enabled = 1
-                    noise_suppression.level = kNsVeryHigh  // 暂时保持VeryHigh，但会在下面调整参数
-                    logger.info("APM配置: 噪声抑制启用, 级别=VeryHigh（调整后）")
+                    noise_suppression.level = 1u  // 改为Low级别，避免过度抑制
+                    logger.info("APM配置: 噪声抑制启用, 级别=Low（避免过度处理）")
 
                     // === 高通滤波配置 - 适度启用 ===
                     high_pass_filter.enabled = 1
                     logger.info("APM配置: 高通滤波启用")
 
-                    // === AGC1配置 - 降低压缩增益避免过度处理 ===
+                    // === AGC1配置 - 进一步降低处理强度 ===
                     gain_controller.enabled = 1
                     gain_controller.mode = kAgcAdaptiveDigital
-                    gain_controller.target_level_dbfs = 6  // 从3提高到6，减少增益
-                    gain_controller.compression_gain_db = 3  // 从9降低到3，减少压缩
+                    gain_controller.target_level_dbfs = 9  // 从6提高到9，进一步减少增益
+                    gain_controller.compression_gain_db = 0  // 从3降低到0，完全禁用压缩
                     gain_controller.enable_limiter = 0  // 禁用限幅器避免信号削减
-                    logger.info("APM配置: AGC1启用, 模式=AdaptiveDigital, 目标=-6dBFS, 压缩增益=3dB（降低强度）")
+                    logger.info("APM配置: AGC1启用, 模式=AdaptiveDigital, 目标=-9dBFS, 压缩增益=0dB（最小处理强度）")
 
-                    // === AGC2高级自适应数字增益控制 - 保守配置 ===
-                    gain_controller2.enabled = 0  // 暂时禁用AGC2避免双重处理
+                    // === AGC2高级自适应数字增益控制 - 完全禁用 ===
+                    gain_controller2.enabled = 0  // 完全禁用AGC2
                     gain_controller2.adaptive_digital.enabled = 0
-                    gain_controller2.adaptive_digital.initial_saturation_margin_db = 25.0f  // 增加饱和边距
-                    gain_controller2.adaptive_digital.extra_saturation_margin_db = 5
-                    gain_controller2.adaptive_digital.gain_applier_adjacent_speech_frames_threshold = 200.0f  // 降低阈值
-                    gain_controller2.adaptive_digital.max_gain_change_db_per_second = 1.0f  // 减慢变化速度
-                    gain_controller2.adaptive_digital.max_output_noise_level_dbfs = -40.0f  // 降低噪声抑制
-                    // 固定数字增益
-                    gain_controller2.fixed_digital.gain_db = 0.0f
-                    logger.info("APM配置: AGC2暂时禁用以减少过度处理")
+                    logger.info("APM配置: AGC2完全禁用以减少过度处理")
 
-                    // === 前置放大器配置 - 降低增益 ===
-                    pre_amplifier.enabled = 1
-                    pre_amplifier.fixed_gain_factor = 1.0f  // 从1.2降低到1.0，避免过度放大
-                    logger.info("APM配置: 前置放大器启用, 增益系数=1.0（降低增益）")
+                    // === 前置放大器配置 - 禁用避免过度放大 ===
+                    pre_amplifier.enabled = 0  // 禁用前置放大器
+                    pre_amplifier.fixed_gain_factor = 1.0f
+                    logger.info("APM配置: 前置放大器禁用（避免过度放大）")
 
-                    // === 高级语音检测配置 - 降低敏感度 ===
+                    // === 高级语音检测配置 - 大幅降低敏感度 ===
                     voice_detection_advanced.basic.enabled = 1
 
                     // RNN-VAD配置 - 降低敏感度
                     voice_detection_advanced.rnn_vad.enabled = 1
-                    voice_detection_advanced.rnn_vad.probability_threshold = 0.3f  // 从0.5降低到0.3
+                    voice_detection_advanced.rnn_vad.probability_threshold = 0.1f  // 从0.3降低到0.1，大幅降低阈值
                     voice_detection_advanced.rnn_vad.use_spectral_features = 1
                     voice_detection_advanced.rnn_vad.use_pitch_features = 1
 
-                    // VAD优化配置 - 保守设置
-                    voice_detection_advanced.optimization.smoothing_window_ms = 200  // 增加平滑窗口
-                    voice_detection_advanced.optimization.voice_trigger_threshold = 0.6f  // 从0.8降低到0.6
-                    voice_detection_advanced.optimization.silence_trigger_threshold = 0.5f  // 从0.3提高到0.5
+                    // VAD优化配置 - 更保守设置
+                    voice_detection_advanced.optimization.smoothing_window_ms = 500  // 从200增加到500，更多平滑
+                    voice_detection_advanced.optimization.voice_trigger_threshold = 0.3f  // 从0.6降低到0.3
+                    voice_detection_advanced.optimization.silence_trigger_threshold = 0.8f  // 从0.5提高到0.8，更难进入静音状态
                     voice_detection_advanced.optimization.adaptive_threshold = 1
 
-                    logger.info("APM配置: 高级语音检测启用，降低敏感度避免误判")
+                    logger.info("APM配置: 高级语音检测启用，大幅降低敏感度保护音频质量")
 
                     // === 短暂噪声抑制配置 - 禁用避免过度处理 ===
                     transient_suppression.enabled = 0  // 禁用短暂噪声抑制
@@ -941,23 +946,23 @@ class WebRtcApm : AutoCloseable {
                     level_estimation.enabled = 1
                     logger.info("APM配置: 电平估计启用")
 
-                    // === 语音概率配置 - 放宽阈值 ===
-                    voice_probability.high_confidence_threshold = 0.6f  // 从0.8降低到0.6
-                    voice_probability.low_confidence_threshold = 0.2f   // 从0.3降低到0.2
+                    // === 语音概率配置 - 大幅放宽阈值 ===
+                    voice_probability.high_confidence_threshold = 0.3f  // 从0.6降低到0.3
+                    voice_probability.low_confidence_threshold = 0.05f   // 从0.2降低到0.05
                     voice_probability.use_advanced_estimation = 1
-                    logger.info("APM配置: 语音概率估算启用（放宽阈值）")
+                    logger.info("APM配置: 语音概率估算启用（大幅放宽阈值保护音频）")
 
-                    // === 饱和检测配置 - 放宽检测 ===
-                    saturation_detection.low_level_threshold = -60  // 从-50降低到-60
-                    saturation_detection.rms_threshold_dbfs = -5.0f  // 从-10提高到-5
+                    // === 饱和检测配置 - 进一步放宽检测 ===
+                    saturation_detection.low_level_threshold = -70  // 从-60降低到-70
+                    saturation_detection.rms_threshold_dbfs = 0.0f  // 从-5提高到0
                     saturation_detection.enable_multi_criteria_detection = 0  // 禁用多重标准
-                    logger.info("APM配置: 饱和检测启用（放宽检测）")
+                    logger.info("APM配置: 饱和检测启用（进一步放宽检测）")
 
-                    // === 噪声估算配置 - 保守估算 ===
-                    noise_estimation.default_noise_level_dbfs = -50.0f  // 从-40降低到-50
-                    noise_estimation.estimation_window_ms = 2000  // 从1000增加到2000
+                    // === 噪声估算配置 - 更保守估算 ===
+                    noise_estimation.default_noise_level_dbfs = -60.0f  // 从-50降低到-60
+                    noise_estimation.estimation_window_ms = 3000  // 从2000增加到3000
                     noise_estimation.enable_adaptive_estimation = 0  // 禁用自适应估算
-                    logger.info("APM配置: 噪声估算启用（保守估算）")
+                    logger.info("APM配置: 噪声估算启用（更保守估算）")
 
                     // === 多通道配置 ===
                     multi_channel.enable_multi_channel_processing = if (apmFormat.channels > 1) 1 else 0

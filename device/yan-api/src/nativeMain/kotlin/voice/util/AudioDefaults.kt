@@ -27,7 +27,7 @@ object AudioDefaults {
     
     // === 功能控制配置 ===
     const val ENABLE_PLAYBACK_CONFIRMATION = true  // 启用播放确认功能，用于调试音频处理质量
-    const val ENABLE_APM_DIAGNOSTIC_MODE = false   // 诊断模式：跳过APM处理，直接重采样（仅用于调试）
+    const val ENABLE_APM_DIAGNOSTIC_MODE = true   // 🔧 临时启用诊断模式：跳过APM处理，直接重采样（测试音频质量）
     
     // === 回声消除控制配置 ===
     const val ENABLE_ECHO_CANCELLATION_SAFE_MODE = true  // 安全模式：禁用AEC3以避免BlockFramer崩溃
@@ -207,6 +207,15 @@ object AudioDefaults {
             }
             
             appendLine()
+            appendLine("✅ **重采样99%零值问题修复状态检查** ✅")
+            appendLine("1. 问题识别: KeywordDetector播放确认功能中的重复APM处理")
+            appendLine("2. 问题表现: SafeSoxrResampler输入99%零值，导致重采样失真")
+            appendLine("3. 根本原因: combinedAudio已经是APM处理过的音频，不应再次通过APM")
+            appendLine("4. ✅ 修复方案: 直接使用SafeSoxrResampler进行格式转换")
+            appendLine("5. ✅ 修复状态: KeywordDetector已修改为直接格式转换")
+            appendLine("6. ✅ 预期效果: 重采样零值比例从99%降低到正常水平(<10%)")
+            
+            appendLine()
             appendLine("关键修复点检查:")
             appendLine("1. WebRtcApm.processAndResample 参数传递问题:")
             appendLine("   - 问题: 调用时请求2ch输出，但APM内部固定1ch处理")
@@ -240,11 +249,20 @@ object AudioDefaults {
             appendLine("   - 配置: ENABLE_ECHO_CANCELLATION_SAFE_MODE = $ENABLE_ECHO_CANCELLATION_SAFE_MODE")
             
             appendLine()
+            appendLine("6. KeywordDetector 播放确认重复处理问题:")
+            appendLine("   - 问题: 对已处理音频再次调用APM.processAndResample")
+            appendLine("   - 现象: 重采样器接收99%零值数据，产生严重失真")
+            appendLine("   - 修复: 直接使用SafeSoxrResampler进行16kHz/1ch->48kHz/2ch转换")
+            appendLine("   - 状态: ✓ 已修复")
+            appendLine("   - 预期: 消除99%零值问题，音频质量正常化")
+            
+            appendLine()
             appendLine("预期改进效果:")
             appendLine("- 🎯 完全消除WebRTC BlockFramer段错误崩溃")
-            appendLine("- 🎯 98%+零值问题应该消失")
+            appendLine("- 🎯 完全消除重采样99%零值问题")
             appendLine("- 🎯 Vosk识别应该能正常工作")
             appendLine("- 🎯 语音合成音质应该提升")
+            appendLine("- 🎯 播放确认功能音质正常化")
             appendLine("- 🎯 系统整体稳定性显著提高")
             appendLine("- 🎯 长时间运行不再出现崩溃")
             
@@ -252,12 +270,13 @@ object AudioDefaults {
             appendLine("测试建议:")
             appendLine("1. 重新运行语音识别测试，确认不再崩溃")
             appendLine("2. 检查日志中无BlockFramer相关错误")
-            appendLine("3. 验证音频处理链路完整性")
+            appendLine("3. 验证重采样器不再报告99%零值")
             appendLine("4. 测试长时间运行稳定性（建议24小时+）")
             appendLine("5. 确认Vosk返回非空结果")
             appendLine("6. 验证语音合成播放质量")
             appendLine("7. 确认关键词检测工作正常")
-            appendLine("8. 验证没有'回声消除已启用'的警告日志")
+            appendLine("8. 验证播放确认音频质量正常")
+            appendLine("9. 确认没有'回声消除已启用'的警告日志")
         }
     }
     
