@@ -1051,16 +1051,20 @@ class PortAudioDevice private constructor() : AudioDevice {
     override fun play(audioData: ByteArray, length: Int): Boolean {
         // 防止并发播放
         if (!isPlaybackActive.compareAndSet(false, true)) {
-            logger.warn("播放正在进行中，跳过当前请求")
+            logger.warn("🎯 播放正在进行中，跳过当前请求 - 当前播放状态: ${isPlaybackActive.value}")
             return false
         }
 
+        logger.info("🎯 开始播放音频 - 数据长度: ${length}字节, 设备状态: ${_deviceState.value}")
         return try {
             synchronized(portAudioLock) {
-                playInternal(audioData, length)
+                val result = playInternal(audioData, length)
+                logger.info("🎯 播放结果: ${if(result) "成功" else "失败"}")
+                result
             }
         } finally {
             isPlaybackActive.value = false
+            logger.debug("🎯 播放状态已重置为false")
         }
     }
 
@@ -1068,34 +1072,42 @@ class PortAudioDevice private constructor() : AudioDevice {
      * 内部播放实现
      */
     private fun playInternal(audioData: ByteArray, length: Int): Boolean {
+        logger.debug("🎯 playInternal开始 - 设备状态: ${_deviceState.value}, 数据长度: $length")
+        
         if (_deviceState.value != AudioDeviceState.ACTIVE) {
-            logger.warn("音频设备未处于活动状态")
+            logger.warn("🎯 音频设备未处于活动状态: ${_deviceState.value}")
             return false
         }
 
         // 验证数据
         if (length <= 0 || length > audioData.size || length > maxBufferSize * 2) {
-            logger.error("无效的音频数据长度: $length (最大: ${maxBufferSize * 2}) ${audioData.size}")
+            logger.error("🎯 无效的音频数据长度: $length (数组大小: ${audioData.size}, 最大缓冲区: ${maxBufferSize * 2})")
             return false
         }
 
         // 如果输入流活跃，警告但继续
-        if (synchronized(streamStateLock) { inputStreamActive }) {
-            logger.warn("输入流活跃，可能影响播放质量")
+        val inputActive = synchronized(streamStateLock) { inputStreamActive }
+        if (inputActive) {
+            logger.warn("🎯 输入流活跃，可能影响播放质量")
         }
 
         // 确保输出流存在
-        if (outputStreamPtr.value == null) {
-            if (synchronized(streamStateLock) { outputStreamActive }) {
-                logger.warn("输出流正在打开中，暂时无法播放音频")
+        val outputPtr = outputStreamPtr.value
+        logger.debug("🎯 输出流状态检查 - 指针: ${outputPtr != null}")
+        
+        if (outputPtr == null) {
+            val outputActive = synchronized(streamStateLock) { outputStreamActive }
+            if (outputActive) {
+                logger.warn("🎯 输出流正在打开中，暂时无法播放音频")
                 return false
             } else {
-                logger.info("输出流不存在，尝试打开新的输出流")
+                logger.info("🎯 输出流不存在，尝试打开新的输出流")
                 val success = runBlocking { openOutputStream() }
                 if (!success) {
-                    logger.error("无法打开输出流，播放失败")
+                    logger.error("🎯 无法打开输出流，播放失败")
                     return false
                 }
+                logger.info("🎯 输出流打开成功")
             }
         }
 
@@ -1116,24 +1128,34 @@ class PortAudioDevice private constructor() : AudioDevice {
      * 安全的音频播放实现
      */
     private fun playAudioSafely(audioData: ByteArray, length: Int): Boolean {
+        logger.debug("🎯 playAudioSafely开始 - 输入数据: ${length}字节")
+        
         // 转换音频数据
         val shortArray = voice.util.AudioUtils.byteArrayToShortArray(
             audioData.copyOfRange(0, length)
         )
+        
+        logger.debug("🎯 数据转换完成 - 字节转样本: ${length}字节 -> ${shortArray.size}样本")
 
         if (shortArray.isEmpty()) {
-            logger.warn("转换后音频数据为空")
+            logger.warn("🎯 转换后音频数据为空")
             return false
         }
 
         val maxAmplitude = shortArray.maxOfOrNull { kotlin.math.abs(it.toInt()) } ?: 0
+        
+        // 🎯 采样率调试日志 - 步骤5：设备层播放参数
+        val deviceSampleRate = AudioDefaults.OUTPUT_DEVICE_SAMPLE_RATE
+        val deviceChannels = AudioDefaults.OUTPUT_DEVICE_CHANNELS
+        val playDurationMs = (shortArray.size * 1000) / (deviceSampleRate * deviceChannels)
+        logger.info("🎯 设备播放参数: 字节=${length}, 样本=${shortArray.size}, 振幅=${maxAmplitude}, 设备=${deviceSampleRate}Hz/${deviceChannels}ch, 预期时长=${playDurationMs}ms")
         logger.info("播放音频: ${length}字节, 振幅: $maxAmplitude, 样本: ${shortArray.size}")
 
         // 处理声道转换 - 播放的音频数据来自APM处理后，通常是单声道16kHz
         val outputChannels = AudioDefaults.OUTPUT_DEVICE_CHANNELS
         // 根据数据来源确定输入声道数：如果是从processAndResample来的，应该是48kHz/2ch
         // 但如果是其他来源，可能不同。这里需要根据实际情况判断
-        val inputChannels = if (shortArray.size > 0) {
+        val inputChannels = if (shortArray.isNotEmpty()) {
             // 简单启发式判断：如果数据长度与48kHz/2ch的预期不符，可能是其他格式
             // 更安全的做法是在调用时明确传入格式信息
             AudioDefaults.OUTPUT_DEVICE_CHANNELS // 假设播放数据已经是输出格式
@@ -1143,24 +1165,31 @@ class PortAudioDevice private constructor() : AudioDevice {
         val processedArray = processAudioChannels(shortArray, inputChannels, outputChannels)
 
         // 获取缓冲区
+        logger.debug("🎯 尝试获取原生缓冲区 - 需要大小: ${processedArray.size}样本")
         val nativeBuffer = getOrCreateNativeBuffer(processedArray.size)
-            ?: return playAudioSimple(audioData, length)
+        if (nativeBuffer == null) {
+            logger.warn("🎯 无法获取原生缓冲区，使用简化播放方式")
+            return playAudioSimple(audioData, length)
+        }
+        logger.debug("🎯 原生缓冲区获取成功")
 
         // 复制数据
         for (i in processedArray.indices) {
             nativeBuffer[i] = processedArray[i]
         }
+        logger.debug("🎯 数据复制到原生缓冲区完成")
 
         val framesToWrite = processedArray.size / outputChannels
-        logger.debug("写入音频: ${processedArray.size}样本, ${framesToWrite}帧")
+        logger.debug("🎯 准备写入音频: ${processedArray.size}样本, ${framesToWrite}帧, 声道数: ${outputChannels}")
 
         val written = writeAudio(nativeBuffer, framesToWrite)
+        logger.debug("🎯 writeAudio调用完成 - 写入帧数: $written/$framesToWrite")
 
         return if (written == framesToWrite) {
-            logger.info("成功写入 $written 帧")
+            logger.info("🎯 音频写入成功: $written 帧")
             true
         } else {
-            logger.error("写入不完整: $written/$framesToWrite")
+            logger.error("🎯 音频写入不完整: $written/$framesToWrite 帧")
             false
         }
     }

@@ -26,8 +26,8 @@ object AudioDefaults {
     const val MIN_RMS_ENERGY= 0.01f          // 最小RMS能量阈值，用于静音检测
     
     // === 功能控制配置 ===
-    const val ENABLE_PLAYBACK_CONFIRMATION = true  // 启用播放确认功能，用于调试音频处理质量
-    const val ENABLE_APM_DIAGNOSTIC_MODE = false   // 禁用诊断模式：现在APM处理已大幅降低强度，可以正常使用
+    const val ENABLE_PLAYBACK_CONFIRMATION = true   // 重新启用播放确认功能，使用简单数学重采样避免SOXR噪声
+    const val ENABLE_APM_DIAGNOSTIC_MODE = false   // 禁用诊断模式：启用APM处理以过滤风噪
     
     // === 回声消除控制配置 ===
     const val ENABLE_ECHO_CANCELLATION_SAFE_MODE = true  // 安全模式：禁用AEC3以避免BlockFramer崩溃

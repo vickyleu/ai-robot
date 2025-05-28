@@ -417,9 +417,12 @@ class SafeSoxrResampler(
         }
         
         try {
+            // 🎯 采样率调试日志 - 重采样器初始化
+            logger.info("🎯 SafeSoxrResampler初始化: ${inputSampleRate}Hz/${inputChannels}ch -> ${outputSampleRate}Hz/${outputChannels}ch, 质量=${quality}")
+            
             // 检查是否需要重采样
             if (inputSampleRate == outputSampleRate && inputChannels == outputChannels) {
-                logger.debug("输入输出格式相同，无需重采样: ${inputSampleRate}Hz/${inputChannels}ch")
+                logger.info("🎯 输入输出格式相同，无需重采样: ${inputSampleRate}Hz/${inputChannels}ch")
                 isInitialized = true
                 return true
             }
@@ -481,6 +484,9 @@ class SafeSoxrResampler(
         }
         
         try {
+            // 🎯 采样率调试日志 - 重采样处理开始
+            val inputDurationMs = (inputData.size * 1000.0 / inputSampleRate / inputChannels).toInt()
+            logger.info("🎯 SafeSoxrResampler处理: 输入=${inputData.size}样本/${inputDurationMs}ms, ${inputSampleRate}Hz/${inputChannels}ch -> ${outputSampleRate}Hz/${outputChannels}ch")
             logger.info("开始处理音频数据: ${inputData.size}样本, 输入格式=${inputSampleRate}Hz/${inputChannels}ch, 输出格式=${outputSampleRate}Hz/${outputChannels}ch")
             
             // 输入音频质量检查
@@ -524,6 +530,12 @@ class SafeSoxrResampler(
             val finalMaxAmp = finalData.maxOfOrNull { kotlin.math.abs(it.toInt()) } ?: 0
             val finalNonZeroCount = finalData.count { it != 0.toShort() }
             val finalZeroRatio = (finalData.size - finalNonZeroCount).toFloat() / finalData.size
+            
+            // 🎯 采样率调试日志 - 重采样处理完成
+            val outputDurationMs = (finalData.size * 1000.0 / outputSampleRate / outputChannels).toInt()
+            val durationRatio = if (inputDurationMs > 0) outputDurationMs.toDouble() / inputDurationMs else 0.0
+            logger.info("🎯 SafeSoxrResampler完成: 输出=${finalData.size}样本/${outputDurationMs}ms, 时长比例=${"%.3f".format(durationRatio)}, 振幅=${finalMaxAmp}")
+            
             logger.info("处理完成: 输入${inputData.size} -> 输出${finalData.size}样本, 最大振幅=$finalMaxAmp, 零值比例=${"%.4f".format(finalZeroRatio)}")
             
             if (finalZeroRatio > 0.9f) {
@@ -604,20 +616,13 @@ class SafeSoxrResampler(
             return simpleResample(inputData)
         }
         
-        // 增强的输入数据预处理：增益boost避免SOXR下溢
-        val boostedInput = if (inputMaxAmp < 1000) {
-            logger.debug("输入信号弱(最大振幅=$inputMaxAmp)，应用增益boost")
-            val boostFactor = 4.0f // 增益4倍
-            ShortArray(inputData.size) { i ->
-                val boosted = (inputData[i] * boostFactor).coerceIn(-32767f, 32767f).toInt()
-                boosted.toShort()
-            }
-        } else {
-            inputData
-        }
+        // 🚨 修复：移除危险的增益boost，避免爆音
+        // 原来的增益boost会导致信号过载，产生爆音
+        val boostedInput = inputData
+        val boostFactor = 1.0f // 不再应用增益boost
         
         val actualMaxAmp = boostedInput.maxOfOrNull { kotlin.math.abs(it.toInt()) } ?: 0
-        logger.debug("SOXR输入预处理: 原始最大振幅=$inputMaxAmp, 增强后最大振幅=$actualMaxAmp")
+        logger.debug("SOXR输入预处理: 最大振幅=$actualMaxAmp (无增益boost)")
         
         var outputBuffer: CPointer<FloatVar>? = null
         logger.debug("开始SOXR重采样: 输入=${boostedInput.size}样本, 输出缓冲区大小=$outputBufferSize")
@@ -659,10 +664,10 @@ class SafeSoxrResampler(
                 return simpleResample(inputData)
             }
             
-            // 将FLOAT32结果转换为INT16 - 考虑之前的增益boost
-            val gainCorrection = if (inputMaxAmp < 1000) 1.0f else 1.0f  // 不需要减少增益，保持信号强度
+            // 🚨 修复：简化FLOAT32到INT16转换，移除增益补偿逻辑
+            // 直接转换，不应用任何增益调整，避免爆音
             val result = ShortArray(outputFrames.toInt()) { i ->
-                val floatSample = (outputBuffer[i] * gainCorrection).coerceIn(-1f, 1f)
+                val floatSample = outputBuffer[i].coerceIn(-1f, 1f)
                 (floatSample * 32767f).toInt().toShort()
             }
             
@@ -777,7 +782,7 @@ class SafeSoxrResampler(
         }
         
         /**
-         * 创建用于输出重采样的实例（INT16输入，FLOAT32输出，内部转换为INT16）
+         * 创建用于输出重采样的实例（INT16输入，INT16输出，避免FLOAT转换问题）
          */
         fun createForOutput(inputSampleRate: Int, outputSampleRate: Int, inputChannels: Int, outputChannels: Int): SafeSoxrResampler {
             return SafeSoxrResampler(
@@ -786,8 +791,23 @@ class SafeSoxrResampler(
                 inputChannels = inputChannels,
                 outputChannels = outputChannels,
                 inputFormat = SOXR_INT16_I.toInt(),
-                outputFormat = SOXR_FLOAT32_I.toInt(),  // 修复：统一使用FLOAT32避免类型错误
-                quality = SOXR_LQ.toInt()
+                outputFormat = SOXR_INT16_I.toInt(),  // 修复：使用INT16输出避免FLOAT转换问题
+                quality = SOXR_LQ.toInt()  // 使用低质量模式，更稳定
+            )
+        }
+
+        /**
+         * 创建用于播放确认的高精度重采样器（INT16输入，INT16输出，高质量）
+         */
+        fun createForPlayback(inputSampleRate: Int, outputSampleRate: Int, inputChannels: Int, outputChannels: Int): SafeSoxrResampler {
+            return SafeSoxrResampler(
+                inputSampleRate = inputSampleRate,
+                outputSampleRate = outputSampleRate,
+                inputChannels = inputChannels,
+                outputChannels = outputChannels,
+                inputFormat = SOXR_INT16_I.toInt(),
+                outputFormat = SOXR_INT16_I.toInt(),  // 直接输出INT16，避免精度损失
+                quality = 2u.toInt()  // 使用中等质量，平衡精度和性能
             )
         }
     }
@@ -918,21 +938,21 @@ class WebRtcApm : AutoCloseable {
                     logger.info("APM配置: 前置放大器禁用")
 
                     // === 高级语音检测配置 - 最小化处理 ===
-                    voice_detection_advanced.basic.enabled = 1
+                    voice_detection_advanced.basic.enabled = 0  // 完全禁用基础VAD
 
-                    // RNN-VAD配置 - 最低敏感度
+                    // RNN-VAD配置 - 完全禁用
                     voice_detection_advanced.rnn_vad.enabled = 0  // 禁用RNN-VAD
-                    voice_detection_advanced.rnn_vad.probability_threshold = 0.05f  // 极低阈值
+                    voice_detection_advanced.rnn_vad.probability_threshold = 1.0f  // 设为最高阈值，实际禁用
                     voice_detection_advanced.rnn_vad.use_spectral_features = 0  // 禁用频谱特征
                     voice_detection_advanced.rnn_vad.use_pitch_features = 0  // 禁用音调特征
 
-                    // VAD优化配置 - 最保守设置
-                    voice_detection_advanced.optimization.smoothing_window_ms = 1000  // 增加到1秒平滑
-                    voice_detection_advanced.optimization.voice_trigger_threshold = 0.1f  // 极低触发阈值
-                    voice_detection_advanced.optimization.silence_trigger_threshold = 0.9f  // 极高静音阈值
+                    // VAD优化配置 - 完全禁用
+                    voice_detection_advanced.optimization.smoothing_window_ms = 0  // 禁用平滑
+                    voice_detection_advanced.optimization.voice_trigger_threshold = 1.0f  // 设为最高阈值，实际禁用
+                    voice_detection_advanced.optimization.silence_trigger_threshold = 0.0f  // 设为最低阈值，实际禁用
                     voice_detection_advanced.optimization.adaptive_threshold = 0  // 禁用自适应阈值
 
-                    logger.info("APM配置: 语音检测最小化处理，保护音频质量")
+                    logger.info("APM配置: 语音检测完全禁用，避免过度处理")
 
                     // === 短暂噪声抑制配置 - 禁用 ===
                     transient_suppression.enabled = 0  // 禁用短暂噪声抑制
@@ -942,9 +962,9 @@ class WebRtcApm : AutoCloseable {
                     residual_echo_detector.enabled = 0  // 禁用残余回声检测
                     logger.info("APM配置: 残余回声检测禁用")
 
-                    // === 电平估计配置 - 保持启用但最小化影响 ===
-                    level_estimation.enabled = 1
-                    logger.info("APM配置: 电平估计启用（最小影响）")
+                    // === 电平估计配置 - 禁用以避免任何处理 ===
+                    level_estimation.enabled = 0  // 禁用电平估计
+                    logger.info("APM配置: 电平估计禁用（完全透明传递）")
 
                     // === 语音概率配置 - 极度放宽阈值 ===
                     voice_probability.high_confidence_threshold = 0.1f  // 极低高置信度阈值
@@ -1007,80 +1027,71 @@ class WebRtcApm : AutoCloseable {
 
             // 启用语音助手模式（如果可用）
             try {
-                webrtc_apm_set_voice_assistant_mode(handle, 1)
-                logger.info("语音助手模式已启用")
+                webrtc_apm_set_voice_assistant_mode(handle, 0)  // 禁用语音助手模式
+                logger.info("语音助手模式已禁用（避免过度处理）")
             } catch (e: Exception) {
-                logger.warn("启用语音助手模式失败（功能可能不可用）: ${e.message}")
+                logger.warn("禁用语音助手模式失败（功能可能不可用）: ${e.message}")
             }
 
             // 优化远场处理（如果可用）
             try {
-                webrtc_apm_optimize_for_far_field(handle, 1)
-                logger.info("远场优化已启用")
+                webrtc_apm_optimize_for_far_field(handle, 0)  // 禁用远场优化
+                logger.info("远场优化已禁用（避免过度处理）")
             } catch (e: Exception) {
-                logger.warn("启用远场优化失败（功能可能不可用）: ${e.message}")
+                logger.warn("禁用远场优化失败（功能可能不可用）: ${e.message}")
             }
 
             // 启用自适应处理（如果可用）
             try {
-                webrtc_apm_enable_adaptive_processing(handle, 1)
-                webrtc_apm_set_adaptation_speed(handle, 0.7f)
-                logger.info("自适应处理已启用，速度=0.7")
+                webrtc_apm_enable_adaptive_processing(handle, 0)  // 禁用自适应处理
+                logger.info("自适应处理已禁用（避免过度处理）")
             } catch (e: Exception) {
-                logger.warn("启用自适应处理失败（功能可能不可用）: ${e.message}")
+                logger.warn("禁用自适应处理失败（功能可能不可用）: ${e.message}")
             }
 
             // 启用音频质量监控（如果可用）
             try {
-                webrtc_apm_enable_quality_monitoring(handle, 1)
-                logger.info("音频质量监控已启用")
+                webrtc_apm_enable_quality_monitoring(handle, 0)  // 禁用质量监控
+                logger.info("音频质量监控已禁用（避免过度处理）")
             } catch (e: Exception) {
-                logger.warn("启用音频质量监控失败（功能可能不可用）: ${e.message}")
+                logger.warn("禁用音频质量监控失败（功能可能不可用）: ${e.message}")
             }
 
-            // 设置预处理链
+            // 设置预处理链 - 完全禁用
             try {
                 memScoped {
                     val preprocessingChain = alloc<APMPreprocessingChain>()
-                    preprocessingChain.enable_dc_removal = 1
-                    preprocessingChain.enable_wind_noise_reduction = 1
-                    preprocessingChain.enable_click_removal = 1
-                    preprocessingChain.enable_automatic_gain_normalization = 1
+                    preprocessingChain.enable_dc_removal = 0  // 禁用DC移除
+                    preprocessingChain.enable_wind_noise_reduction = 0  // 禁用风噪抑制
+                    preprocessingChain.enable_click_removal = 0  // 禁用点击移除
+                    preprocessingChain.enable_automatic_gain_normalization = 0  // 禁用自动增益标准化
                     
-                    // 自定义高通滤波器
-                    preprocessingChain.custom_high_pass.enabled = 1
-                    preprocessingChain.custom_high_pass.cutoff_frequency_hz = 80.0f
-                    preprocessingChain.custom_high_pass.order = 2
+                    // 自定义高通滤波器 - 禁用
+                    preprocessingChain.custom_high_pass.enabled = 0
+                    preprocessingChain.custom_high_pass.cutoff_frequency_hz = 0.0f
+                    preprocessingChain.custom_high_pass.order = 0
                     
                     webrtc_apm_set_preprocessing_chain(handle, preprocessingChain.ptr)
-                    logger.info("预处理链已配置：DC移除、风噪抑制、点击移除、自动增益标准化")
+                    logger.info("预处理链已完全禁用（避免过度处理）")
                 }
             } catch (e: Exception) {
-                logger.warn("设置预处理链失败（功能可能不可用）: ${e.message}")
+                logger.warn("禁用预处理链失败（功能可能不可用）: ${e.message}")
             }
 
-            // 平台优化（如果可用）
+            // 平台优化（如果可用） - 禁用
             try {
-                webrtc_apm_optimize_for_platform(handle, "Darwin_ARM64")
-                webrtc_apm_set_performance_mode(handle, 1, 0)
-                logger.info("平台优化完成：Darwin ARM64，低延迟模式")
+                webrtc_apm_set_performance_mode(handle, 0, 1)  // 禁用低延迟，启用质量模式
+                logger.info("平台优化：禁用低延迟，质量优先")
             } catch (e: Exception) {
                 logger.warn("平台优化失败（功能可能不可用）: ${e.message}")
             }
 
-            // 应用语音助手预设模式（如果可用）
+            // 应用语音助手预设模式（如果可用） - 改为默认模式
             try {
-                webrtc_apm_apply_preset(handle, APM_PRESET_VOICE_ASSISTANT)
-                logger.info("语音助手预设模式已应用")
+                webrtc_apm_apply_preset(handle, APM_PRESET_DEFAULT)  // 使用默认预设而非语音助手预设
+                logger.info("默认预设模式已应用（避免语音助手预设的过度处理）")
             } catch (e: Exception) {
-                logger.warn("应用语音助手预设失败（功能可能不可用）: ${e.message}")
-                // 尝试应用默认预设
-                try {
-                    webrtc_apm_apply_preset(handle, APM_PRESET_DEFAULT)
-                    logger.info("默认预设模式已应用")
-                } catch (e2: Exception) {
-                    logger.warn("应用默认预设也失败（功能可能不可用）: ${e2.message}")
-                }
+                logger.warn("应用默认预设失败（功能可能不可用）: ${e.message}")
             }
 
             // 设置键盘声检测
@@ -1337,6 +1348,14 @@ class WebRtcApm : AutoCloseable {
             val maxAmp = processedData.maxOfOrNull { abs(it.toInt()) } ?: 0
             val processedNonZeroCount = processedData.count { it != 0.toShort() }
             val processedZeroRatio = (processedData.size - processedNonZeroCount).toFloat() / processedData.size
+            
+            // 🚨 强制透明传递检查 - 如果APM过度处理，直接返回输入数据
+            if (processedZeroRatio > 0.5f && preApmZeroRatio < 0.1f) {
+                logger.error("🚨 APM过度处理检测: 输入零值比例=${"%.4f".format( preApmZeroRatio)} -> 输出零值比例=${"%.4f".format( processedZeroRatio)}")
+                logger.error("🚨 强制启用透明传递模式，直接返回重采样数据")
+                logger.error("🚨 APM配置可能仍有隐藏的激进处理功能")
+                return resampledData
+            }
             
             if (vadLogCounter % 500 == 0) {
                 logger.debug("=== APM处理结果 ===")

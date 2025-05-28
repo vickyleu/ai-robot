@@ -32,15 +32,15 @@ class VoskKeywordDetector {
     
     // 音频缓冲区
     private var audioBuffer = ByteArray(0)
-    private val maxBufferSize = 32000 // 从16000增加到32000，即2秒@16kHz，提供更长的上下文
+    private val maxBufferSize = 16000 // 从32000减少到16000，即1秒@16kHz，提高响应速度
     
     // 检测控制
     private var lastDetectionTime = 0L
-    private val detectionCooldownMs = 2000L // 从1000L增加到2000L，进一步减少无意义的识别
+    private val detectionCooldownMs = 1000L // 从2000L减少到1000L，提高响应速度
 
     // 关键词缓存和优化
     private val keywordCache = mutableMapOf<String, Long>()
-    private val keywordCacheDuration = 1000L // 1秒内不重复触发同一关键词
+    private val keywordCacheDuration = 500L // 从1000L减少到500L，减少重复触发间隔
 
     /**
      * 初始化Vosk关键词检测器
@@ -137,7 +137,7 @@ class VoskKeywordDetector {
             }
 
             // 只有当缓冲区有足够数据时才进行识别
-            val minBufferForRecognition = 6400 // 从1600增加到6400（400ms @ 16kHz），确保有足够的音频上下文
+            val minBufferForRecognition = 3200 // 从6400减少到3200（200ms @ 16kHz），提高响应速度
             if (audioBuffer.size < minBufferForRecognition) {
                 // 减少日志频率
                 if (audioBuffer.size % 1600 == 0) { // 只在特定大小时记录

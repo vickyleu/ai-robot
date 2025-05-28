@@ -631,12 +631,21 @@ class VoskSpeechRecognizer : SpeechRecognizerApi {
             // 确保不超过最大缓冲区大小
             val actualLength = minOf(length, newData.size)
             
+            // 🎯 采样率调试日志 - 音频累积过程
+            val inputSampleRate = AudioDefaults.INPUT_DEVICE_SAMPLE_RATE
+            val inputChannels = AudioDefaults.INPUT_DEVICE_CHANNELS
+            val newAudioDurationMs = (actualLength / 2 / inputChannels * 1000) / inputSampleRate
+            val currentTotalDurationMs = (accumulatedAudio.size / 2 / inputChannels * 1000) / inputSampleRate
+            logger.debug("🎯 音频累积: 新增${actualLength}字节/${newAudioDurationMs}ms, 当前总计${accumulatedAudio.size}字节/${currentTotalDurationMs}ms, 格式=${inputSampleRate}Hz/${inputChannels}ch")
+            
             // 如果累积的数据会超过最大缓冲区，先清理旧数据
             if (accumulatedAudio.size + actualLength > maxAudioBufferSize) {
                 // 保留最新的一半数据，为新数据腾出空间
                 val keepSize = maxAudioBufferSize / 2
+                val beforeCleanDurationMs = (accumulatedAudio.size / 2 / inputChannels * 1000) / inputSampleRate
                 accumulatedAudio = accumulatedAudio.takeLast(keepSize).toByteArray()
-                logger.debug("缓冲区即将溢出，清理到${keepSize}字节")
+                val afterCleanDurationMs = (accumulatedAudio.size / 2 / inputChannels * 1000) / inputSampleRate
+                logger.debug("🎯 缓冲区清理: ${beforeCleanDurationMs}ms -> ${afterCleanDurationMs}ms，清理到${keepSize}字节")
             }
             
             // 创建新的缓冲区
@@ -822,9 +831,9 @@ class VoskSpeechRecognizer : SpeechRecognizerApi {
             logger.info("配置Vosk识别器参数...")
             vosk_recognizer_set_endpointer_mode(voskRecognizer, VOSK_EP_ANSWER_SHORT)
             vosk_recognizer_set_endpointer_delays(voskRecognizer,
-                /*t_start_max=*/0.5f,    // 从1.0f进一步降低到0.5f，更快开始识别
-                /*t_end=*/0.1f,          // 从0.3f降低到0.1f，更快结束
-                /*t_max=*/1.5f           // 从3.0f降低到1.5f，避免过长等待
+                /*t_start_max=*/0.3f,    // 从0.5f进一步降低到0.3f，更快开始识别
+                /*t_end=*/0.05f,         // 从0.1f降低到0.05f，更快结束，避免截断
+                /*t_max=*/2.0f           // 从1.5f增加到2.0f，允许更长的语音
             )
 
             // 启用部分结果和关键词提取

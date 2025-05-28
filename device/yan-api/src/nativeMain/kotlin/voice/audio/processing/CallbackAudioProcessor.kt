@@ -66,6 +66,7 @@ class CallbackAudioProcessor : PortAudioDevice.AudioDataCallback {
     private val callbackLock = SynchronizedObject()
     private var processedAudioCallback: (suspend (ShortArray, Int) -> Unit)? = null
     private var vadCallback: ((Boolean) -> Unit)? = null
+    private var rawAudioCallback: ((ShortArray, Int) -> Unit)? = null
     
     // 原始录音文件保存
     private var rawRecordingFile: kotlinx.cinterop.CPointer<platform.posix.FILE>? = null
@@ -195,6 +196,9 @@ class CallbackAudioProcessor : PortAudioDevice.AudioDataCallback {
                 // 写入原始录音文件 - 移到前面，确保总是记录
                 writeRawRecording(audioData)
                 
+                // 调用原始音频回调 - 在APM处理之前提供原始数据
+                rawAudioCallback?.invoke(audioData.copyOf(), frameCount)
+                
                 // 音频质量检查
                 val maxAmplitude = audioData.maxOfOrNull { kotlin.math.abs(it.toInt()) } ?: 0
                 
@@ -217,8 +221,12 @@ class CallbackAudioProcessor : PortAudioDevice.AudioDataCallback {
                 }
                 
                 val processedAudio = try {
-                    // 使用标准的processFrame方法，避免复杂的输出重采样
-                    currentApm.processFrame(audioData)
+                    // 使用支持诊断模式的processFrame方法，而不是 processAndResample
+                    currentApm.processAndResample(audioData,
+                        outputSampleRate = AudioDefaults.Formats.WEBRTC_APM.sampleRate,
+                        outputChannels = AudioDefaults.Formats.WEBRTC_APM.channels
+                    )
+
                 } catch (e: Exception) {
                     logger.error("音频处理异常: ${e.message}")
                     return
@@ -341,6 +349,15 @@ class CallbackAudioProcessor : PortAudioDevice.AudioDataCallback {
     fun setVadCallback(callback: (Boolean) -> Unit) {
         synchronized(callbackLock) {
             this.vadCallback = callback
+        }
+    }
+    
+    /**
+     * 设置原始音频回调
+     */
+    fun setRawAudioCallback(callback: (ShortArray, Int) -> Unit) {
+        synchronized(callbackLock) {
+            rawAudioCallback = callback
         }
     }
     
@@ -517,4 +534,4 @@ class CallbackAudioProcessor : PortAudioDevice.AudioDataCallback {
         
         return kotlin.math.sqrt(sum / audioData.size) / Short.MAX_VALUE
     }
-} 
+}

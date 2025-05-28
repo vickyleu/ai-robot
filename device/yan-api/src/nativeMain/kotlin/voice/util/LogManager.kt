@@ -17,8 +17,13 @@ object LogManager {
         DEBUG, INFO, WARN, ERROR
     }
 
-    // 默认日志级别
+    // 默认日志级别 - 确保所有调试日志都能输出
     private var defaultLogLevel = LogLevel.DEBUG
+    
+    init {
+        // 强制设置为DEBUG级别，确保🎯标识的调试日志能够输出
+        println("[LogManager] 初始化日志管理器，默认级别: ${defaultLogLevel}")
+    }
 
     /**
      * 设置默认日志级别
@@ -45,7 +50,8 @@ object LogManager {
          * 记录调试日志
          */
         fun debug(message: String) {
-            if (defaultLogLevel.ordinal <= LogLevel.DEBUG.ordinal) {
+            // 对于包含🎯标识的调试日志，强制输出
+            if (message.contains("🎯") || defaultLogLevel.ordinal <= LogLevel.DEBUG.ordinal) {
                 println("[DEBUG][$tag] $message")
             }
         }
@@ -54,7 +60,8 @@ object LogManager {
          * 记录信息日志
          */
         fun info(message: String) {
-            if (defaultLogLevel.ordinal <= LogLevel.INFO.ordinal) {
+            // 对于包含🎯标识的信息日志，强制输出
+            if (message.contains("🎯") || defaultLogLevel.ordinal <= LogLevel.INFO.ordinal) {
                 println("[INFO][$tag] $message")
             }
         }
@@ -164,4 +171,4 @@ object LogManager {
 @OptIn(ExperimentalTime::class)
 fun TimeMark.toEpochMilliseconds(): Long {
     return System.now().toEpochMilliseconds() + (elapsedNow().inWholeMilliseconds)
-} 
+}
