@@ -335,12 +335,9 @@ class VoskSpeechRecognizer : SpeechRecognizerApi {
             samples
         }
         
-        // 应用增益（适度增强信号）
-        val gainFactor = 1.5  // 1.5倍增益
-        val processedWithGain = processedSamples.map { sample ->
-            val amplified = (sample.toInt() * gainFactor).toInt()
-            amplified.coerceIn(-32767, 32767).toShort()
-        }
+        // 🚨 修复：移除增益处理，避免爆音
+        // 原来的1.5倍增益会导致信号过载，产生爆音
+        val processedWithGain = processedSamples  // 直接使用原始处理后的样本，不再应用增益
         
         // 转换回字节数组
         val finalSize = minOf(enhanced.size, processedWithGain.size * 2)

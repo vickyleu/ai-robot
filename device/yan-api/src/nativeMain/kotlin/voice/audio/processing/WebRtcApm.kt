@@ -581,112 +581,133 @@ class SafeSoxrResampler(
     }
     
     /**
-     * 使用SOXR进行采样率转换
+     * 使用SOXR进行采样率转换 - 优化版本：重点避免而非检测问题
      */
     private fun resampleAudio(inputData: ShortArray): ShortArray {
         if (soxrWrapper == null) {
-            logger.error("SOXR包装器为空")
-            return inputData
+            logger.error("SOXR包装器为空，使用简单插值")
+            return simpleResample(inputData)
         }
         
-        // 输入数据质量预检查
+        // 🎯 策略1：严格的输入预处理，从源头避免问题
         val inputMaxAmp = inputData.maxOfOrNull { kotlin.math.abs(it.toInt()) } ?: 0
         val inputNonZeroCount = inputData.count { it != 0.toShort() }
         val inputZeroRatio = (inputData.size - inputNonZeroCount).toFloat() / inputData.size
         
-        // 如果输入数据质量太差，直接返回简单插值结果
-        if (inputZeroRatio > 0.98f) {
-            logger.warn("输入数据零值过多(${"%.4f".format(inputZeroRatio)})，使用简单插值避免SOXR失真")
+        // 🎯 策略2：优先使用简单插值，避免SOXR的复杂性
+        // 只有在数据质量极好且采样率差异较大时才使用SOXR
+        val sampleRateRatio = outputSampleRate.toDouble() / inputSampleRate.toDouble()
+        val shouldUseSimpleResample = when {
+            inputZeroRatio > 0.5f -> {
+                logger.debug("输入数据零值过多(${"%.4f".format(inputZeroRatio)})，避免SOXR，使用简单插值")
+                true
+            }
+            inputMaxAmp < 100 -> {
+                logger.debug("输入信号过弱($inputMaxAmp)，避免SOXR，使用简单插值")
+                true
+            }
+            inputData.size < 160 -> {
+                logger.debug("输入数据过短(${inputData.size}样本)，避免SOXR，使用简单插值")
+                true
+            }
+            sampleRateRatio < 1.5 && sampleRateRatio > 0.67 -> {
+                logger.debug("采样率差异较小(${"%.2f".format(sampleRateRatio)})，避免SOXR，使用简单插值")
+                true
+            }
+            else -> false
+        }
+        
+        if (shouldUseSimpleResample) {
             return simpleResample(inputData)
         }
         
-        // 计算期望的输出大小
-        val expectedOutputSize = (inputData.size * outputSampleRate.toDouble() / inputSampleRate.toDouble()).toInt()
-        val outputBufferSize = (expectedOutputSize * 12 / 10).coerceAtLeast(inputData.size)
+        // 🎯 策略3：输入数据安全预处理，确保绝对安全
+        val safeInputData = ShortArray(inputData.size) { i ->
+            val sample = inputData[i].toInt()
+            // 严格限制范围并轻微衰减，避免边界值
+            val safeSample = sample.coerceIn(-30000, 30000)
+            (safeSample * 0.95).toInt().toShort()  // 轻微衰减5%，远离边界
+        }
+        
+        val safeMaxAmp = safeInputData.maxOfOrNull { kotlin.math.abs(it.toInt()) } ?: 0
+        logger.debug("SOXR输入安全预处理: 原始最大振幅=$inputMaxAmp -> 安全最大振幅=$safeMaxAmp")
+        
+        // 🎯 策略4：保守的输出缓冲区计算
+        val expectedOutputSize = (safeInputData.size * sampleRateRatio).toInt()
+        val outputBufferSize = (expectedOutputSize * 11 / 10).coerceAtLeast(safeInputData.size)  // 减少缓冲区余量
         
         // 安全性检查
-        if (outputBufferSize <= 0) {
-            logger.error("计算的输出缓冲区大小无效: $outputBufferSize")
-            return inputData
-        }
-        
-        // 如果缓冲区太大，使用简单重采样避免内存问题
-        if (outputBufferSize > 500000) {  // 增加限制到500000，但超出时使用简单重采样
-            logger.warn("计算的输出缓冲区大小过大($outputBufferSize)，使用简单插值重采样")
+        if (outputBufferSize <= 0 || outputBufferSize > 100000) {  // 降低最大缓冲区限制
+            logger.warn("输出缓冲区大小不安全($outputBufferSize)，使用简单插值")
             return simpleResample(inputData)
         }
         
-        // 🚨 修复：移除危险的增益boost，避免爆音
-        // 原来的增益boost会导致信号过载，产生爆音
-        val boostedInput = inputData
-        val boostFactor = 1.0f // 不再应用增益boost
-        
-        val actualMaxAmp = boostedInput.maxOfOrNull { kotlin.math.abs(it.toInt()) } ?: 0
-        logger.debug("SOXR输入预处理: 最大振幅=$actualMaxAmp (无增益boost)")
-        
         var outputBuffer: CPointer<FloatVar>? = null
-        logger.debug("开始SOXR重采样: 输入=${boostedInput.size}样本, 输出缓冲区大小=$outputBufferSize")
-        
-        // SOXR处理前输入数据质量检查
-        val preNonZeroCount = boostedInput.count { it != 0.toShort() }
-        val preZeroRatio = (boostedInput.size - preNonZeroCount).toFloat() / boostedInput.size
-        logger.debug("SOXR预处理后输入统计: 最大振幅=$actualMaxAmp, 非零样本=${preNonZeroCount}/${boostedInput.size}, 零值比例=${"%.4f".format( preZeroRatio)}, 前5个样本=${boostedInput.take(5).joinToString(",")}")
+        logger.debug("开始SOXR重采样: 输入=${safeInputData.size}样本, 输出缓冲区大小=$outputBufferSize")
         
         try {
             outputBuffer = nativeHeap.allocArray<FloatVar>(outputBufferSize)
             
+            // 🎯 策略5：初始化输出缓冲区为安全值
+            for (i in 0 until outputBufferSize) {
+                outputBuffer[i] = 0.0f
+            }
+            
             val outputFrames = soxr_wrapper_process(
                 wrapper = soxrWrapper,
-                in_data = boostedInput.refTo(0),
-                in_size = boostedInput.size.toUInt(),
+                in_data = safeInputData.refTo(0),
+                in_size = safeInputData.size.toUInt(),
                 out_data = outputBuffer,
                 out_size = outputBufferSize.toUInt()
             )
             
-            if (outputFrames == 0U && boostedInput.isNotEmpty()) {
-                logger.error("SOXR重采样返回0帧，回退到简单插值")
+            if (outputFrames == 0U || outputFrames.toInt() > outputBufferSize) {
+                logger.warn("SOXR返回异常帧数($outputFrames)，使用简单插值")
                 return simpleResample(inputData)
             }
             
             logger.debug("SOXR处理完成: 输出帧数=${outputFrames}")
             
-            // 检查SOXR输出的float数据质量
-            val floatSamples = (0 until outputFrames.toInt()).map { outputBuffer[it] }
-            val floatMaxAmp = floatSamples.maxOfOrNull { kotlin.math.abs(it) } ?: 0f
-            val floatNonZeroCount = floatSamples.count { kotlin.math.abs(it) > 1e-6f }
-            val floatZeroRatio = (floatSamples.size - floatNonZeroCount).toFloat() / floatSamples.size
-            logger.debug("SOXR Float输出统计: 最大振幅=${"%.6f".format( floatMaxAmp)}, 非零样本=${floatNonZeroCount}/${floatSamples.size}, 零值比例=${"%.4f".format( floatZeroRatio)}, 前5个样本=${floatSamples.take(5).joinToString(",") { "%.6f".format( it) }}")
-            
-            // 检测SOXR输出异常
-            if (floatZeroRatio > 0.95f && preZeroRatio < 0.5f) {
-                logger.error("🚨 SOXR严重失真: 输入有效(零值${"%.4f".format( preZeroRatio)})但输出几乎全零(零值${"%.4f".format( floatZeroRatio)})")
-                logger.error("回退到简单插值算法")
-                return simpleResample(inputData)
-            }
-            
-            // 🚨 修复：简化FLOAT32到INT16转换，移除增益补偿逻辑
-            // 直接转换，不应用任何增益调整，避免爆音
+            // 🎯 策略6：极简的输出处理，避免复杂检测，直接清理
             val result = ShortArray(outputFrames.toInt()) { i ->
-                val floatSample = outputBuffer[i].coerceIn(-1f, 1f)
-                (floatSample * 32767f).toInt().toShort()
+                val raw = outputBuffer[i]
+                
+                // 简单直接的清理：任何异常值都设为0
+                val cleanFloat = when {
+                    raw.isNaN() || raw.isInfinite() -> 0f
+                    raw > 1f -> 1f
+                    raw < -1f -> -1f
+                    kotlin.math.abs(raw) > 2f -> 0f  // 任何超过±2的值都清零
+                    else -> raw
+                }
+                
+                // 转换为INT16，额外安全限制
+                val intValue = (cleanFloat * 30000f).toInt()  // 使用30000而非32767，更安全
+                intValue.coerceIn(-30000, 30000).toShort()
             }
             
-            // 转换后INT16数据质量检查
-            val postMaxAmp = result.maxOfOrNull { kotlin.math.abs(it.toInt()) } ?: 0
-            val postNonZeroCount = result.count { it != 0.toShort() }
-            val postZeroRatio = (result.size - postNonZeroCount).toFloat() / result.size
-            logger.debug("SOXR Int16输出统计: 最大振幅=$postMaxAmp, 非零样本=${postNonZeroCount}/${result.size}, 零值比例=${"%.4f".format( postZeroRatio)}, 前5个样本=${result.take(5).joinToString(",")}")
+            // 🎯 策略7：简单的最终验证，有问题就回退
+            val resultMaxAmp = result.maxOfOrNull { kotlin.math.abs(it.toInt()) } ?: 0
+            val resultNonZeroCount = result.count { it != 0.toShort() }
+            val resultZeroRatio = (result.size - resultNonZeroCount).toFloat() / result.size
             
-            // 最终质量检查
-            if (postZeroRatio > 0.95f && preZeroRatio < 0.5f) {
-                logger.error("🚨 SOXR Int16转换后严重失真，回退到简单插值")
-                logger.error("输入参数: ${inputSampleRate}Hz -> ${outputSampleRate}Hz, ${inputChannels}ch -> ${outputChannels}ch")
+            // 简单判断：如果结果明显异常，直接回退
+            if (resultZeroRatio > 0.8f && inputZeroRatio < 0.3f) {
+                logger.warn("SOXR结果质量差，回退到简单插值")
                 return simpleResample(inputData)
             }
             
-            logger.debug("SOXR重采样成功: ${inputData.size} -> ${result.size}样本, 振幅变化: $inputMaxAmp -> $postMaxAmp")
+            if (resultMaxAmp == 0 && inputMaxAmp > 500) {
+                logger.warn("SOXR输出全零但输入有效，回退到简单插值")
+                return simpleResample(inputData)
+            }
+            
+            logger.debug("SOXR重采样成功: ${inputData.size} -> ${result.size}样本, 振幅变化: $inputMaxAmp -> $resultMaxAmp")
             return result
             
+        } catch (e: Exception) {
+            logger.warn("SOXR处理异常: ${e.message}，使用简单插值")
+            return simpleResample(inputData)
         } finally {
             outputBuffer?.let { buffer ->
                 try {
@@ -1349,12 +1370,24 @@ class WebRtcApm : AutoCloseable {
             val processedNonZeroCount = processedData.count { it != 0.toShort() }
             val processedZeroRatio = (processedData.size - processedNonZeroCount).toFloat() / processedData.size
             
-            // 🚨 强制透明传递检查 - 如果APM过度处理，直接返回输入数据
+            // 🚨 强制透明传递检查 - 如果APM过度处理，返回安全处理的重采样数据
             if (processedZeroRatio > 0.5f && preApmZeroRatio < 0.1f) {
                 logger.error("🚨 APM过度处理检测: 输入零值比例=${"%.4f".format( preApmZeroRatio)} -> 输出零值比例=${"%.4f".format( processedZeroRatio)}")
-                logger.error("🚨 强制启用透明传递模式，直接返回重采样数据")
+                logger.error("🚨 强制启用透明传递模式，返回安全处理的重采样数据")
                 logger.error("🚨 APM配置可能仍有隐藏的激进处理功能")
-                return resampledData
+                
+                // 对重采样数据进行安全处理，防止爆音
+                val safeResampledData = ShortArray(resampledData.size) { i ->
+                    val sample = resampledData[i].toInt()
+                    // 大幅降低音量并限制范围
+                    val safeSample = (sample * 0.1).toInt().coerceIn(-16000, 16000)
+                    safeSample.toShort()
+                }
+                
+                val safeMaxAmp = safeResampledData.maxOfOrNull { kotlin.math.abs(it.toInt()) } ?: 0
+                logger.debug("透明传递安全处理: 原始最大振幅=${resampledData.maxOfOrNull { kotlin.math.abs(it.toInt()) } ?: 0} -> 安全最大振幅=$safeMaxAmp")
+                
+                return safeResampledData
             }
             
             if (vadLogCounter % 500 == 0) {

@@ -789,14 +789,14 @@ class PortAudioDevice private constructor() : AudioDevice {
                         // 使用Pa_OpenStream打开流
                         val streamVar = nativeHeap.alloc<COpaquePointerVar>()
                         try {
-                            logger.info("打开输出流: rate=$sampleRate, channels=$channels, buf=2048")
+                            logger.info("打开输出流: rate=$sampleRate, channels=$channels, buf=512")
                             val result = Pa_OpenDefaultStream(
                                 stream = streamVar.ptr,
                                 numOutputChannels = channels,
                                 numInputChannels = 0, // 输出流不需要输入通道
                                 sampleRate = sampleRate.toDouble(),
                                 sampleFormat = paInt16,
-                                framesPerBuffer = 2048u, // 增大缓冲区，提高稳定性
+                                framesPerBuffer = 512u, // 减小缓冲区，降低延迟，提高响应速度
                                 streamCallback = null,
                                 userData = null
                             )
@@ -1340,7 +1340,7 @@ class PortAudioDevice private constructor() : AudioDevice {
         try {
             val outputChannels = AudioDefaults.OUTPUT_DEVICE_CHANNELS
             // 分批次播放数据
-            val chunkSizeSamples = 1024 * outputChannels  // 确保是完整的帧
+            val chunkSizeSamples = 256 * outputChannels  // 减小chunk，提高响应速度
             val tempBuffer = nativeHeap.allocArray<ShortVar>(chunkSizeSamples)
 
             var offset = 0
