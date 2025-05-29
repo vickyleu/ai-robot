@@ -210,29 +210,10 @@ class KeywordDetector(
                         // 检测关键词 - 使用累积的音频数据
                         voskDetector.detect(combinedAudio)
                         
-                        // 🎯 异步播放确认：避免阻塞音频流
-                        if (AudioDefaults.ENABLE_PLAYBACK_CONFIRMATION) {
-                            // 复制音频数据，避免在异步处理中被修改
-                            val audioForPlayback = combinedAudio.copyOf()
-                            val rawAudioCopy = if (rawAudioBuffer.isNotEmpty() && totalRawAudioSamples > 0) {
-                                val combinedRawAudio = ShortArray(totalRawAudioSamples)
-                                var offset = 0
-                                for (chunk in rawAudioBuffer) {
-                                    chunk.copyInto(combinedRawAudio, offset)
-                                    offset += chunk.size
-                                }
-                                combinedRawAudio
-                            } else null
-                            
-                            // 异步执行播放确认，不阻塞音频流
-                            scope.launch {
-                                try {
-                                    performPlaybackConfirmation(audioForPlayback, rawAudioCopy)
-                                } catch (e: Exception) {
-                                    logger.error("🎯 异步播放确认失败: ${e.message}")
-                                }
-                            }
-                        }
+                        // 🎯 临时禁用播放确认，专注于解决基础音频流问题
+                        // if (AudioDefaults.ENABLE_PLAYBACK_CONFIRMATION) {
+                        //     // 播放确认代码暂时注释
+                        // }
                         
                         // 清空缓冲区，准备下一轮累积
                         audioBuffer.clear()

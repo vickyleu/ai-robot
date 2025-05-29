@@ -578,7 +578,7 @@ class PortAudioDevice private constructor() : AudioDevice {
      * @param callback 回调接口
      * @param bufferSize 缓冲区大小
      */
-    fun setAudioCallback(callback: AudioDataCallback?, bufferSize: Int = 512) {
+    fun setAudioCallback(callback: AudioDataCallback?, bufferSize: Int = 2048) {
         synchronized(callbackLock) {
             this.audioCallback = callback
             this.callbackBufferSize = bufferSize
@@ -639,7 +639,7 @@ class PortAudioDevice private constructor() : AudioDevice {
                             inputParams.device = paUseHostApiSpecificDeviceSpecification
                             inputParams.channelCount = channels
                             inputParams.sampleFormat = paInt16
-                            inputParams.suggestedLatency = 0.2 // 增加推荐延迟，原来是0.1
+                            inputParams.suggestedLatency = 0.5 // 增大推荐延迟，减少回调频率
 
                             // 使用Pa_OpenStream打开流
                             val streamVar = nativeHeap.alloc<COpaquePointerVar>()
@@ -789,14 +789,14 @@ class PortAudioDevice private constructor() : AudioDevice {
                         // 使用Pa_OpenStream打开流
                         val streamVar = nativeHeap.alloc<COpaquePointerVar>()
                         try {
-                            logger.info("打开输出流: rate=$sampleRate, channels=$channels, buf=512")
+                            logger.info("打开输出流: rate=$sampleRate, channels=$channels, buf=2048")
                             val result = Pa_OpenDefaultStream(
                                 stream = streamVar.ptr,
                                 numOutputChannels = channels,
                                 numInputChannels = 0, // 输出流不需要输入通道
                                 sampleRate = sampleRate.toDouble(),
                                 sampleFormat = paInt16,
-                                framesPerBuffer = 512u, // 减小缓冲区，降低延迟，提高响应速度
+                                framesPerBuffer = 2048u, // 增大缓冲区，减少回调频率，降低CPU负载
                                 streamCallback = null,
                                 userData = null
                             )
@@ -1340,7 +1340,7 @@ class PortAudioDevice private constructor() : AudioDevice {
         try {
             val outputChannels = AudioDefaults.OUTPUT_DEVICE_CHANNELS
             // 分批次播放数据
-            val chunkSizeSamples = 256 * outputChannels  // 减小chunk，提高响应速度
+            val chunkSizeSamples = 1024 * outputChannels  // 增大chunk，提高播放连续性
             val tempBuffer = nativeHeap.allocArray<ShortVar>(chunkSizeSamples)
 
             var offset = 0
