@@ -1376,18 +1376,18 @@ class WebRtcApm : AutoCloseable {
                 logger.error("🚨 强制启用透明传递模式，返回安全处理的重采样数据")
                 logger.error("🚨 APM配置可能仍有隐藏的激进处理功能")
                 
-                // 对重采样数据进行安全处理，防止爆音
-                val safeResampledData = ShortArray(resampledData.size) { i ->
-                    val sample = resampledData[i].toInt()
-                    // 大幅降低音量并限制范围
-                    val safeSample = (sample * 0.1).toInt().coerceIn(-16000, 16000)
-                    safeSample.toShort()
-                }
-                
-                val safeMaxAmp = safeResampledData.maxOfOrNull { kotlin.math.abs(it.toInt()) } ?: 0
-                logger.debug("透明传递安全处理: 原始最大振幅=${resampledData.maxOfOrNull { kotlin.math.abs(it.toInt()) } ?: 0} -> 安全最大振幅=$safeMaxAmp")
-                
-                return safeResampledData
+                // 对重采样数据进行安全处理，防止爆音 - 改为直接返回原始重采样数据
+                // val safeResampledData = ShortArray(resampledData.size) { i ->
+                //     val sample = resampledData[i].toInt()
+                //     // 大幅降低音量并限制范围
+                //     val safeSample = (sample * 0.1).toInt().coerceIn(-16000, 16000)
+                //     safeSample.toShort()
+                // }
+                // 
+                // val safeMaxAmp = safeResampledData.maxOfOrNull { kotlin.math.abs(it.toInt()) } ?: 0
+                // logger.debug("透明传递安全处理: 原始最大振幅=${resampledData.maxOfOrNull { kotlin.math.abs(it.toInt()) } ?: 0} -> 安全最大振幅=$safeMaxAmp")
+                logger.warn("🚧 APM过度处理，返回原始重采样数据以恢复音频，但可能存在APM试图抑制的爆音或失真。")
+                return resampledData
             }
             
             if (vadLogCounter % 500 == 0) {

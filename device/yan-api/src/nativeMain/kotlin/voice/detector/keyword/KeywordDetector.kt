@@ -198,12 +198,12 @@ class KeywordDetector(
                         if (currentTime - lastVoskProcessTime < minVoskProcessIntervalMs) {
                             logger.debug("Vosk处理间隔太短，跳过本次处理: ${currentTime - lastVoskProcessTime}ms < ${minVoskProcessIntervalMs}ms")
                             // 清空缓冲区，准备下一轮累积
-                            audioBuffer.clear()
-                            totalAudioSamples = 0
-                            consecutiveAudioFrames = 0
-                            rawAudioBuffer.clear()
-                            totalRawAudioSamples = 0
-                            return@setProcessedAudioCallback
+                        audioBuffer.clear()
+                        totalAudioSamples = 0
+                        consecutiveAudioFrames = 0
+                        rawAudioBuffer.clear()
+                        totalRawAudioSamples = 0
+                        return@setProcessedAudioCallback
                         }
                         lastVoskProcessTime = currentTime
                         
