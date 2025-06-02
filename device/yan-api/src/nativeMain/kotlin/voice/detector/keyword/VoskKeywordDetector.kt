@@ -2,12 +2,14 @@
 
 package voice.detector.keyword
 
+import com.airobot.core.utils.format
 import kotlinx.cinterop.*
 import kotlinx.datetime.Clock
 import kotlinx.datetime.Clock.System
 import voice.util.LogManager
 import voice.audio.recognition.VoskSpeechRecognizer
 import kotlinx.serialization.json.*
+import voice.util.AudioDefaults
 import kotlin.time.ExperimentalTime
 import voice.util.AudioUtils
 
@@ -32,7 +34,7 @@ class VoskKeywordDetector {
     
     // 音频缓冲区
     private var audioBuffer = ByteArray(0)
-    private val maxBufferSize = 16000 // 从32000减少到16000，即1秒@16kHz，提高响应速度
+    private val maxBufferSize = AudioDefaults.VOSK_KEYWORD_MAX_BUFFER_SIZE // 增加到32000，即2秒@16kHz，减少处理频率
     
     // 检测控制
     private var lastDetectionTime = 0L
@@ -40,7 +42,7 @@ class VoskKeywordDetector {
 
     // 关键词缓存和优化
     private val keywordCache = mutableMapOf<String, Long>()
-    private val keywordCacheDuration = 500L // 从1000L减少到500L，减少重复触发间隔
+    private val keywordCacheDuration = AudioDefaults.KEYWORD_CACHE_DURATION_MS // 从1000L减少到500L，减少重复触发间隔
 
     /**
      * 初始化Vosk关键词检测器
@@ -157,6 +159,13 @@ class VoskKeywordDetector {
                 logger.info("开始Vosk识别: 缓冲区大小=${audioBuffer.size}字节 (${audioBuffer.size/32}ms)")
             }
 
+            // 🔧 调试：检查音频数据质量
+            val audioShorts = voice.util.AudioUtils.byteArrayToShortArray(audioBuffer)
+            val maxAmp = audioShorts.maxOfOrNull { kotlin.math.abs(it.toInt()) } ?: 0
+            val nonZeroCount = audioShorts.count { it != 0.toShort() }
+            val zeroRatio = (audioShorts.size - nonZeroCount).toFloat() / audioShorts.size
+            logger.debug("🔧 Vosk音频质量: 最大振幅=$maxAmp, 零值比例=${"%.3f".format(zeroRatio)}, 样本数=${audioShorts.size}")
+
             // 调用识别器处理整个缓冲区
             val result = recognizer.recognize(audioBuffer, audioBuffer.size, currentTime)
             // 检查结果中的关键词
@@ -183,6 +192,12 @@ class VoskKeywordDetector {
                 }
             } else {
                 logger.debug("Vosk识别无结果: success=${result.success}, text=\"${result.text}\"")
+                // 🔧 新增：更详细的失败原因分析
+                if (result.success && result.text.isBlank()) {
+                    logger.warn("⚠️ Vosk处理成功但返回空文本，可能原因: 1)音频质量不足 2)非语音内容 3)模型语言不匹配 4)置信度过低")
+                } else if (!result.success) {
+                    logger.warn("⚠️ Vosk处理失败: ${result.errorMessage}")
+                }
             }
 
             // 如果没有检测到关键词，但缓冲区已满，清理一部分旧数据
@@ -217,4 +232,4 @@ class VoskKeywordDetector {
             logger.info("Vosk关键词检测器资源已释放")
         }
     }
-} 
+}
