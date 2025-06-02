@@ -64,7 +64,7 @@ class KeywordDetector(
     // 音频质量判断参数
     // 当 calculateRmsEnergy 归一化到 0~1 区间后，正常语音 RMS ≈ 0.03~0.3。
     // 🔧 调整阈值：既能累积正常语音，又不会过于敏感
-    private val minValidRms = 0.005  // 🔧 从0.008降回0.005，确保正常语音（RMS=0.006）能够累积
+    private val minValidRms = 0.003  // 🔧 从0.005降到0.003，确保"小度小度"中间较轻的部分也能被累积
     
     // 添加计数器以限制日志
     private var audioReadCounter = 0
@@ -90,7 +90,7 @@ class KeywordDetector(
     private var lastAudioTime = 0L
     private val maxSilenceGapMs = 5000L                  // 最大静音间隔：超过5秒则重置累积 - 🔧 从2秒增加到5秒，避免连续语音被重置
     private var consecutiveAudioFrames = 0
-    private val minConsecutiveFrames = 2  // 🔧 从3降回2帧，确保短暂语音也能开始累积音频
+    private val minConsecutiveFrames = 1  // 🔧 从2降到1帧，让系统更容易开始累积"小度小度"
     
     // 🔧 振幅稳定化 - 添加移动平均滤波器
     private val amplitudeHistory = mutableListOf<Int>()
@@ -265,23 +265,24 @@ class KeywordDetector(
                     // 🔧 使用原始RMS进行语音检测，确保振幅稳定化不影响检测逻辑
                     val rmsForDetection = originalNormalizedRms
                     
-                    // 🔧 放宽的语音检测策略：VAD或能量检测任一满足即可
+                    // 🔧 放宽的语音检测策略：VAD或能量检测任一满足即可，降低能量阈值
                     val vadDetected = audioProcessor.isVoiceDetected()
-                    val energyThreshold = 0.010f  // 🔧 从0.025降到0.010，确保正常语音（RMS=0.011）能够通过能量检测
+                    val energyThreshold = 0.008f  // 🔧 从0.010降到0.008，更容易检测到"小度小度"中间的低能量部分
                     
                     // 🔧 放宽的语音检测：VAD检测到语音 OR 能量足够高
                     val hasValidVoice = vadDetected || rmsForDetection >= energyThreshold
                     
-                    // 🔧 简化的连续帧数管理
+                    // 🔧 更容忍的连续帧数管理，避免因短暂能量下降就丢失语音
                     if (hasValidVoice) {
                         consecutiveAudioFrames++
                         if (consecutiveAudioFrames <= 5) {
                             logger.debug("连续帧数增加: ${consecutiveAudioFrames-1} -> $consecutiveAudioFrames, RMS=${"%.4f".format(rmsForDetection)}")
                         }
                     } else {
-                        // 🔧 修改：不要因为单帧失败就立即重置，给连续帧检测更多容忍度
+                        // 🔧 更温和的连续帧重置：不要因为单帧失败就立即重置，给更多容忍度
                         if (consecutiveAudioFrames > 0) {
-                            consecutiveAudioFrames--  // 逐步减少而不是立即清零
+                            // 只有连续多帧都失败才开始递减
+                            consecutiveAudioFrames = maxOf(0, consecutiveAudioFrames - 1)  // 更缓慢的递减
                             if (consecutiveAudioFrames <= 0) {
                                 consecutiveAudioFrames = 0
                                 logger.debug("连续语音检测失败，重置连续帧计数: RMS=${"%.4f".format(rmsForDetection)}")
@@ -293,7 +294,7 @@ class KeywordDetector(
                         // 🔧 严格重置语音活动状态：VAD静音且能量低时立即重置
                         if (isInVoiceActivity && (!vadDetected || rmsForDetection < minValidRms)) {
                             val silenceDuration = currentTime - lastVoiceActivityTime
-                            if (silenceDuration > 1500L) { // 🔧 从500ms增加到1500ms，给语音活动更多持续性，避免"小度小度"中间停顿被误判为结束
+                            if (silenceDuration > 800L) { // 🔧 从3000ms降到800ms，合理的语音助手响应时间，但足够容忍"小度小度"中间停顿
                                 logger.debug("检测到静音${silenceDuration}ms（VAD=${vadDetected}, RMS=${"%.4f".format(rmsForDetection)}），重置语音活动状态")
                                 isInVoiceActivity = false
                                 audioBufferMutex.withLock {
