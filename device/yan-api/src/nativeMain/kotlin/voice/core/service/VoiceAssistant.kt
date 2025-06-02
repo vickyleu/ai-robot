@@ -22,6 +22,7 @@ import voice.audio.processing.CallbackAudioProcessor
 import voice.core.config.VoiceAssistantConfig
 import voice.detector.keyword.KeywordDetector
 import voice.synthesis.PiperSpeechSynthesizer
+import voice.util.AudioDefaults
 import voice.util.LogManager
 import kotlin.time.ExperimentalTime
 
@@ -64,7 +65,7 @@ class VoiceAssistant(
     private var onKeywordDetectedCallback: ((String) -> Unit)? = null
 
     // 超时设置 (毫秒)
-    private val activeListeningTimeout = 10000L
+    private val activeListeningTimeout = AudioDefaults.ACTIVE_LISTENING_TIMEOUT_MS
     private val keywords = mutableListOf<String>()
 
     /**
@@ -122,9 +123,19 @@ class VoiceAssistant(
                 val actualSampleRate = audioDevice.getSampleRate()
                 val actualChannels = audioDevice.getChannels()
                 
+                logger.info("🔧 开始初始化音频处理器: 采样率=${actualSampleRate}Hz, 通道数=${actualChannels}")
+                
                 // 初始化音频处理器
                 if (!audioProcessor.initialize(actualSampleRate, actualChannels)) {
-                    logger.error("音频处理器初始化失败")
+                    logger.error("❌ 音频处理器初始化失败 - 这是关键错误，必须修复！")
+                    throw Exception("CallbackAudioProcessor初始化失败")
+                }
+                
+                // 验证处理器是否真正初始化成功
+                val thirdPartyProcessor = audioProcessor.getThirdPartyProcessor()
+                if (AudioDefaults.USE_THIRD_PARTY_PROCESSOR && thirdPartyProcessor == null) {
+                    logger.error("❌ 第三方音频处理器未正确创建")
+                    throw Exception("ThirdPartyAudioProcessor创建失败")
                 }
                 
                 // 启用回声消除
@@ -133,10 +144,11 @@ class VoiceAssistant(
                     isEchoCancellationEnabled = true
                 }
                 
-                logger.info("音频处理器初始化成功，${if (config.enableEchoCancellation) "已启用" else "已禁用"}回声消除")
+                logger.info("✅ 音频处理器初始化成功，${if (config.enableEchoCancellation) "已启用" else "已禁用"}回声消除")
             } catch (e: Exception) {
-                logger.error("音频处理器初始化失败: ${e.message}")
-                // 初始化失败不影响整体流程
+                logger.error("❌ 音频处理器初始化失败: ${e.message}")
+                // 🚨 修改：初始化失败必须影响整体流程！
+                throw Exception("音频处理器初始化失败，无法继续: ${e.message}")
             }
             
             // 启动状态监控
@@ -414,7 +426,7 @@ class VoiceAssistant(
         try {
             // 使用WebRtcApmSingleton全局设置
             val singleton = WebRtcApmSingleton
-            singleton.getInstance(16000, 1)?.enableEchoCancellation(enabled)
+            singleton.getInstance(AudioDefaults.WEBRTC_APM_SAMPLE_RATE, AudioDefaults.INPUT_DEVICE_CHANNELS)?.enableEchoCancellation(enabled)
             
             // 设置当前处理器的APM实例 - 使用安全方法
             audioProcessor.setEchoCancellationEnabled(enabled)

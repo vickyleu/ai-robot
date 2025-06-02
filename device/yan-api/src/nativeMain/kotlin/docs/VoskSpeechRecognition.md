@@ -26,14 +26,14 @@
    # 创建模型目录
    sudo mkdir -p /usr/local/share/yanshee-model
    
-   # 下载模型（以中文小型模型为例）
-   wget https://alphacephei.com/vosk/models/vosk-model-small-cn-0.22.zip
+   # 下载模型（以中文多方言模型为例）
+   wget https://alphacephei.com/vosk/models/vosk-model-cn-kaldi-multicn-0.15.zip
    
    # 解压模型
-   unzip vosk-model-small-cn-0.22.zip
+   unzip vosk-model-cn-kaldi-multicn-0.15.zip
    
    # 移动模型文件
-   sudo mv vosk-model-small-cn-0.22/* /usr/local/share/yanshee-model/
+   sudo mv vosk-model-cn-kaldi-multicn-0.15/* /usr/local/share/yanshee-model/
    ```
 
 ## 使用方法

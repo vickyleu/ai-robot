@@ -18,6 +18,9 @@ import com.airobot.voskinterop.vosk_recognizer_set_endpointer_delays
 import com.airobot.voskinterop.vosk_recognizer_set_endpointer_mode
 import com.airobot.voskinterop.vosk_recognizer_set_words
 import com.airobot.voskinterop.vosk_recognizer_set_grm
+import com.airobot.voskinterop.vosk_recognizer_set_max_alternatives
+import com.airobot.voskinterop.vosk_recognizer_set_partial_words
+import com.airobot.voskinterop.vosk_set_log_level
 import kotlinx.atomicfu.locks.ReentrantLock
 import kotlinx.cinterop.CPointer
 import kotlinx.cinterop.ExperimentalForeignApi
@@ -69,14 +72,14 @@ class VoskSpeechRecognizer : SpeechRecognizerApi {
     private var accumulatedAudio = ByteArray(0)
     private var lastRecognitionTime = 0L
 
-    private val minAudioBufferSize = 320 // 20ms数据量
-    private val maxAudioBufferSize = 6400 // 增大到400ms数据量，原来是3200
-    private val recognitionCooldownMs = 150L // 增加到150ms，原来是100ms
+    private val minAudioBufferSize = AudioDefaults.VOSK_MIN_AUDIO_BUFFER_SIZE / 2 // 🔧 减半到320字节，20ms数据量，更快响应
+    private val maxAudioBufferSize = AudioDefaults.VOSK_MAX_AUDIO_BUFFER_SIZE // 保持800ms数据量上限
+    private val recognitionCooldownMs = 100L // 🔧 减少到100ms，更快响应
 
 
     private var isStreamProcessing = false
     private var silenceFrames = 0
-    private val maxSilenceFrames = 10 // 100ms静音触发识别
+    private val maxSilenceFrames = 150 // 1500ms静音触发识别 - 🔧 从500ms增加到1500ms，避免连续语音截断
 
     // 关键词和命令管理 
     private val registeredKeywords = mutableListOf<String>()
@@ -84,6 +87,55 @@ class VoskSpeechRecognizer : SpeechRecognizerApi {
         "你好", "嗨", "哈喽", "开始", "停止", "暂停", "继续", 
         "音量大", "音量小", "音量增大", "音量减小", "放大声音", "调小声音",
         "关闭", "打开", "启动", "退出"
+    )
+    
+    // === Vosk 优化配置 ===
+    // 多候选结果设置
+    private val voskMaxAlternatives: Int = 5                     // 获取多个候选结果，提高识别准确性
+    private val voskEnableWords: Boolean = true                  // 启用词级别信息，获取时间戳和置信度
+    private val voskEnablePartialWords: Boolean = true           // 启用部分识别结果，实时反馈
+    
+    // 端点检测优化
+    private val voskStartMaxDelay: Float = 2.0f                  // 🔧 增加到2.0秒，给足够的开始时间
+    private val voskEndDelay: Float = 1.5f                       // 🔧 增加到1.5秒，确保"小度小度"中间停顿不会被误判为结束
+    private val voskMaxDuration: Float = 8.0f                    // 🔧 增加到8.0秒，给足够的时间说完整的唤醒词
+    
+    // 置信度过滤设置
+    private val voskMinConfidence: Float = 0.2f                  // 🔧 恢复到适中的0.2，不要太低也不要太高
+    private val voskPartialMinConfidence: Float = 0.1f           // 🔧 部分结果用更低的阈值
+    private val voskEnableConfidenceFilter: Boolean = true       // 🔧 重新启用置信度过滤，避免接受质量太低的结果
+    
+    // 中文文本后处理设置
+    private val enableChineseTextCorrection: Boolean = true      // 启用中文文本纠错
+    private val enableDuplicateCharRemoval: Boolean = true       // 移除重复字符
+    private val enableCommonErrorCorrection: Boolean = true      // 常见错误修正
+    private val maxDuplicateChars: Int = 2                       // 最大允许重复字符数
+    
+    // 上下文优化设置
+    private val enableContextualRecognition: Boolean = true      // 启用上下文识别
+    private val contextKeywords: List<String> = listOf(          // 上下文关键词，提高相关词汇识别率
+        "小度", "你好", "在吗", "开始", "停止", "暂停", "继续",
+        "音量", "声音", "大声", "小声", "播放", "关闭", "打开"
+    )
+    private val contextBoostScore: Float = 0.2f                  // 上下文关键词置信度加成
+    
+    // 常见错误替换映射
+    private val commonCorrections = mapOf(
+        "的的" to "的", "了了" to "了", "是是" to "是", "在在" to "在",
+        "我我" to "我", "你你" to "你", "他他" to "他", "她她" to "她",
+        "这这" to "这", "那那" to "那", "有有" to "有", "没没" to "没",
+        "不不" to "不", "要要" to "要", "会会" to "会", "能能" to "能",
+        "好好" to "好", "大大" to "大", "小小" to "小", "多多" to "多"
+    )
+    
+    // 语音识别常见错误映射
+    private val speechRecognitionCorrections = mapOf(
+        "小杜" to "小度", "小毒" to "小度", "小肚" to "小度", "小独" to "小度",
+        "小读" to "小度", "小渡" to "小度", "小堵" to "小度", "小赌" to "小度",
+        "小督" to "小度", "小妒" to "小度", "小嘟" to "小度", "小都" to "小度",
+        "小豆" to "小度", "小斗" to "小度", "小逗" to "小度", "小兜" to "小度",
+        "小度度" to "小度", "小度小度" to "小度", "你好你好" to "你好",
+        "在吗在吗" to "在吗", "开始开始" to "开始", "停止停止" to "停止"
     )
     
     // Vosk JSON结果解析
@@ -127,16 +179,16 @@ class VoskSpeechRecognizer : SpeechRecognizerApi {
             // if (recognitionCount % 2 != 0) return createEmptyResult(timestamp)
 
             val energy = calculateEnergy(audio, length)
-            val hasVoice = energy > 50  // 从150降低到50，适应低能量语音
+            val hasVoice = energy > 30  // 🔧 从50进一步降低到30，更敏感的语音检测
             if (!hasVoice) silenceFrames++ else silenceFrames = 0
 
             // 添加能量检测日志
-            if (recognitionCount % 200 == 0) { // 从50改为200，减少日志频率
-                logger.debug("音频能量检测: energy=$energy, hasVoice=$hasVoice, 数据长度=$length")
+            if (recognitionCount % 500 == 0) { // 🔧 从100改为500，大幅减少日志频率
+                logger.debug("音频能量: $energy, 语音: $hasVoice, 累积: ${accumulatedAudio.size}字节")
             }
 
-            // 累积数据
-            if (hasVoice || accumulatedAudio.isNotEmpty()) {
+            // 🔧 优化累积逻辑：更积极地累积音频数据
+            if (hasVoice || accumulatedAudio.isNotEmpty() || energy > 15) {  // 🔧 增加更低的能量阈值作为备选
                 accumulateAudio(audio, length)
                 if (accumulatedAudio.size > maxAudioBufferSize) {
                     silenceFrames = 0
@@ -146,9 +198,11 @@ class VoskSpeechRecognizer : SpeechRecognizerApi {
                 }
             }
 
+            // 🔧 更积极的处理触发条件
             val shouldCut = accumulatedAudio.size >= maxAudioBufferSize ||
                     silenceFrames >= maxSilenceFrames ||
-                    (hasVoice && accumulatedAudio.size >= minAudioBufferSize)
+                    (hasVoice && accumulatedAudio.size >= minAudioBufferSize) ||
+                    (accumulatedAudio.size >= minAudioBufferSize * 2)  // 🔧 即使没有明确语音，累积足够数据也处理
             if (!shouldCut) return createEmptyResult(timestamp)
 
             return processAccumulatedAudio(timestamp, LogManager.getCurrentTimeMillis(), forceFinal = true)
@@ -166,7 +220,7 @@ class VoskSpeechRecognizer : SpeechRecognizerApi {
     ): SpeechRecognizerApi.RecognitionResult {
         // 记录处理前的缓冲区状态
         val bufferSizeBefore = accumulatedAudio.size
-        logger.debug("开始处理累积音频: 缓冲区大小=${bufferSizeBefore}字节, forceFinal=$forceFinal")
+        val durationMs = (bufferSizeBefore / 2 / AudioDefaults.INPUT_DEVICE_CHANNELS * 1000) / AudioDefaults.INPUT_DEVICE_SAMPLE_RATE
         
         // 创建缓冲区副本用于处理，避免在处理过程中被修改
         val audioToProcess = accumulatedAudio.copyOf()
@@ -179,7 +233,10 @@ class VoskSpeechRecognizer : SpeechRecognizerApi {
         val cost = System.now().toEpochMilliseconds() - startTime
         lastRecognitionTime = System.now().toEpochMilliseconds()
         
-        logger.debug("音频处理完成: 处理了${audioToProcess.size}字节, 耗时${cost}ms, 结果类型=${voskResult.resultType}")
+        // 只在有结果时记录
+        if (voskResult.text.isNotBlank()) {
+            logger.info("处理音频: ${bufferSizeBefore}字节/${durationMs}ms -> \"${voskResult.text}\"")
+        }
 
         return when (voskResult.resultType) {
             ResultType.FINAL -> createFinalResult(voskResult, timestamp, cost)
@@ -198,9 +255,9 @@ class VoskSpeechRecognizer : SpeechRecognizerApi {
     ): SpeechRecognizerApi.RecognitionResult {
         // 记录识别结果
         if (voskResult.text.isNotBlank()) {
-            logger.info("识别结果: \"${voskResult.text}\"")
+            logger.info("识别: \"${voskResult.text}\"")
             if (voskResult.foundKeywords.isNotEmpty()) {
-                logger.info("检测到关键词: ${voskResult.foundKeywords.joinToString(", ")}")
+                logger.info("关键词: ${voskResult.foundKeywords.joinToString(", ")}")
             }
         }
 
@@ -247,48 +304,37 @@ class VoskSpeechRecognizer : SpeechRecognizerApi {
      * 使用Vosk处理音频数据
      */
     private fun processAudioWithVosk(audioData: ByteArray, forceFinal: Boolean = false): VoskResult {
-        logger.debug("Vosk处理音频: 数据长度=${audioData.size}字节, forceFinal=$forceFinal")
-
         // 检查音频数据质量
-        if (audioData.size < 640) { // 至少40ms的音频
-            logger.warn("音频数据太短，跳过处理: ${audioData.size}字节")
+        if (audioData.size < 320) { // 🔧 从640降低到320，至少20ms的音频就可以处理
             return VoskResult("", "", 0f, emptyList(), emptyList(), ResultType.EMPTY)
         }
 
         // 预处理：增强音频信号
-        val enhancedAudio = enhanceAudioSignal(audioData)
+        val enhancedAudio = enhanceAudioSignal(audioData)  // 🔧 重新启用音频增强，提高识别率
 
         val samples = convertAudioToShorts(enhancedAudio)
         val sampleCount = enhancedAudio.size / 2
 
         // 检查样本质量
-        if (!validateAudioQuality(samples, sampleCount)) {
-            logger.warn("音频质量不足，可能无法识别")
-        }
+        validateAudioQuality(samples, sampleCount)
 
         // 继续原有处理...
         val r = vosk_recognizer_accept_waveform_s(voskRecognizer, samples, sampleCount)
         nativeHeap.free(samples.rawValue)
         
-        logger.debug("Vosk accept_waveform 返回值: $r")
-        
-        // 只有 r!=0 或 外部 forceFinal 时，才真正调用 result()+reset()
+        // 🔧 优化：更积极地获取识别结果
         if (r != 0 || forceFinal) {
             val json = vosk_recognizer_result(voskRecognizer)?.toKString() ?: "{}"
-            logger.debug("Vosk最终结果JSON: $json")
             val result = parseFinalResult(json)
             vosk_recognizer_reset(voskRecognizer)
             return result
         } else {
             val partial = vosk_recognizer_partial_result(voskRecognizer)?.toKString() ?: "{}"
-            logger.debug("Vosk部分结果JSON: $partial")
             val partialResult = parsePartialResult(partial)
             
-            // 如果部分结果有文本内容，并且是强制最终处理，则获取最终结果
-            if (forceFinal && partialResult.partialText.isNotBlank()) {
-                logger.debug("部分结果有内容且强制最终处理，获取最终结果")
+            // 🔧 如果强制最终处理，总是尝试获取最终结果，即使部分结果为空
+            if (forceFinal) {
                 val json = vosk_recognizer_result(voskRecognizer)?.toKString() ?: "{}"
-                logger.debug("强制获取的最终结果JSON: $json")
                 val finalResult = parseFinalResult(json)
                 vosk_recognizer_reset(voskRecognizer)
                 return finalResult
@@ -319,7 +365,7 @@ class VoskSpeechRecognizer : SpeechRecognizerApi {
         
         // 查找第一个有意义的音频数据（非零且振幅足够）
         var startIndex = 0
-        val minAmplitude = 100  // 最小有效振幅
+        val minAmplitude = AudioDefaults.MIN_EFFECTIVE_AMPLITUDE  // 最小有效振幅
         for (i in samples.indices) {
             if (kotlin.math.abs(samples[i].toInt()) > minAmplitude) {
                 startIndex = i
@@ -335,9 +381,12 @@ class VoskSpeechRecognizer : SpeechRecognizerApi {
             samples
         }
         
-        // 🚨 修复：移除增益处理，避免爆音
-        // 原来的1.5倍增益会导致信号过载，产生爆音
-        val processedWithGain = processedSamples  // 直接使用原始处理后的样本，不再应用增益
+        // 🔧 修复：重新启用适度的增益处理，提高识别率
+        // 原来完全禁用增益会导致音频信号过弱，影响识别效果
+        val processedWithGain = processedSamples.map { sample ->
+            val amplified = (sample.toInt() * 2.0).toInt()  // 🔧 从1.2倍增加到2.0倍，提高音频音量
+            amplified.coerceIn(-32767, 32767).toShort()
+        }
         
         // 转换回字节数组
         val finalSize = minOf(enhanced.size, processedWithGain.size * 2)
@@ -380,17 +429,17 @@ class VoskSpeechRecognizer : SpeechRecognizerApi {
 
         dynamicRange = maxVal - minVal
 
-        val hasEnoughAmplitude = maxAbs > 200  // 最小振幅要求
-        val hasEnoughDynamicRange = dynamicRange > 100  // 最小动态范围要求
+        val hasEnoughAmplitude = maxAbs > 100  // 🔧 从200降低到100，更宽松的振幅要求
+        val hasEnoughDynamicRange = dynamicRange > 50  // 🔧 从100降低到50，更宽松的动态范围要求
 
         if (!hasEnoughAmplitude) {
-            logger.warn("音频振幅不足: maxAbs=$maxAbs (需要>200)")
+            logger.debug("音频振幅较低: maxAbs=$maxAbs (建议>100)，但仍继续处理")  // 🔧 改为debug级别，不阻止处理
         }
         if (!hasEnoughDynamicRange) {
-            logger.warn("音频动态范围不足: range=$dynamicRange (需要>100)")
+            logger.debug("音频动态范围较低: range=$dynamicRange (建议>50)，但仍继续处理")  // 🔧 改为debug级别，不阻止处理
         }
 
-        return hasEnoughAmplitude && hasEnoughDynamicRange
+        return true  // 🔧 总是返回true，不阻止音频处理
     }
 
     
@@ -399,27 +448,90 @@ class VoskSpeechRecognizer : SpeechRecognizerApi {
      */
     private fun parseFinalResult(jsonStr: String): VoskResult {
         try {
-            logger.debug("Vosk最终JSON: $jsonStr")
+            logger.debug("🎯 Vosk原始JSON结果: $jsonStr")  // 🔧 新增：记录原始JSON
+            
             val json = Json.parseToJsonElement(jsonStr).jsonObject
+            var text = json["text"]?.jsonPrimitive?.content ?: ""
             
-            // 提取主要文本
-            val text = json["text"]?.jsonPrimitive?.content ?: ""
+            // 提取置信度和可选信息
+            var confidence = extractConfidence(json, text, isPartial = false)
             
-            // 提取置信度 - 从Vosk返回的JSON中提取实际置信度值
-            val confidence = extractConfidence(json, text)
+            // 提取替代文本
+            val alternatives = json["alternatives"]?.jsonArray?.mapNotNull { alt ->
+                alt.jsonObject["text"]?.jsonPrimitive?.content
+            } ?: emptyList()
             
-            // 提取替代结果数组
-            val alternatives = mutableListOf<String>()
-            json["alternatives"]?.jsonArray?.forEach { alt ->
-                alt.jsonObject["text"]?.jsonPrimitive?.content?.let { 
-                    alternatives.add(it) 
+            logger.debug("🎯 Vosk解析结果: text='$text', confidence=$confidence, alternatives=${alternatives.size}")  // 🔧 新增：记录解析结果
+            
+            // 🔧 新增：当主要text字段为空时，从alternatives中提取最佳结果
+            if (text.isBlank() && alternatives.isNotEmpty()) {
+                // 找出置信度最高的alternative作为主要文本
+                var bestText = ""
+                var bestConfidence = 0.0f
+                
+                json["alternatives"]?.jsonArray?.forEach { alt ->
+                    val altObj = alt.jsonObject
+                    val altText = altObj["text"]?.jsonPrimitive?.content ?: ""
+                    val altConf = altObj["confidence"]?.jsonPrimitive?.floatOrNull ?: 0.0f
+                    
+                    if (altText.isNotBlank() && altConf > bestConfidence) {
+                        bestText = altText
+                        bestConfidence = altConf
+                    }
+                }
+                
+                if (bestText.isNotBlank()) {
+                    text = bestText
+                    confidence = bestConfidence
+                    logger.info("🔧 从alternatives中提取最佳结果: text='$text', confidence=$confidence")
+                }
+            }
+            
+            // === 最终结果的中文文本后处理 ===
+            if (text.isNotBlank()) {
+                // 1. 置信度过滤
+                if (voskEnableConfidenceFilter && confidence < voskMinConfidence) {
+                    // 尝试从alternatives中找到更好的结果
+                    var bestText = ""
+                    var bestConfidence = confidence
+                    
+                    json["alternatives"]?.jsonArray?.forEach { alt ->
+                        val altObj = alt.jsonObject
+                        val altText = altObj["text"]?.jsonPrimitive?.content ?: ""
+                        val altConf = altObj["confidence"]?.jsonPrimitive?.floatOrNull ?: 0.0f
+                        
+                        if (altConf > bestConfidence && altConf >= voskMinConfidence) {
+                            bestText = altText
+                            bestConfidence = altConf
+                        }
+                    }
+                    
+                    if (bestText.isNotBlank()) {
+                        text = bestText
+                        confidence = bestConfidence
+                    } else if (confidence < voskMinConfidence) {
+                        // 如果所有结果置信度都不够，返回空结果
+                        return VoskResult("", "", confidence, emptyList(), alternatives, ResultType.EMPTY)
+                    }
+                }
+                
+                // 2. 中文文本纠错
+                if (enableChineseTextCorrection) {
+                    text = postProcessChineseText(text)
+                }
+                
+                // 3. 上下文优化
+                if (enableContextualRecognition) {
+                    val (processedText, scoreBoost) = processWithContext(text)
+                    text = processedText
+                    confidence = minOf(1.0f, confidence + scoreBoost)
                 }
             }
             
             // 检查文本中是否包含已注册的关键词
             val foundKeywords = findKeywordsInText(text, alternatives)
             
-            return VoskResult(
+            val finalResult = VoskResult(
                 text = text,
                 partialText = "",
                 confidence = confidence,
@@ -427,8 +539,16 @@ class VoskSpeechRecognizer : SpeechRecognizerApi {
                 alternatives = alternatives,
                 resultType = if (text.isBlank() && alternatives.isEmpty()) ResultType.EMPTY else ResultType.FINAL
             )
+            
+            // 🔧 新增：记录最终结果状态
+            logger.info("🎯 Vosk最终结果: text='$text', confidence=$confidence, keywords=${foundKeywords.size}, type=${finalResult.resultType}")
+            if (text.isBlank() && alternatives.isEmpty()) {
+                logger.warn("⚠️ Vosk返回空结果！可能原因: 1)置信度过低 2)音频质量不足 3)模型不匹配")
+            }
+            
+            return finalResult
         } catch (e: Exception) {
-            logger.error("解析最终JSON失败: ${e.message}")
+            logger.error("解析JSON失败: ${e.message}")
             return VoskResult("", "", 0f, emptyList(), emptyList(), ResultType.ERROR)
         }
     }
@@ -439,10 +559,31 @@ class VoskSpeechRecognizer : SpeechRecognizerApi {
     private fun parsePartialResult(jsonStr: String): VoskResult {
         try {
             val json = Json.parseToJsonElement(jsonStr).jsonObject
-            val partialText = json["partial"]?.jsonPrimitive?.content ?: ""
+            var partialText = json["partial"]?.jsonPrimitive?.content ?: ""
             
             // 提取置信度 - 部分结果通常置信度较低
-            val confidence = extractConfidence(json, partialText, isPartial = true)
+            var confidence = extractConfidence(json, partialText, isPartial = true)
+            
+            // === 部分结果的中文文本后处理 ===
+            if (partialText.isNotBlank()) {
+                // 1. 置信度过滤（使用较低的阈值）
+                if (voskEnableConfidenceFilter && confidence < voskPartialMinConfidence) {
+                    return VoskResult("", "", confidence, emptyList(), emptyList(), ResultType.EMPTY)
+                }
+                
+                // 2. 简化的中文文本纠错（只做基本的错误修正）
+                if (enableChineseTextCorrection) {
+                    partialText = applySpeechRecognitionCorrections(partialText)
+                    partialText = cleanupSpacesAndPunctuation(partialText)
+                }
+                
+                // 3. 上下文优化
+                if (enableContextualRecognition) {
+                    val (processedText, scoreBoost) = processWithContext(partialText)
+                    partialText = processedText
+                    confidence = minOf(1.0f, confidence + scoreBoost)
+                }
+            }
             
             // 在部分结果中也检查关键词
             val foundKeywords = findKeywordsInText(partialText, emptyList())
@@ -470,9 +611,6 @@ class VoskSpeechRecognizer : SpeechRecognizerApi {
         val jsonConfidence = json["confidence"]?.jsonPrimitive?.floatOrNull
         if (jsonConfidence != null) {
             return jsonConfidence
-        } else {
-            // 未提供置信度时视为 0，避免误判
-            return 0.0f
         }
         
         // 2. 检查是否有替代结果的置信度数组
@@ -487,8 +625,12 @@ class VoskSpeechRecognizer : SpeechRecognizerApi {
             return confidenceArray.average().toFloat()
         }
         
-        // 3. 如果仍无法得到置信度，返回极低值
-        return 0.0f
+        // 3. 🔧 如果没有置信度但有文本，给一个合理的默认值而不是0.0f
+        return if (text.isNotBlank()) {
+            if (isPartial) 0.3f else 0.5f  // 部分结果给较低置信度，最终结果给中等置信度
+        } else {
+            0.0f
+        }
     }
     
     /**
@@ -805,6 +947,13 @@ class VoskSpeechRecognizer : SpeechRecognizerApi {
             // 检查模型路径是否存在
             logger.info("检查模型路径是否存在: $modelPath")
             
+            // 🔧 新增：检查模型语言类型
+            if (modelPath.contains("cn") || modelPath.contains("chinese") || modelPath.contains("中文")) {
+                logger.info("✅ 检测到中文模型路径，适合中文语音识别")
+            } else {
+                logger.warn("⚠️ 模型路径似乎不是中文模型，可能影响中文识别效果")
+            }
+            
             // 加载Vosk模型
             logger.info("正在加载Vosk模型...")
             voskModel = vosk_model_new(modelPath)
@@ -826,16 +975,30 @@ class VoskSpeechRecognizer : SpeechRecognizerApi {
             logger.info("✅ Vosk识别器创建成功")
 
             logger.info("配置Vosk识别器参数...")
-            vosk_recognizer_set_endpointer_mode(voskRecognizer, VOSK_EP_ANSWER_SHORT)
+            
+            // === Vosk 优化配置 ===
+            // 1. 设置多候选结果
+            vosk_recognizer_set_max_alternatives(voskRecognizer, voskMaxAlternatives)
+            logger.info("✅ 设置最大候选结果数: $voskMaxAlternatives")
+            
+            // 2. 启用词级别信息和部分结果
+            vosk_recognizer_set_words(voskRecognizer, if (voskEnableWords) 1 else 0)
+            vosk_recognizer_set_partial_words(voskRecognizer, if (voskEnablePartialWords) 1 else 0)
+            logger.info("✅ 启用词级别信息: $voskEnableWords, 部分结果: $voskEnablePartialWords")
+            
+            // 3. 设置端点检测模式和延迟
+            vosk_recognizer_set_endpointer_mode(voskRecognizer, VOSK_EP_ANSWER_SHORT)  // 短模式，适合关键词检测
             vosk_recognizer_set_endpointer_delays(voskRecognizer,
-                /*t_start_max=*/0.3f,    // 从0.5f进一步降低到0.3f，更快开始识别
-                /*t_end=*/0.05f,         // 从0.1f降低到0.05f，更快结束，避免截断
-                /*t_max=*/2.0f           // 从1.5f增加到2.0f，允许更长的语音
+                voskStartMaxDelay,    // 初始静音超时
+                voskEndDelay,         // 识别后静音超时
+                voskMaxDuration       // 最大发音时长
             )
-
-            // 启用部分结果和关键词提取
-            vosk_recognizer_set_words(voskRecognizer, 1)
-            logger.info("✅ Vosk识别器参数配置完成")
+            logger.info("✅ 端点检测配置: 初始延迟=${voskStartMaxDelay}s, 结束延迟=${voskEndDelay}s, 最大时长=${voskMaxDuration}s")
+            
+            // 4. 设置日志级别（0=默认，<0=静音，>0=详细）
+            vosk_set_log_level(0)  // 使用默认日志级别
+            
+            logger.info("✅ Vosk识别器优化配置完成")
             
             // 添加默认的短命令关键词
             registeredKeywords.addAll(shortCommandKeywords)
@@ -973,5 +1136,141 @@ class VoskSpeechRecognizer : SpeechRecognizerApi {
             e.printStackTrace()
             return false
         }
+    }
+    
+    // === 中文文本后处理方法 ===
+    
+    /**
+     * 对中文文本进行后处理
+     * @param text 原始文本
+     * @return 处理后的文本
+     */
+    private fun postProcessChineseText(text: String): String {
+        if (text.isBlank()) return text
+        
+        var processedText = text.trim()
+        logger.debug("🔧 文本后处理开始: '$text' -> '$processedText'")
+        
+        // 1. 语音识别特定错误修正
+        if (enableCommonErrorCorrection) {
+            val beforeCorrection = processedText
+            processedText = applySpeechRecognitionCorrections(processedText)
+            if (beforeCorrection != processedText) {
+                logger.info("🔧 语音识别纠错: '$beforeCorrection' -> '$processedText'")
+            }
+        }
+        
+        // 2. 常见错误替换
+        if (enableCommonErrorCorrection) {
+            val beforeCommon = processedText
+            processedText = applyCommonCorrections(processedText)
+            if (beforeCommon != processedText) {
+                logger.info("🔧 常见错误纠错: '$beforeCommon' -> '$processedText'")
+            }
+        }
+        
+        // 3. 去除重复字符
+        if (enableDuplicateCharRemoval) {
+            val beforeDuplicate = processedText
+            processedText = removeDuplicateCharacters(processedText, maxDuplicateChars)
+            if (beforeDuplicate != processedText) {
+                logger.info("🔧 重复字符移除: '$beforeDuplicate' -> '$processedText'")
+            }
+        }
+        
+        // 4. 清理多余空格和标点
+        val beforeCleanup = processedText
+        processedText = cleanupSpacesAndPunctuation(processedText)
+        if (beforeCleanup != processedText) {
+            logger.debug("🔧 空格标点清理: '$beforeCleanup' -> '$processedText'")
+        }
+        
+        logger.debug("🔧 文本后处理完成: '$text' -> '$processedText'")
+        return processedText
+    }
+    
+    /**
+     * 应用语音识别特定的错误修正
+     */
+    private fun applySpeechRecognitionCorrections(text: String): String {
+        var result = text
+        for ((wrong, correct) in speechRecognitionCorrections) {
+            result = result.replace(wrong, correct, ignoreCase = true)
+        }
+        return result
+    }
+    
+    /**
+     * 应用常见错误修正
+     */
+    private fun applyCommonCorrections(text: String): String {
+        var result = text
+        for ((wrong, correct) in commonCorrections) {
+            result = result.replace(wrong, correct)
+        }
+        return result
+    }
+    
+    /**
+     * 移除重复字符
+     * @param text 输入文本
+     * @param maxDuplicates 最大允许重复次数
+     * @return 处理后的文本
+     */
+    private fun removeDuplicateCharacters(text: String, maxDuplicates: Int): String {
+        if (text.length <= 1) return text
+        
+        val result = StringBuilder()
+        var currentChar = text[0]
+        var count = 1
+        result.append(currentChar)
+        
+        for (i in 1 until text.length) {
+            val char = text[i]
+            if (char == currentChar) {
+                count++
+                if (count <= maxDuplicates) {
+                    result.append(char)
+                }
+                // 超过最大重复次数的字符被忽略
+            } else {
+                currentChar = char
+                count = 1
+                result.append(char)
+            }
+        }
+        
+        return result.toString()
+    }
+    
+    /**
+     * 清理多余的空格和标点符号
+     */
+    private fun cleanupSpacesAndPunctuation(text: String): String {
+        return text
+            .replace(Regex("\\s+"), " ")  // 多个空格替换为单个空格
+            .replace(Regex("[，。！？；：、]{2,}"), "")  // 移除重复的标点符号
+            .trim()
+    }
+    
+    /**
+     * 上下文优化处理
+     * @param text 识别文本
+     * @return 处理结果和置信度加成
+     */
+    private fun processWithContext(text: String): Pair<String, Float> {
+        var scoreBoost = 0.0f
+        
+        // 检查文本中是否包含上下文关键词
+        for (keyword in contextKeywords) {
+            if (text.contains(keyword, ignoreCase = true)) {
+                scoreBoost += contextBoostScore
+            }
+        }
+        
+        // 限制最大加成
+        scoreBoost = minOf(scoreBoost, 0.5f)
+        
+        return Pair(text, scoreBoost)
     }
 }

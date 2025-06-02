@@ -466,7 +466,7 @@ class PortAudioDevice private constructor() : AudioDevice {
          * @param data 音频数据
          * @param frameCount 帧数
          */
-        suspend fun onAudioInput(audioData: ShortArray, frameCount: Int)
+         fun onAudioInput(audioData: ShortArray, frameCount: Int)
     }
 
     // 音频回调相关
@@ -560,9 +560,7 @@ class PortAudioDevice private constructor() : AudioDevice {
                     // 调用处理方法
                     if (safeAudioData != null) {
                         // 使用默认调度器
-                        device.scope.launch {
-                            device.onSafeAudioInput(safeAudioData, frameCount.toInt())
-                        }
+                        device.onSafeAudioInput(safeAudioData, frameCount.toInt())
                     }
                 }
             }
@@ -578,7 +576,7 @@ class PortAudioDevice private constructor() : AudioDevice {
      * @param callback 回调接口
      * @param bufferSize 缓冲区大小
      */
-    fun setAudioCallback(callback: AudioDataCallback?, bufferSize: Int = 2048) {
+    fun setAudioCallback(callback: AudioDataCallback?, bufferSize: Int = AudioDefaults.AUDIO_BUFFER_SIZE) {
         synchronized(callbackLock) {
             this.audioCallback = callback
             this.callbackBufferSize = bufferSize
@@ -590,7 +588,7 @@ class PortAudioDevice private constructor() : AudioDevice {
      * @param safeAudioData 安全的Kotlin ShortArray
      * @param frameCount 帧数
      */
-    private suspend fun onSafeAudioInput(safeAudioData: ShortArray, frameCount: Int) {
+    private  fun onSafeAudioInput(safeAudioData: ShortArray, frameCount: Int) {
         // 获取回调引用
         val callback = synchronized(callbackLock) { audioCallback }
         if (callback != null) {
@@ -789,14 +787,14 @@ class PortAudioDevice private constructor() : AudioDevice {
                         // 使用Pa_OpenStream打开流
                         val streamVar = nativeHeap.alloc<COpaquePointerVar>()
                         try {
-                            logger.info("打开输出流: rate=$sampleRate, channels=$channels, buf=2048")
+                            logger.info("打开输出流: rate=$sampleRate, channels=$channels, buf=${AudioDefaults.AUDIO_BUFFER_SIZE}")
                             val result = Pa_OpenDefaultStream(
                                 stream = streamVar.ptr,
                                 numOutputChannels = channels,
                                 numInputChannels = 0, // 输出流不需要输入通道
                                 sampleRate = sampleRate.toDouble(),
                                 sampleFormat = paInt16,
-                                framesPerBuffer = 2048u, // 增大缓冲区，减少回调频率，降低CPU负载
+                                framesPerBuffer = AudioDefaults.AUDIO_BUFFER_SIZE.toUInt(), // 增大缓冲区，减少回调频率，降低CPU负载
                                 streamCallback = null,
                                 userData = null
                             )
@@ -929,12 +927,6 @@ class PortAudioDevice private constructor() : AudioDevice {
     private val maxPoolSize = 3 // 减少缓存大小避免内存碎片
     private val maxBufferSize = (48000*2.5).toInt() // 降低单次分配上限
     private fun getOrCreateNativeBuffer(size: Int): CPointer<ShortVar>? {
-        // 检查大小限制
-        if (size > maxBufferSize) {
-            logger.error("请求的缓冲区大小过大: $size, 最大允许: $maxBufferSize")
-            return null
-        }
-
         return synchronized(poolAccessLock) {
             try {
                 val cached = nativeBufferPool[size]
@@ -1013,7 +1005,7 @@ class PortAudioDevice private constructor() : AudioDevice {
      */
     private fun checkMemoryHealth(): Boolean {
         return try {
-            val testSize = 1024
+            val testSize = AudioDefaults.MEMORY_TEST_BUFFER_SIZE
             val testBuffer = nativeHeap.allocArray<ShortVar>(testSize)
             nativeHeap.free(testBuffer.rawValue)
             true
@@ -1080,8 +1072,8 @@ class PortAudioDevice private constructor() : AudioDevice {
         }
 
         // 验证数据
-        if (length <= 0 || length > audioData.size || length > maxBufferSize * 2) {
-            logger.error("🎯 无效的音频数据长度: $length (数组大小: ${audioData.size}, 最大缓冲区: ${maxBufferSize * 2})")
+        if (length <= 0 || length > audioData.size) {
+            logger.error("🎯 无效的音频数据长度: $length (数组大小: ${audioData.size})")
             return false
         }
 
@@ -1199,7 +1191,7 @@ class PortAudioDevice private constructor() : AudioDevice {
      */
     private fun playAudioSimple(audioData: ByteArray, length: Int): Boolean {
         return try {
-            val chunkSize = 4096 // 使用更小的块
+            val chunkSize = AudioDefaults.AUDIO_BUFFER_SIZE // 使用更小的块
             var offset = 0
             var success = true
 
@@ -1340,7 +1332,7 @@ class PortAudioDevice private constructor() : AudioDevice {
         try {
             val outputChannels = AudioDefaults.OUTPUT_DEVICE_CHANNELS
             // 分批次播放数据
-            val chunkSizeSamples = 1024 * outputChannels  // 增大chunk，提高播放连续性
+            val chunkSizeSamples = AudioDefaults.CALLBACK_BUFFER_SIZE * outputChannels  // 增大chunk，提高播放连续性
             val tempBuffer = nativeHeap.allocArray<ShortVar>(chunkSizeSamples)
 
             var offset = 0

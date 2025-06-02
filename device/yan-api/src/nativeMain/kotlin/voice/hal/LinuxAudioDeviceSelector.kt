@@ -19,6 +19,7 @@ import platform.posix.pclose
 import platform.posix.popen
 import platform.posix.sleep
 import platform.posix.system
+import voice.util.AudioDefaults
 import voice.util.LogManager
 
 /**
@@ -146,7 +147,7 @@ class LinuxAudioDeviceSelector {
      */
     private fun detectSoundDevices(): String {
         // 执行arecord -l命令获取捕获设备
-        val tempBuffer = ByteArray(2048)
+        val tempBuffer = ByteArray(AudioDefaults.CALLBACK_BUFFER_SIZE)
         val command = "arecord -l 2>/dev/null | grep -i 'card' | head -n 1"
         val pipe = popen(command, "r") ?: return "0:0"
 
@@ -369,4 +370,4 @@ class LinuxAudioDeviceSelector {
             return false
         }
     }
-} 
+}

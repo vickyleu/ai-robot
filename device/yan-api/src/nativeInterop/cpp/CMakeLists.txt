@@ -16,13 +16,14 @@ set(ALSA_LIBRARY "${CMAKE_SOURCE_DIR}/libs/libasound.so")
 
 set(PIPER_LIBRARY "${CMAKE_SOURCE_DIR}/libs/libpiper.a")
 set(WEBRTC_APM_LIBRARY "${CMAKE_SOURCE_DIR}/libs/libwebrtc_apm.a")
-
+set(RNNOISE_LIBRARY "${CMAKE_SOURCE_DIR}/libs/librnnoise.a")
 set(HACK_THING_INCLUDE
         "${CMAKE_SOURCE_DIR}/include/"
         "${CMAKE_SOURCE_DIR}/include/alsa/hack/"
         "${CMAKE_SOURCE_DIR}/include/vosk/"
         "${CMAKE_SOURCE_DIR}/include/vosk/hack"
         "${CMAKE_SOURCE_DIR}/include/piper"
+        "${CMAKE_SOURCE_DIR}/include/rnnoise"
         "${CMAKE_SOURCE_DIR}/include/webrtc_apm/wrapper"
         "${CMAKE_SOURCE_DIR}/include/piper/onnxruntime"
         "${CMAKE_SOURCE_DIR}/include/opencc"
@@ -47,4 +48,4 @@ target_include_directories(yanapi PRIVATE
         ${HACK_THING_INCLUDE}
 )
 
-target_link_libraries(yanapi PRIVATE ${PYTHON_LIBRARY} ${Z_LIBRARY}  ${ALSA_LIBRARY} ${EXPAT_LIBRARY} ${PIPER_LIBRARY} ${WEBRTC_APM_LIBRARY} )
+target_link_libraries(yanapi PRIVATE ${PYTHON_LIBRARY} ${Z_LIBRARY}  ${ALSA_LIBRARY} ${EXPAT_LIBRARY} ${PIPER_LIBRARY}  ${RNNOISE_LIBRARY} ${WEBRTC_APM_LIBRARY} )

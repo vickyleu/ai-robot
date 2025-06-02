@@ -53,6 +53,8 @@ import com.airobot.webrtcapminterop.APM_PRESET_VOICE_ASSISTANT
 // 级别常量
 import com.airobot.webrtcapminterop.kAgcAdaptiveDigital
 import com.airobot.webrtcapminterop.kNsVeryHigh
+import com.airobot.webrtcapminterop.kNsModerate
+import com.airobot.webrtcapminterop.kNsLow
 
 // SOXR相关
 import com.airobot.webrtcapminterop.SOXR_FLOAT32_I
@@ -66,6 +68,7 @@ import com.airobot.webrtcapminterop.soxr_wrapper_create
 import com.airobot.webrtcapminterop.soxr_wrapper_create_resampler
 import com.airobot.webrtcapminterop.soxr_wrapper_destroy
 import com.airobot.webrtcapminterop.soxr_wrapper_process
+import com.airobot.webrtcapminterop.soxr_wrapper_process_short_to_short
 
 // WebRTC APM基础接口
 import com.airobot.webrtcapminterop.webrtc_apm_create
@@ -314,7 +317,7 @@ class BufferManager {
                     )
                 )
 
-                val safeChannels = channels.coerceAtLeast(1)
+                val safeChannels = channels.coerceAtLeast(AudioDefaults.WEBRTC_APM_CHANNELS) // 使用AudioDefaults常量
                 val inputArray = resources.manage(
                     ManagedResource.NativeBuffer(
                         nativeHeap.allocArray<CPointerVar<FloatVar>>(safeChannels),
@@ -336,7 +339,7 @@ class BufferManager {
                 outputArrayPointer = outputArray.get()
 
                 // 配置数组指针
-                if (channels == 1) {
+                if (channels == AudioDefaults.WEBRTC_APM_CHANNELS) { // 使用AudioDefaults常量
                     inputArrayPointer!![0] = inputFloatBuffer
                     outputArrayPointer!![0] = outputFloatBuffer
                 } else {
@@ -387,452 +390,10 @@ class BufferManager {
     }
 
     companion object {
-        private const val MAX_BUFFER_SIZE = 200000
+        private const val MAX_BUFFER_SIZE = AudioDefaults.WEBRTC_APM_MAX_BUFFER_SIZE
     }
 }
 
-/**
- * 安全的SOXR重采样器封装类
- * 支持采样率和声道数转换，自动处理内存管理
- */
-class SafeSoxrResampler(
-    private val inputSampleRate: Int,
-    private val outputSampleRate: Int,
-    private val inputChannels: Int,
-    private val outputChannels: Int,
-    private val inputFormat: Int = 0u.toInt(), // SOXR_INT16_I
-    private val outputFormat: Int = 0u.toInt(), // SOXR_INT16_I (输出也用INT16，避免精度损失)
-    private val quality: Int = 1u.toInt() // SOXR_LQ (低质量，高稳定性)
-) {
-    private val logger = LogManager.getLogger("SafeSoxrResampler")
-    private var soxrWrapper: CPointer<SoxWrapper>? = null
-    private var isInitialized = false
-    
-    /**
-     * 初始化重采样器
-     */
-    fun initialize(): Boolean {
-        if (isInitialized) {
-            return true
-        }
-        
-        try {
-            // 🎯 采样率调试日志 - 重采样器初始化
-            logger.info("🎯 SafeSoxrResampler初始化: ${inputSampleRate}Hz/${inputChannels}ch -> ${outputSampleRate}Hz/${outputChannels}ch, 质量=${quality}")
-            
-            // 检查是否需要重采样
-            if (inputSampleRate == outputSampleRate && inputChannels == outputChannels) {
-                logger.info("🎯 输入输出格式相同，无需重采样: ${inputSampleRate}Hz/${inputChannels}ch")
-                isInitialized = true
-                return true
-            }
-            
-            // 创建SOXR包装器
-            soxrWrapper = soxr_wrapper_create()
-            if (soxrWrapper == null) {
-                logger.error("无法创建SOXR包装器")
-                return false
-            }
-            
-            // 配置IO格式 - 根据参数动态配置
-            soxr_io_spec_create(inputFormat.toUInt(), outputFormat.toUInt(), soxrWrapper)
-            
-            // 配置运行时参数 - 使用单线程确保稳定性
-            soxr_runtime_spec_create(1u, soxrWrapper)
-            
-            // 配置质量参数
-            soxr_quality_spec_create(quality.toUInt(), soxrWrapper)
-            
-            // 创建重采样器实例
-            val result = soxr_wrapper_create_resampler(
-                soxrWrapper,
-                inputSampleRate.toDouble(),
-                outputSampleRate.toDouble(),
-                inputChannels.toUInt()
-            )
-            
-            if (result != 0) {
-                logger.error("创建重采样器失败，错误码: $result")
-                release()
-                return false
-            }
-            
-            isInitialized = true
-            logger.info("SafeSoxrResampler初始化成功: ${inputSampleRate}Hz/${inputChannels}ch -> ${outputSampleRate}Hz/${outputChannels}ch")
-            return true
-            
-        } catch (e: Exception) {
-            logger.error("SafeSoxrResampler初始化失败: ${e.message}")
-            release()
-            return false
-        }
-    }
-    
-    /**
-     * 执行重采样和声道转换
-     * @param inputData 输入音频数据
-     * @return 重采样和声道转换后的音频数据
-     */
-    fun process(inputData: ShortArray): ShortArray {
-        if (inputData.isEmpty()) {
-            return inputData
-        }
-        
-        if (!isInitialized) {
-            logger.error("重采样器未初始化")
-            return inputData
-        }
-        
-        try {
-            // 🎯 采样率调试日志 - 重采样处理开始
-            val inputDurationMs = (inputData.size * 1000.0 / inputSampleRate / inputChannels).toInt()
-            logger.info("🎯 SafeSoxrResampler处理: 输入=${inputData.size}样本/${inputDurationMs}ms, ${inputSampleRate}Hz/${inputChannels}ch -> ${outputSampleRate}Hz/${outputChannels}ch")
-            logger.info("开始处理音频数据: ${inputData.size}样本, 输入格式=${inputSampleRate}Hz/${inputChannels}ch, 输出格式=${outputSampleRate}Hz/${outputChannels}ch")
-            
-            // 输入音频质量检查
-            val inputMaxAmp = inputData.maxOfOrNull { kotlin.math.abs(it.toInt()) } ?: 0
-            val inputNonZeroCount = inputData.count { it != 0.toShort() }
-            val inputZeroRatio = (inputData.size - inputNonZeroCount).toFloat() / inputData.size
-            logger.debug("输入音频统计: 最大振幅=$inputMaxAmp, 非零样本=${inputNonZeroCount}/${inputData.size}, 零值比例=${"%.4f".format(inputZeroRatio)}")
-            
-            // 第1步：声道转换（如果需要）
-            val channelConvertedData = convertChannels(inputData, inputChannels, outputChannels)
-            logger.info("声道转换完成: ${inputChannels}ch -> ${outputChannels}ch, 数据大小=${channelConvertedData.size}样本")
-            
-            // 声道转换后音频质量检查
-            val channelMaxAmp = channelConvertedData.maxOfOrNull { kotlin.math.abs(it.toInt()) } ?: 0
-            val channelNonZeroCount = channelConvertedData.count { it != 0.toShort() }
-            val channelZeroRatio = (channelConvertedData.size - channelNonZeroCount).toFloat() / channelConvertedData.size
-            logger.debug("声道转换后音频统计: 最大振幅=$channelMaxAmp, 非零样本=${channelNonZeroCount}/${channelConvertedData.size}, 零值比例=${"%.4f".format(channelZeroRatio)}")
-            
-            // 第2步：采样率转换（如果需要）
-            val finalData = if (inputSampleRate != outputSampleRate) {
-                val resampledData = resampleAudio(channelConvertedData)
-                
-                // 重采样后音频质量检查
-                val resampleMaxAmp = resampledData.maxOfOrNull { kotlin.math.abs(it.toInt()) } ?: 0
-                val resampleNonZeroCount = resampledData.count { it != 0.toShort() }
-                val resampleZeroRatio = (resampledData.size - resampleNonZeroCount).toFloat() / resampledData.size
-                logger.debug("重采样后音频统计: 最大振幅=$resampleMaxAmp, 非零样本=${resampleNonZeroCount}/${resampledData.size}, 零值比例=${"%.4f".format(resampleZeroRatio)}")
-                
-                if (resampleZeroRatio > 0.95f) {
-                    logger.error("⚠️ 重采样后零值过多，可能存在严重问题！")
-                    logger.error("重采样输入: 最大振幅=$channelMaxAmp, 零值比例=${"%.4f".format(channelZeroRatio)}")
-                    logger.error("重采样输出: 最大振幅=$resampleMaxAmp, 零值比例=${"%.4f".format(resampleZeroRatio)}")
-                }
-                
-                resampledData
-            } else {
-                channelConvertedData
-            }
-            
-            // 最终输出质量检查
-            val finalMaxAmp = finalData.maxOfOrNull { kotlin.math.abs(it.toInt()) } ?: 0
-            val finalNonZeroCount = finalData.count { it != 0.toShort() }
-            val finalZeroRatio = (finalData.size - finalNonZeroCount).toFloat() / finalData.size
-            
-            // 🎯 采样率调试日志 - 重采样处理完成
-            val outputDurationMs = (finalData.size * 1000.0 / outputSampleRate / outputChannels).toInt()
-            val durationRatio = if (inputDurationMs > 0) outputDurationMs.toDouble() / inputDurationMs else 0.0
-            logger.info("🎯 SafeSoxrResampler完成: 输出=${finalData.size}样本/${outputDurationMs}ms, 时长比例=${"%.3f".format(durationRatio)}, 振幅=${finalMaxAmp}")
-            
-            logger.info("处理完成: 输入${inputData.size} -> 输出${finalData.size}样本, 最大振幅=$finalMaxAmp, 零值比例=${"%.4f".format(finalZeroRatio)}")
-            
-            if (finalZeroRatio > 0.9f) {
-                logger.warn("⚠️ 最终输出零值过多，音频质量可能有问题")
-            }
-            
-            return finalData
-            
-        } catch (e: Exception) {
-            logger.error("SafeSoxrResampler处理失败: ${e.message}")
-            return inputData
-        }
-    }
-    
-    /**
-     * 声道转换
-     */
-    private fun convertChannels(inputData: ShortArray, fromChannels: Int, toChannels: Int): ShortArray {
-        if (fromChannels == toChannels) {
-            return inputData
-        }
-        
-        return when {
-            fromChannels == 1 && toChannels == 2 -> {
-                // 单声道转立体声：每个样本重复为左右声道
-                ShortArray(inputData.size * 2) { i ->
-                    inputData[i / 2]
-                }
-            }
-            fromChannels == 2 && toChannels == 1 -> {
-                // 立体声转单声道：取左右声道平均值
-                ShortArray(inputData.size / 2) { i ->
-                    val left = inputData[i * 2].toInt()
-                    val right = inputData[i * 2 + 1].toInt()
-                    ((left + right) / 2).coerceIn(-32767, 32767).toShort()
-                }
-            }
-            else -> {
-                logger.warn("不支持的声道转换: ${fromChannels}ch -> ${toChannels}ch")
-                inputData
-            }
-        }
-    }
-    
-    /**
-     * 使用SOXR进行采样率转换 - 优化版本：重点避免而非检测问题
-     */
-    private fun resampleAudio(inputData: ShortArray): ShortArray {
-        if (soxrWrapper == null) {
-            logger.error("SOXR包装器为空，使用简单插值")
-            return simpleResample(inputData)
-        }
-        
-        // 🎯 策略1：严格的输入预处理，从源头避免问题
-        val inputMaxAmp = inputData.maxOfOrNull { kotlin.math.abs(it.toInt()) } ?: 0
-        val inputNonZeroCount = inputData.count { it != 0.toShort() }
-        val inputZeroRatio = (inputData.size - inputNonZeroCount).toFloat() / inputData.size
-        
-        // 🎯 策略2：优先使用简单插值，避免SOXR的复杂性
-        // 只有在数据质量极好且采样率差异较大时才使用SOXR
-        val sampleRateRatio = outputSampleRate.toDouble() / inputSampleRate.toDouble()
-        val shouldUseSimpleResample = when {
-            inputZeroRatio > 0.5f -> {
-                logger.debug("输入数据零值过多(${"%.4f".format(inputZeroRatio)})，避免SOXR，使用简单插值")
-                true
-            }
-            inputMaxAmp < 100 -> {
-                logger.debug("输入信号过弱($inputMaxAmp)，避免SOXR，使用简单插值")
-                true
-            }
-            inputData.size < 160 -> {
-                logger.debug("输入数据过短(${inputData.size}样本)，避免SOXR，使用简单插值")
-                true
-            }
-            sampleRateRatio < 1.5 && sampleRateRatio > 0.67 -> {
-                logger.debug("采样率差异较小(${"%.2f".format(sampleRateRatio)})，避免SOXR，使用简单插值")
-                true
-            }
-            else -> false
-        }
-        
-        if (shouldUseSimpleResample) {
-            return simpleResample(inputData)
-        }
-        
-        // 🎯 策略3：输入数据安全预处理，确保绝对安全
-        val safeInputData = ShortArray(inputData.size) { i ->
-            val sample = inputData[i].toInt()
-            // 严格限制范围并轻微衰减，避免边界值
-            val safeSample = sample.coerceIn(-30000, 30000)
-            (safeSample * 0.95).toInt().toShort()  // 轻微衰减5%，远离边界
-        }
-        
-        val safeMaxAmp = safeInputData.maxOfOrNull { kotlin.math.abs(it.toInt()) } ?: 0
-        logger.debug("SOXR输入安全预处理: 原始最大振幅=$inputMaxAmp -> 安全最大振幅=$safeMaxAmp")
-        
-        // 🎯 策略4：保守的输出缓冲区计算
-        val expectedOutputSize = (safeInputData.size * sampleRateRatio).toInt()
-        val outputBufferSize = (expectedOutputSize * 11 / 10).coerceAtLeast(safeInputData.size)  // 减少缓冲区余量
-        
-        // 安全性检查
-        if (outputBufferSize <= 0 || outputBufferSize > 100000) {  // 降低最大缓冲区限制
-            logger.warn("输出缓冲区大小不安全($outputBufferSize)，使用简单插值")
-            return simpleResample(inputData)
-        }
-        
-        var outputBuffer: CPointer<FloatVar>? = null
-        logger.debug("开始SOXR重采样: 输入=${safeInputData.size}样本, 输出缓冲区大小=$outputBufferSize")
-        
-        try {
-            outputBuffer = nativeHeap.allocArray<FloatVar>(outputBufferSize)
-            
-            // 🎯 策略5：初始化输出缓冲区为安全值
-            for (i in 0 until outputBufferSize) {
-                outputBuffer[i] = 0.0f
-            }
-            
-            val outputFrames = soxr_wrapper_process(
-                wrapper = soxrWrapper,
-                in_data = safeInputData.refTo(0),
-                in_size = safeInputData.size.toUInt(),
-                out_data = outputBuffer,
-                out_size = outputBufferSize.toUInt()
-            )
-            
-            if (outputFrames == 0U || outputFrames.toInt() > outputBufferSize) {
-                logger.warn("SOXR返回异常帧数($outputFrames)，使用简单插值")
-                return simpleResample(inputData)
-            }
-            
-            logger.debug("SOXR处理完成: 输出帧数=${outputFrames}")
-            
-            // 🎯 策略6：极简的输出处理，避免复杂检测，直接清理
-            val result = ShortArray(outputFrames.toInt()) { i ->
-                val raw = outputBuffer[i]
-                
-                // 简单直接的清理：任何异常值都设为0
-                val cleanFloat = when {
-                    raw.isNaN() || raw.isInfinite() -> 0f
-                    raw > 1f -> 1f
-                    raw < -1f -> -1f
-                    kotlin.math.abs(raw) > 2f -> 0f  // 任何超过±2的值都清零
-                    else -> raw
-                }
-                
-                // 转换为INT16，额外安全限制
-                val intValue = (cleanFloat * 30000f).toInt()  // 使用30000而非32767，更安全
-                intValue.coerceIn(-30000, 30000).toShort()
-            }
-            
-            // 🎯 策略7：简单的最终验证，有问题就回退
-            val resultMaxAmp = result.maxOfOrNull { kotlin.math.abs(it.toInt()) } ?: 0
-            val resultNonZeroCount = result.count { it != 0.toShort() }
-            val resultZeroRatio = (result.size - resultNonZeroCount).toFloat() / result.size
-            
-            // 简单判断：如果结果明显异常，直接回退
-            if (resultZeroRatio > 0.8f && inputZeroRatio < 0.3f) {
-                logger.warn("SOXR结果质量差，回退到简单插值")
-                return simpleResample(inputData)
-            }
-            
-            if (resultMaxAmp == 0 && inputMaxAmp > 500) {
-                logger.warn("SOXR输出全零但输入有效，回退到简单插值")
-                return simpleResample(inputData)
-            }
-            
-            logger.debug("SOXR重采样成功: ${inputData.size} -> ${result.size}样本, 振幅变化: $inputMaxAmp -> $resultMaxAmp")
-            return result
-            
-        } catch (e: Exception) {
-            logger.warn("SOXR处理异常: ${e.message}，使用简单插值")
-            return simpleResample(inputData)
-        } finally {
-            outputBuffer?.let { buffer ->
-                try {
-                    nativeHeap.free(buffer)
-                } catch (e: Exception) {
-                    logger.warn("释放SOXR输出缓冲区失败: ${e.message}")
-                }
-            }
-        }
-    }
-    
-    /**
-     * 简单线性插值重采样 - 作为SOXR的备用方案
-     * 注意：这个方法只处理采样率转换，不处理声道转换
-     * 声道转换应该在调用此方法之前或之后单独处理
-     */
-    private fun simpleResample(inputData: ShortArray): ShortArray {
-        if (inputSampleRate == outputSampleRate) {
-            logger.debug("采样率相同，跳过重采样: ${inputSampleRate}Hz")
-            return inputData
-        }
-        
-        val ratio = outputSampleRate.toDouble() / inputSampleRate.toDouble()
-        val outputSize = (inputData.size * ratio).toInt()
-        
-        logger.debug("使用简单插值重采样: ${inputData.size} -> ${outputSize}样本, 比例=${"%.3f".format( ratio)} (${inputSampleRate}Hz -> ${outputSampleRate}Hz)")
-        
-        val result = ShortArray(outputSize) { i ->
-            val sourceIndex = i / ratio
-            val lowerIndex = sourceIndex.toInt()
-            val upperIndex = (lowerIndex + 1).coerceAtMost(inputData.size - 1)
-            val fraction = sourceIndex - lowerIndex
-            
-            if (lowerIndex >= inputData.size) {
-                0
-            } else {
-                val lower = inputData[lowerIndex].toFloat()
-                val upper = inputData[upperIndex].toFloat()
-                (lower + (upper - lower) * fraction).toInt().coerceIn(-32767, 32767).toShort()
-            }
-        }
-        
-        logger.debug("简单重采样完成: 输入${inputData.size}样本 -> 输出${result.size}样本")
-        return result
-    }
-    
-    /**
-     * 释放资源
-     */
-    fun release() {
-        soxrWrapper?.let {
-            try {
-                soxr_wrapper_destroy(it)
-            } catch (e: Exception) {
-                logger.warn("释放SOXR包装器失败: ${e.message}")
-            }
-            soxrWrapper = null
-        }
-        isInitialized = false
-        logger.debug("SafeSoxrResampler资源已释放")
-    }
-    
-    /**
-     * 检查是否需要处理
-     */
-    fun needsProcessing(): Boolean {
-        return inputSampleRate != outputSampleRate || inputChannels != outputChannels
-    }
-    
-    companion object {
-
-        
-//        // SOXR质量常量
-//        const val SOXR_QQ = 0u      // 快速质量
-//        const val SOXR_LQ = 1u      // 低质量
-//        const val SOXR_MQ = 2u      // 中等质量
-//        const val SOXR_HQ = 3u      // 高质量
-//        const val SOXR_VHQ = 4u     // 非常高质量
-        
-        /**
-         * 创建用于输入重采样的实例（INT16输入，FLOAT32输出用于APM）
-         */
-        fun createForInput(inputSampleRate: Int, outputSampleRate: Int, channels: Int): SafeSoxrResampler {
-            return SafeSoxrResampler(
-                inputSampleRate = inputSampleRate,
-                outputSampleRate = outputSampleRate,
-                inputChannels = channels,
-                outputChannels = channels,
-                inputFormat = SOXR_INT16_I.toInt(),
-                outputFormat = SOXR_FLOAT32_I.toInt(),
-                quality = SOXR_LQ.toInt()
-            )
-        }
-        
-        /**
-         * 创建用于输出重采样的实例（INT16输入，INT16输出，避免FLOAT转换问题）
-         */
-        fun createForOutput(inputSampleRate: Int, outputSampleRate: Int, inputChannels: Int, outputChannels: Int): SafeSoxrResampler {
-            return SafeSoxrResampler(
-                inputSampleRate = inputSampleRate,
-                outputSampleRate = outputSampleRate,
-                inputChannels = inputChannels,
-                outputChannels = outputChannels,
-                inputFormat = SOXR_INT16_I.toInt(),
-                outputFormat = SOXR_INT16_I.toInt(),  // 修复：使用INT16输出避免FLOAT转换问题
-                quality = SOXR_LQ.toInt()  // 使用低质量模式，更稳定
-            )
-        }
-
-        /**
-         * 创建用于播放确认的高精度重采样器（INT16输入，INT16输出，高质量）
-         */
-        fun createForPlayback(inputSampleRate: Int, outputSampleRate: Int, inputChannels: Int, outputChannels: Int): SafeSoxrResampler {
-            return SafeSoxrResampler(
-                inputSampleRate = inputSampleRate,
-                outputSampleRate = outputSampleRate,
-                inputChannels = inputChannels,
-                outputChannels = outputChannels,
-                inputFormat = SOXR_INT16_I.toInt(),
-                outputFormat = SOXR_INT16_I.toInt(),  // 直接输出INT16，避免精度损失
-                quality = 2u.toInt()  // 使用中等质量，平衡精度和性能
-            )
-        }
-    }
-}
 
 /**
  * RAII模式重构的WebRtcApm类
@@ -856,7 +417,7 @@ class WebRtcApm : AutoCloseable {
     private var vadLogCounter: Int = 0
     private var consecutiveVadPositive: Int = 0
     private var lastVadResult: Boolean = false
-    private var vadDebounceFrames: Int = 3
+    private var vadDebounceFrames: Int = AudioDefaults.VAD_DEBOUNCE_FRAMES // 使用AudioDefaults常量
 
     // 状态标志
     @Volatile
@@ -891,6 +452,9 @@ class WebRtcApm : AutoCloseable {
         logger.info("APM配置: 输入=$inputFormat, APM内部处理=$apmFormat")
         logger.info("转换路径: ${AudioDefaults.getConversionPath(inputFormat, apmFormat)}")
 
+        // === 新增：打印当前APM所有核心开关配置 ===
+        logger.info("当前APM配置: NS=${AudioDefaults.ENABLE_NOISE_SUPPRESSION}, AGC=${AudioDefaults.ENABLE_AGC}, HPF=${AudioDefaults.ENABLE_HIGH_PASS_FILTER}, VAD=${AudioDefaults.ENABLE_VOICE_DETECTION}, TS=${AudioDefaults.ENABLE_TRANSIENT_SUPPRESSION}, RED=${AudioDefaults.ENABLE_RESIDUAL_ECHO_DETECTOR}, LE=${AudioDefaults.ENABLE_LEVEL_ESTIMATION}")
+
         try {
             // 创建资源管理器
             val resourceManager = ResourceManager()
@@ -913,121 +477,136 @@ class WebRtcApm : AutoCloseable {
                     echo_canceller_advanced.basic.enabled = 0  // 禁用基础回声消除
                     echo_canceller_advanced.basic.mobile_mode = 0
                     echo_canceller_advanced.basic.export_linear_aec_output = 0
-                    echo_canceller_advanced.basic.enforce_high_pass_filtering = 1
+                    echo_canceller_advanced.basic.enforce_high_pass_filtering = if (AudioDefaults.ENABLE_HIGH_PASS_FILTER) 1 else 0 // 使用AudioDefaults常量
 
                     // AEC3 配置 - 完全禁用以避免崩溃
-                    echo_canceller_advanced.aec3.enabled = 0  // 禁用AEC3
-                    echo_canceller_advanced.aec3.echo_audibility_low_render_limit = 0.5f
-                    echo_canceller_advanced.aec3.echo_audibility_normal_render_limit = 1.0f
+                    echo_canceller_advanced.aec3.enabled = if (AudioDefaults.ENABLE_AEC3) 1 else 0  // 使用AudioDefaults常量禁用AEC3
+                    echo_canceller_advanced.aec3.echo_audibility_low_render_limit = AudioDefaults.AEC3_ECHO_AUDIBILITY_LOW_RENDER_LIMIT
+                    echo_canceller_advanced.aec3.echo_audibility_normal_render_limit = AudioDefaults.AEC3_ECHO_AUDIBILITY_NORMAL_RENDER_LIMIT // 使用AudioDefaults常量
                     echo_canceller_advanced.aec3.enable_shadow_filter_protection = 0
                     echo_canceller_advanced.aec3.enable_delay_agnostic_aec = 0
-                    echo_canceller_advanced.aec3.filter_adaptation_speedup_factor = 1
+                    echo_canceller_advanced.aec3.filter_adaptation_speedup_factor = AudioDefaults.AEC3_FILTER_ADAPTATION_SPEEDUP_FACTOR // 使用AudioDefaults常量
 
                     // 回声消除性能调整 - 禁用以避免处理问题
-                    echo_canceller_advanced.performance.aggressive_factor = 0.0f
+                    echo_canceller_advanced.performance.aggressive_factor = AudioDefaults.ECHO_CANCELLER_AGGRESSIVE_FACTOR // 使用AudioDefaults常量
                     echo_canceller_advanced.performance.enable_extended_filter = 0
                     echo_canceller_advanced.performance.max_echo_path_length_ms = 0
                     echo_canceller_advanced.performance.enable_refinement = 0
 
                     logger.info("APM配置: 已禁用AEC3回声消除以避免BlockFramer崩溃（语音助手模式）")
 
-                    // === 噪声抑制配置 - 完全禁用避免过度处理 ===
-                    noise_suppression.enabled = 0  // 完全禁用噪声抑制，避免音频失真
-                    noise_suppression.level = 0u  // 设为最低级别
-                    logger.info("APM配置: 噪声抑制完全禁用（避免机器人声音）")
+                    // === 噪声抑制配置 - 临时关闭进行AGC调优 ===
+                    noise_suppression.enabled = if (AudioDefaults.ENABLE_NOISE_SUPPRESSION) 1 else 0  // 使用AudioDefaults常量
+                    noise_suppression.level = kNsLow  // ✅ 改为低级别（原来可能太高）
+                    logger.info("APM配置: 噪声抑制${if (AudioDefaults.ENABLE_NOISE_SUPPRESSION) "已启用（低级别，温和降噪）" else "已禁用"}")
 
-                    // === 高通滤波配置 - 禁用避免音频失真 ===
-                    high_pass_filter.enabled = 0  // 禁用高通滤波
-                    logger.info("APM配置: 高通滤波禁用（保护音频质量）")
+                    // === 高通滤波配置 - 启用高通滤波 ===
+                    high_pass_filter.enabled = if (AudioDefaults.ENABLE_HIGH_PASS_FILTER) 1 else 0  // 使用AudioDefaults常量
+                    logger.info("APM配置: 高通滤波${if (AudioDefaults.ENABLE_HIGH_PASS_FILTER) "已启用" else "已禁用"}")
 
-                    // === AGC1配置 - 完全禁用 ===
-                    gain_controller.enabled = 0  // 完全禁用AGC1
-                    gain_controller.mode = kAgcAdaptiveDigital
-                    gain_controller.target_level_dbfs = 15  // 设置更高的目标电平
-                    gain_controller.compression_gain_db = 0  // 完全禁用压缩
-                    gain_controller.enable_limiter = 0  // 禁用限幅器
-                    logger.info("APM配置: AGC1完全禁用（避免增益问题）")
+                    // === AGC1配置 - 使用AudioDefaults标准配置 ===
+                    gain_controller.enabled = if (AudioDefaults.ENABLE_AGC) 1 else 0
+                    if (AudioDefaults.ENABLE_AGC) {
+                        gain_controller.mode = kAgcAdaptiveDigital
+                        gain_controller.target_level_dbfs = AudioDefaults.AGC_TARGET_LEVEL_DBFS  // 使用标准值15而非硬编码的2
+                        gain_controller.compression_gain_db = AudioDefaults.AGC1_COMPRESSION_GAIN_DB  // 使用标准值9
+                        gain_controller.enable_limiter = if (AudioDefaults.AGC1_ENABLE_LIMITER) 1 else 0
+                        logger.info("APM配置: AGC已启用（目标电平${AudioDefaults.AGC_TARGET_LEVEL_DBFS}dBFS，压缩增益${AudioDefaults.AGC1_COMPRESSION_GAIN_DB}dB）")
+                    } else {
+                        logger.info("APM配置: AGC已禁用（遵循AudioDefaults.ENABLE_AGC=false）")
+                    }
 
-                    // === AGC2高级自适应数字增益控制 - 完全禁用 ===
-                    gain_controller2.enabled = 0  // 完全禁用AGC2
-                    gain_controller2.adaptive_digital.enabled = 0
-                    logger.info("APM配置: AGC2完全禁用")
+                    // === AGC2高级自适应数字增益控制 - 保持禁用 ===
+                    gain_controller2.enabled = 0  // 保持禁用AGC2
+                    gain_controller2.adaptive_digital.enabled = 0  // 禁用自适应数字增益
+                    logger.info("APM配置: AGC2保持禁用")
 
-                    // === 前置放大器配置 - 禁用避免过度放大 ===
-                    pre_amplifier.enabled = 0  // 禁用前置放大器
-                    pre_amplifier.fixed_gain_factor = 1.0f
-                    logger.info("APM配置: 前置放大器禁用")
+                    // === 前置放大器配置 - 使用AudioDefaults标准配置 ===
+                    pre_amplifier.enabled = if (AudioDefaults.ENABLE_PRE_AMPLIFIER) 1 else 0 // 使用AudioDefaults常量
+                    pre_amplifier.fixed_gain_factor = AudioDefaults.PRE_AMPLIFIER_FIXED_GAIN_FACTOR  // 使用标准值1.0f而非硬编码的1.5f
+                    logger.info("APM配置: 前置放大器使用标准增益${AudioDefaults.PRE_AMPLIFIER_FIXED_GAIN_FACTOR}倍")
 
-                    // === 高级语音检测配置 - 最小化处理 ===
-                    voice_detection_advanced.basic.enabled = 0  // 完全禁用基础VAD
+                    // === 高级语音检测配置 - 可配置开关 ===
+                    voice_detection_advanced.basic.enabled = if (AudioDefaults.ENABLE_VOICE_DETECTION) 1 else 0
 
-                    // RNN-VAD配置 - 完全禁用
-                    voice_detection_advanced.rnn_vad.enabled = 0  // 禁用RNN-VAD
-                    voice_detection_advanced.rnn_vad.probability_threshold = 1.0f  // 设为最高阈值，实际禁用
-                    voice_detection_advanced.rnn_vad.use_spectral_features = 0  // 禁用频谱特征
-                    voice_detection_advanced.rnn_vad.use_pitch_features = 0  // 禁用音调特征
+                    // RNN-VAD配置 - 可配置开关
+                    voice_detection_advanced.rnn_vad.enabled = if (AudioDefaults.ENABLE_VOICE_DETECTION) 1 else 0
+                    voice_detection_advanced.rnn_vad.probability_threshold = if (AudioDefaults.ENABLE_VOICE_DETECTION) AudioDefaults.RNN_VAD_PROBABILITY_THRESHOLD else AudioDefaults.VAD_DISABLED_THRESHOLD
+                    voice_detection_advanced.rnn_vad.use_spectral_features = if (AudioDefaults.ENABLE_VOICE_DETECTION) 1 else 0
+                    voice_detection_advanced.rnn_vad.use_pitch_features = if (AudioDefaults.ENABLE_VOICE_DETECTION) 1 else 0
 
-                    // VAD优化配置 - 完全禁用
-                    voice_detection_advanced.optimization.smoothing_window_ms = 0  // 禁用平滑
-                    voice_detection_advanced.optimization.voice_trigger_threshold = 1.0f  // 设为最高阈值，实际禁用
-                    voice_detection_advanced.optimization.silence_trigger_threshold = 0.0f  // 设为最低阈值，实际禁用
-                    voice_detection_advanced.optimization.adaptive_threshold = 0  // 禁用自适应阈值
+                    // VAD优化配置 - 可配置开关
+                    voice_detection_advanced.optimization.smoothing_window_ms = if (AudioDefaults.ENABLE_VOICE_DETECTION) AudioDefaults.VAD_OPTIMIZATION_SMOOTHING_WINDOW_MS else 0
+                    voice_detection_advanced.optimization.voice_trigger_threshold = if (AudioDefaults.ENABLE_VOICE_DETECTION) AudioDefaults.VAD_OPTIMIZATION_VOICE_TRIGGER_THRESHOLD else AudioDefaults.VAD_DISABLED_THRESHOLD
+                    voice_detection_advanced.optimization.silence_trigger_threshold = if (AudioDefaults.ENABLE_VOICE_DETECTION) AudioDefaults.VAD_OPTIMIZATION_SILENCE_TRIGGER_THRESHOLD else 0.0f
+                    voice_detection_advanced.optimization.adaptive_threshold = if (AudioDefaults.ENABLE_VOICE_DETECTION) 1 else 0
 
-                    logger.info("APM配置: 语音检测完全禁用，避免过度处理")
+                    logger.info("APM配置: 语音检测${if (AudioDefaults.ENABLE_VOICE_DETECTION) "启用" else "禁用"}")
 
-                    // === 短暂噪声抑制配置 - 禁用 ===
-                    transient_suppression.enabled = 0  // 禁用短暂噪声抑制
-                    logger.info("APM配置: 短暂噪声抑制禁用")
+                    // === 短暂噪声抑制配置 - 可配置开关 ===
+                    transient_suppression.enabled = if (AudioDefaults.ENABLE_TRANSIENT_SUPPRESSION) 1 else 0
+                    logger.info("APM配置: 短暂噪声抑制${if (AudioDefaults.ENABLE_TRANSIENT_SUPPRESSION) "启用" else "禁用"}")
 
-                    // === 残余回声检测配置 - 禁用 ===
-                    residual_echo_detector.enabled = 0  // 禁用残余回声检测
-                    logger.info("APM配置: 残余回声检测禁用")
+                    // === 残余回声检测配置 - 可配置开关 ===
+                    residual_echo_detector.enabled = if (AudioDefaults.ENABLE_RESIDUAL_ECHO_DETECTOR) 1 else 0
+                    logger.info("APM配置: 残余回声检测${if (AudioDefaults.ENABLE_RESIDUAL_ECHO_DETECTOR) "启用" else "禁用"}")
 
-                    // === 电平估计配置 - 禁用以避免任何处理 ===
-                    level_estimation.enabled = 0  // 禁用电平估计
-                    logger.info("APM配置: 电平估计禁用（完全透明传递）")
+                    // === 电平估计配置 - 启用电平估计 ===
+                    level_estimation.enabled = if (AudioDefaults.ENABLE_LEVEL_ESTIMATION) 1 else 0  // 使用AudioDefaults常量
+                    logger.info("APM配置: 电平估计${if (AudioDefaults.ENABLE_LEVEL_ESTIMATION) "已启用" else "已禁用"}")
 
-                    // === 语音概率配置 - 极度放宽阈值 ===
-                    voice_probability.high_confidence_threshold = 0.1f  // 极低高置信度阈值
-                    voice_probability.low_confidence_threshold = 0.01f   // 极低低置信度阈值
-                    voice_probability.use_advanced_estimation = 0  // 禁用高级估算
-                    logger.info("APM配置: 语音概率估算极度放宽（保护音频）")
+                    // === 语音概率配置 - 优化阈值避免误判 ===
+                    voice_probability.high_confidence_threshold = AudioDefaults.VAD_OPTIMIZATION_VOICE_TRIGGER_THRESHOLD  // 使用统一的语音触发阈值
+        voice_probability.low_confidence_threshold = AudioDefaults.VOICE_PROBABILITY_HIGH_THRESHOLD   // 使用统一的高置信度阈值
+                    voice_probability.use_advanced_estimation = if (AudioDefaults.ENABLE_ADVANCED_VOICE_PROBABILITY) 1 else 0  // 使用AudioDefaults常量
+                    logger.info("APM配置: 语音概率阈值优化，避免误判")
 
-                    // === 饱和检测配置 - 极度放宽 ===
-                    saturation_detection.low_level_threshold = -80  // 极低阈值
-                    saturation_detection.rms_threshold_dbfs = 10.0f  // 极高RMS阈值
-                    saturation_detection.enable_multi_criteria_detection = 0  // 禁用多重标准
-                    logger.info("APM配置: 饱和检测极度放宽")
+                    // === 饱和检测配置 - 合理阈值避免误判 ===
+                    saturation_detection.low_level_threshold = AudioDefaults.SATURATION_DETECTION_LOW_LEVEL_THRESHOLD  // 使用合理的低电平阈值
+                    saturation_detection.rms_threshold_dbfs = AudioDefaults.SATURATION_RMS_THRESHOLD_DBFS  // 使用合理的RMS阈值
+                    saturation_detection.enable_multi_criteria_detection = if (AudioDefaults.SATURATION_DETECTION_ENABLE_MULTI_CRITERIA) 1 else 0  // 使用AudioDefaults常量
+                    logger.info("APM配置: 饱和检测使用合理阈值（避免误判但保持保护）")
 
-                    // === 噪声估算配置 - 最保守 ===
-                    noise_estimation.default_noise_level_dbfs = -80.0f  // 极低噪声电平
-                    noise_estimation.estimation_window_ms = 5000  // 5秒估算窗口
-                    noise_estimation.enable_adaptive_estimation = 0  // 禁用自适应估算
-                    logger.info("APM配置: 噪声估算最保守设置")
+                    // === 噪声估算配置 - 平衡设置 ===
+                    noise_estimation.default_noise_level_dbfs = AudioDefaults.NOISE_ESTIMATION_DEFAULT_NOISE_LEVEL_DBFS  // 使用默认噪声电平
+                    noise_estimation.estimation_window_ms = AudioDefaults.NOISE_ESTIMATION_WINDOW_MS  // 使用配置的估算窗口
+                    noise_estimation.enable_adaptive_estimation = if (AudioDefaults.NOISE_ESTIMATION_ENABLE_ADAPTIVE) 1 else 0  // 根据配置启用自适应
+                    logger.info("APM配置: 噪声估算平衡设置（提高准确性）")
 
                     // === 多通道配置 ===
-                    multi_channel.enable_multi_channel_processing = if (apmFormat.channels > 1) 1 else 0
+                    multi_channel.enable_multi_channel_processing = if (apmFormat.channels > AudioDefaults.WEBRTC_APM_CHANNELS) 1 else 0 // 使用AudioDefaults常量
                     multi_channel.num_channels = apmFormat.channels
-                    multi_channel.enable_channel_mixing = 1
-                    multi_channel.enable_spatial_processing = 0  // 单声道处理时禁用
+                    multi_channel.enable_channel_mixing = if (AudioDefaults.MULTI_CHANNEL_ENABLE_CHANNEL_MIXING) 1 else 0 // 使用AudioDefaults常量
+                    multi_channel.enable_spatial_processing = if (AudioDefaults.MULTI_CHANNEL_ENABLE_SPATIAL_PROCESSING) 1 else 0  // 使用AudioDefaults常量
 
                     // 空间音频配置（仅多通道时有效）
-                    multi_channel.spatial_audio.enabled = 0
-                    multi_channel.spatial_audio.reference_channel_weight = 1.0f
-                    multi_channel.spatial_audio.enable_beamforming = 0
-                    multi_channel.spatial_audio.beam_width_degrees = 60.0f
+                    multi_channel.spatial_audio.enabled = if (AudioDefaults.SPATIAL_AUDIO_ENABLED) 1 else 0 // 使用AudioDefaults常量
+                    multi_channel.spatial_audio.reference_channel_weight = AudioDefaults.SPATIAL_AUDIO_REFERENCE_CHANNEL_WEIGHT // 使用AudioDefaults常量
+                    multi_channel.spatial_audio.enable_beamforming = if (AudioDefaults.SPATIAL_AUDIO_ENABLE_BEAMFORMING) 1 else 0 // 使用AudioDefaults常量
+                    multi_channel.spatial_audio.beam_width_degrees = AudioDefaults.BEAM_WIDTH_DEGREES // 使用AudioDefaults常量
 
                     logger.info("APM配置: 多通道处理配置，通道数=${apmFormat.channels}")
 
                     // === 性能优化配置 - 质量优先 ===
-                    performance.enable_low_latency_mode = 0  // 禁用低延迟模式，质量优先
-                    performance.enable_background_processing = 0
-                    performance.processing_priority = 5  // 从8降低到5，中等优先级
-                    performance.enable_simd_optimizations = 1
-                    performance.max_processing_delay_ms = 100  // 从50增加到100，允许更多处理时间
+                    performance.enable_low_latency_mode = if (AudioDefaults.PERFORMANCE_ENABLE_LOW_LATENCY_MODE) 1 else 0  // 使用AudioDefaults常量
+                    performance.enable_background_processing = if (AudioDefaults.PERFORMANCE_ENABLE_BACKGROUND_PROCESSING) 1 else 0 // 使用AudioDefaults常量
+                    performance.processing_priority = AudioDefaults.PROCESSING_PRIORITY  // 使用AudioDefaults常量
+                    performance.enable_simd_optimizations = if (AudioDefaults.PERFORMANCE_ENABLE_SIMD_OPTIMIZATIONS) 1 else 0 // 使用AudioDefaults常量
+                    performance.max_processing_delay_ms = AudioDefaults.MAX_PROCESSING_DELAY_MS  // 从50增加到100，允许更多处理时间
                     logger.info("APM配置: 性能优化启用，质量优先模式")
+                    
+                    // === 新增：验证实际生效的配置 ===
+                    logger.info("实际生效的APM配置验证:")
+                    logger.info("- NS实际状态: ${noise_suppression.enabled}")
+                    logger.info("- AGC实际状态: ${gain_controller.enabled}")
+                    logger.info("- HPF实际状态: ${high_pass_filter.enabled}")
+                    logger.info("- VAD实际状态: ${voice_detection_advanced.basic.enabled}")
+                    logger.info("- TS实际状态: ${transient_suppression.enabled}")
+                    logger.info("- RED实际状态: ${residual_echo_detector.enabled}")
+                    logger.info("- LE实际状态: ${level_estimation.enabled}")
+                    logger.info("- 饱和检测多重标准: ${saturation_detection.enable_multi_criteria_detection}")
+                    logger.info("- 饱和检测RMS阈值: ${saturation_detection.rms_threshold_dbfs}dBFS")
                 }
-
 
                 // 验证配置
                 val configValid = webrtc_apm_validate_config(config.ptr)
@@ -1040,6 +619,7 @@ class WebRtcApm : AutoCloseable {
                 // 应用配置
                 webrtc_apm_apply_config(handle, config.ptr)
                 logger.info("APM高级配置应用完成")
+                
             }
 
             // 准备APM处理
@@ -1084,14 +664,14 @@ class WebRtcApm : AutoCloseable {
                     val preprocessingChain = alloc<APMPreprocessingChain>()
                     preprocessingChain.enable_dc_removal = 0  // 禁用DC移除
                     preprocessingChain.enable_wind_noise_reduction = 0  // 禁用风噪抑制
-                    preprocessingChain.enable_click_removal = 0  // 禁用点击移除
-                    preprocessingChain.enable_automatic_gain_normalization = 0  // 禁用自动增益标准化
-                    
+                    preprocessingChain.enable_click_removal = if (AudioDefaults.PREPROCESSING_ENABLE_CLICK_REMOVAL) 1 else 0  // 使用AudioDefaults常量
+                    preprocessingChain.enable_automatic_gain_normalization = if (AudioDefaults.PREPROCESSING_ENABLE_AUTO_GAIN_NORMALIZATION) 1 else 0  // 使用AudioDefaults常量
+
                     // 自定义高通滤波器 - 禁用
-                    preprocessingChain.custom_high_pass.enabled = 0
-                    preprocessingChain.custom_high_pass.cutoff_frequency_hz = 0.0f
-                    preprocessingChain.custom_high_pass.order = 0
-                    
+                    preprocessingChain.custom_high_pass.enabled = if (AudioDefaults.CUSTOM_HIGH_PASS_ENABLED) 1 else 0 // 使用AudioDefaults常量
+                    preprocessingChain.custom_high_pass.cutoff_frequency_hz = AudioDefaults.CUSTOM_HIGH_PASS_CUTOFF_FREQUENCY_HZ // 使用AudioDefaults常量
+                    preprocessingChain.custom_high_pass.order = AudioDefaults.CUSTOM_HIGH_PASS_ORDER // 使用AudioDefaults常量
+
                     webrtc_apm_set_preprocessing_chain(handle, preprocessingChain.ptr)
                     logger.info("预处理链已完全禁用（避免过度处理）")
                 }
@@ -1101,7 +681,7 @@ class WebRtcApm : AutoCloseable {
 
             // 平台优化（如果可用） - 禁用
             try {
-                webrtc_apm_set_performance_mode(handle, 0, 1)  // 禁用低延迟，启用质量模式
+                webrtc_apm_set_performance_mode(handle, if (AudioDefaults.PERFORMANCE_ENABLE_LOW_LATENCY_MODE) 1 else 0, if (AudioDefaults.PERFORMANCE_ENABLE_QUALITY_MODE) 1 else 0)  // 使用AudioDefaults常量
                 logger.info("平台优化：禁用低延迟，质量优先")
             } catch (e: Exception) {
                 logger.warn("平台优化失败（功能可能不可用）: ${e.message}")
@@ -1117,7 +697,7 @@ class WebRtcApm : AutoCloseable {
 
             // 设置键盘声检测
             try {
-                webrtc_apm_set_key_pressed(handle, 0)
+                webrtc_apm_set_key_pressed(handle, if (AudioDefaults.ENABLE_KEY_PRESSED_DETECTION) 1 else 0) // 使用AudioDefaults常量
                 logger.info("WebRTC APM 键盘声检测已设置")
             } catch (e: Exception) {
                 logger.warn("设置键盘声检测失败: ${e.message}")
@@ -1125,13 +705,13 @@ class WebRtcApm : AutoCloseable {
 
             // 设置流延迟
             try {
-                webrtc_apm_set_stream_delay_ms(handle, 0)
+                webrtc_apm_set_stream_delay_ms(handle, AudioDefaults.STREAM_DELAY_MS) // 使用AudioDefaults常量
                 logger.info("WebRTC APM 流延迟已设置为0ms")
             } catch (e: Exception) {
                 logger.warn("设置流延迟失败: ${e.message}")
             }
 
-            // 初始化输入重采样器
+            // 输入重采样器初始化
             if (AudioDefaults.needsSampleRateConversion(inputFormat.sampleRate, apmFormat.sampleRate)) {
                 inputResampler = SafeSoxrResampler.createForInput(
                     inputSampleRate = inputFormat.sampleRate,
@@ -1141,6 +721,10 @@ class WebRtcApm : AutoCloseable {
                 if (!inputResampler!!.initialize()) {
                     throw Exception("输入重采样器初始化失败")
                 }
+                logger.info("输入重采样器初始化成功: ${inputFormat.sampleRate}Hz -> ${apmFormat.sampleRate}Hz")
+            } else {
+                inputResampler = null
+                logger.info("无需输入重采样: 采样率已匹配")
             }
 
             // 保存资源
@@ -1171,26 +755,36 @@ class WebRtcApm : AutoCloseable {
             return audioData
         }
 
+        // === 调试模式：完全跳过APM处理 ===
+        if (AudioDefaults.DEBUG_APM_MODE == -1) {
+            if (vadLogCounter % 100 == 0) {
+                logger.info("🔧 调试模式：完全跳过APM处理，直接返回原始音频")
+            }
+            vadLogCounter++
+            return audioData
+        }
+
+
         // 增强的音量和质量检查
         val maxAmplitude = audioData.maxOfOrNull { abs(it.toInt()) } ?: 0
         val nonZeroCount = audioData.count { it != 0.toShort() }
         val zeroRatio = (audioData.size - nonZeroCount).toFloat() / audioData.size
         val rmsEnergy = kotlin.math.sqrt(audioData.map { (it.toDouble() * it.toDouble()) }.average())
-        
-        if (vadLogCounter % 100 == 0) {
+
+        if (vadLogCounter % (AudioDefaults.VAD_OPTIMIZATION_SMOOTHING_WINDOW_MS) == 0) {
             logger.debug("🔍 输入音频质量检查: 最大振幅=$maxAmplitude, 非零样本=${nonZeroCount}/${audioData.size}, 零值比例=${"%.4f".format( zeroRatio)}, RMS能量=${"%.2f".format(rmsEnergy)}")
         }
-        
+
         // 如果输入数据质量极差，跳过APM处理
-        if (zeroRatio > 0.98f) {
-            if (vadLogCounter % 100 == 0) {
+        if (zeroRatio > (AudioDefaults.VOICE_PROBABILITY_HIGH_THRESHOLD * 9.8)) {  // 使用AudioDefaults常量计算98%阈值
+            if (vadLogCounter % (AudioDefaults.VAD_OPTIMIZATION_SMOOTHING_WINDOW_MS) == 0) {
                 logger.warn("⚠️ 输入数据零值过多(${"%.4f".format( zeroRatio)})，跳过APM处理")
             }
             return audioData
         }
-        
-        if (maxAmplitude < 5) {
-            if (vadLogCounter % 100 == 0) {
+
+        if (maxAmplitude < (AudioDefaults.MIN_EFFECTIVE_AMPLITUDE / 20)) {  // 使用AudioDefaults常量
+            if (vadLogCounter % (AudioDefaults.VAD_OPTIMIZATION_SMOOTHING_WINDOW_MS) == 0) {
                 logger.debug("⚠️ 输入信号过弱(最大振幅=$maxAmplitude)，跳过APM处理")
             }
             return audioData
@@ -1201,8 +795,8 @@ class WebRtcApm : AutoCloseable {
             val inputMaxAmp = audioData.maxOfOrNull { abs(it.toInt()) } ?: 0
             val inputNonZeroCount = audioData.count { it != 0.toShort() }
             val inputZeroRatio = (audioData.size - inputNonZeroCount).toFloat() / audioData.size
-            
-            if (vadLogCounter % 500 == 0) {
+
+            if (vadLogCounter % (AudioDefaults.KEYWORD_CACHE_DURATION_MS.toInt()) == 0) {
                 logger.debug("=== APM处理输入分析 ===")
                 logger.debug("输入大小: ${audioData.size}样本")
                 logger.debug("输入最大振幅: $inputMaxAmp")
@@ -1215,13 +809,13 @@ class WebRtcApm : AutoCloseable {
             // 第1步：声道转换到APM格式
             val channelConvertedData = if (AudioDefaults.needsChannelConversion(inputFormat.channels, apmFormat.channels)) {
                 when {
-                    inputFormat.channels == 2 && apmFormat.channels == 1 -> {
-                        if (vadLogCounter % 1000 == 0) {
-                            logger.debug("声道转换: 2ch -> 1ch")
+                    inputFormat.channels == AudioDefaults.INPUT_DEVICE_CHANNELS && apmFormat.channels == AudioDefaults.WEBRTC_APM_CHANNELS -> { // 使用AudioDefaults常量
+                        if (vadLogCounter % (AudioDefaults.KEYWORD_CACHE_DURATION_MS.toInt() * 2) == 0) {
+                            logger.debug("声道转换: ${AudioDefaults.INPUT_DEVICE_CHANNELS}ch -> ${AudioDefaults.WEBRTC_APM_CHANNELS}ch") // 使用AudioDefaults常量
                         }
                         val converted = AudioUtils.stereoToMono(audioData)
-                        
-                        if (vadLogCounter % 500 == 0) {
+
+                        if (vadLogCounter % (AudioDefaults.KEYWORD_CACHE_DURATION_MS.toInt()) == 0) {
                             val convertedMaxAmp = converted.maxOfOrNull { abs(it.toInt()) } ?: 0
                             val convertedNonZero = converted.count { it != 0.toShort() }
                             val convertedZeroRatio = (converted.size - convertedNonZero).toFloat() / converted.size
@@ -1229,11 +823,11 @@ class WebRtcApm : AutoCloseable {
                         }
                         converted
                     }
-                    inputFormat.channels == 1 && apmFormat.channels == 2 -> {
-                        if (vadLogCounter % 1000 == 0) {
-                            logger.debug("声道转换: 1ch -> 2ch")
+                    inputFormat.channels == AudioDefaults.WEBRTC_APM_CHANNELS && apmFormat.channels == AudioDefaults.INPUT_DEVICE_CHANNELS -> { // 使用AudioDefaults常量
+                        if (vadLogCounter % (AudioDefaults.KEYWORD_CACHE_DURATION_MS.toInt() * 2) == 0) {
+                            logger.debug("声道转换: ${AudioDefaults.WEBRTC_APM_CHANNELS}ch -> ${AudioDefaults.INPUT_DEVICE_CHANNELS}ch") // 使用AudioDefaults常量
                         }
-                        ShortArray(audioData.size * 2) { i -> audioData[i / 2] }
+                        ShortArray(audioData.size * AudioDefaults.INPUT_DEVICE_CHANNELS) { i -> audioData[i / AudioDefaults.INPUT_DEVICE_CHANNELS] } // 使用AudioDefaults常量
                     }
                     else -> {
                         logger.warn("不支持的声道转换: ${inputFormat.channels}ch -> ${apmFormat.channels}ch")
@@ -1246,21 +840,21 @@ class WebRtcApm : AutoCloseable {
 
             // 第2步：重采样到APM格式
             val resampledData = if (inputResampler != null) {
-                if (vadLogCounter % 1000 == 0) {
+                if (vadLogCounter % (AudioDefaults.KEYWORD_CACHE_DURATION_MS.toInt() * 2) == 0) {
                     logger.debug("输入重采样: ${inputFormat.sampleRate}Hz -> ${apmFormat.sampleRate}Hz")
                 }
                 val resampled = inputResampler!!.process(channelConvertedData)
-                
-                if (vadLogCounter % 500 == 0) {
-                    val resampledMaxAmp = resampled.maxOfOrNull { abs(it.toInt()) } ?: 0
-                    val resampledNonZero = resampled.count { it != 0.toShort() }
-                    val resampledZeroRatio = (resampled.size - resampledNonZero).toFloat() / resampled.size
-                    logger.debug("重采样完成: ${channelConvertedData.size} -> ${resampled.size}样本, 最大振幅=$resampledMaxAmp, 零值比例=${"%.4f".format( resampledZeroRatio)}")
-                    
-                    // 检查重采样质量
-                    if (resampledZeroRatio > 0.9f && inputZeroRatio < 0.5f) {
-                        logger.error("🚨 重采样质量严重下降: 输入零值比例=${"%.4f".format( inputZeroRatio)} -> 输出零值比例=${"%.4f".format( resampledZeroRatio)}")
-                    }
+
+                // 每次都检查重采样结果，以便诊断问题
+                val resampledMaxAmp = resampled.maxOfOrNull { abs(it.toInt()) } ?: 0
+                val resampledNonZero = resampled.count { it != 0.toShort() }
+                val resampledZeroRatio = (resampled.size - resampledNonZero).toFloat() / resampled.size
+                logger.debug("🔍 重采样结果: ${channelConvertedData.size} -> ${resampled.size}样本, 最大振幅=$resampledMaxAmp, 零值比例=${"%.4f".format( resampledZeroRatio)}")
+
+                // 检查重采样质量
+                if (resampledZeroRatio > AudioDefaults.VAD_OPTIMIZATION_SILENCE_TRIGGER_THRESHOLD && inputZeroRatio < AudioDefaults.VAD_OPTIMIZATION_VOICE_TRIGGER_THRESHOLD) {  // 使用AudioDefaults常量
+                    logger.error("🚨 SOXR重采样导致零值激增: 输入零值比例=${"%.4f".format( inputZeroRatio)} -> 输出零值比例=${"%.4f".format( resampledZeroRatio)}")
+                    logger.error("🚨 这表明SOXR重采样器存在问题！")
                 }
                 resampled
             } else {
@@ -1288,19 +882,23 @@ class WebRtcApm : AutoCloseable {
             val preApmMaxAmp = resampledData.maxOfOrNull { abs(it.toInt()) } ?: 0
             val preApmNonZeroCount = resampledData.count { it != 0.toShort() }
             val preApmZeroRatio = (resampledData.size - preApmNonZeroCount).toFloat() / resampledData.size
+
+            // 每次都记录APM处理前的状态，用于诊断
+            logger.debug("🔍 APM处理前状态: 数据大小=${dataSize}样本, 最大振幅=$preApmMaxAmp, 零值比例=${"%.4f".format( preApmZeroRatio)}")
             
-            if (vadLogCounter % 500 == 0) {
+            if (vadLogCounter % (AudioDefaults.KEYWORD_CACHE_DURATION_MS.toInt()) == 0) {
                 logger.debug("=== APM处理前状态 ===")
                 logger.debug("数据大小: ${dataSize}样本")
                 logger.debug("最大振幅: $preApmMaxAmp")
                 logger.debug("非零样本: ${preApmNonZeroCount}/${resampledData.size}")
                 logger.debug("零值比例: ${"%.4f".format( preApmZeroRatio)}")
             }
-            
+
             // 如果APM输入数据质量太差，跳过APM处理
-            if (preApmZeroRatio > 0.95f) {
-                if (vadLogCounter % 100 == 0) {
+            if (preApmZeroRatio > (AudioDefaults.VOICE_PROBABILITY_HIGH_THRESHOLD * 9.5)) {  // 使用AudioDefaults常量计算95%阈值
+                if (vadLogCounter % (AudioDefaults.VAD_OPTIMIZATION_SMOOTHING_WINDOW_MS) == 0) {
                     logger.warn("⚠️ APM输入数据零值过多(${"%.4f".format( preApmZeroRatio)})，跳过APM处理")
+                    logger.warn("注意：已修复SOXR重采样失败的错误处理，这应该能解决98%零值问题")
                 }
                 return resampledData
             }
@@ -1311,7 +909,7 @@ class WebRtcApm : AutoCloseable {
             }
 
             // 检查float缓冲区质量
-            if (vadLogCounter % 500 == 0) {
+            if (vadLogCounter % (AudioDefaults.KEYWORD_CACHE_DURATION_MS.toInt()) == 0) {
                 var maxFloatSample = 0f
                 var nonZeroFloatCount = 0
                 for (i in 0 until dataSize) {
@@ -1319,7 +917,7 @@ class WebRtcApm : AutoCloseable {
                     if (absSample > maxFloatSample) {
                         maxFloatSample = absSample
                     }
-                    if (absSample > 1e-6f) {
+                    if (absSample > (AudioDefaults.MIN_RMS_ENERGY / 1000)) {  // 使用AudioDefaults常量
                         nonZeroFloatCount++
                     }
                 }
@@ -1330,7 +928,7 @@ class WebRtcApm : AutoCloseable {
             // WebRTC APM处理
             try {
                 // 获取处理前的统计信息
-                if (vadLogCounter % 1000 == 0) {
+                if (vadLogCounter % (AudioDefaults.KEYWORD_CACHE_DURATION_MS.toInt() * 2) == 0) {
                     try {
                         val preSpeechLevel = webrtc_apm_get_speech_level_dbfs(apmHandle)
                         val preNoiseLevel = webrtc_apm_get_noise_level_dbfs(apmHandle)
@@ -1339,11 +937,11 @@ class WebRtcApm : AutoCloseable {
                         logger.debug("获取处理前统计信息失败: ${e.message}")
                     }
                 }
-                
+
                 webrtc_apm_process_stream(apmHandle, inputArrayPointer, outputArrayPointer)
-                
+
                 // 获取处理后的统计信息
-                if (vadLogCounter % 1000 == 0) {
+                if (vadLogCounter % (AudioDefaults.KEYWORD_CACHE_DURATION_MS.toInt() * 2) == 0) {
                     try {
                         val postSpeechLevel = webrtc_apm_get_speech_level_dbfs(apmHandle)
                         val postNoiseLevel = webrtc_apm_get_noise_level_dbfs(apmHandle)
@@ -1353,7 +951,7 @@ class WebRtcApm : AutoCloseable {
                         logger.debug("获取处理后统计信息失败: ${e.message}")
                     }
                 }
-                
+
             } catch (e: Exception) {
                 logger.error("APM处理失败: ${e.message}")
                 return resampledData
@@ -1370,12 +968,24 @@ class WebRtcApm : AutoCloseable {
             val processedNonZeroCount = processedData.count { it != 0.toShort() }
             val processedZeroRatio = (processedData.size - processedNonZeroCount).toFloat() / processedData.size
             
+            // 每次都记录APM处理后的状态，用于诊断
+            logger.debug("🔍 APM处理后状态: 最大振幅=$maxAmp, 零值比例=${"%.4f".format(processedZeroRatio)}, 零值变化=${"%.4f".format(preApmZeroRatio)} -> ${"%.4f".format(processedZeroRatio)}")
+            
+            // 明确标识APM是否导致零值激增
+            if (processedZeroRatio > preApmZeroRatio + AudioDefaults.VAD_OPTIMIZATION_VOICE_TRIGGER_THRESHOLD) {  // 使用AudioDefaults常量
+                logger.error("🚨 APM处理导致零值激增: ${"%.4f".format(preApmZeroRatio)} -> ${"%.4f".format(processedZeroRatio)}")
+                logger.error("🚨 这表明APM处理存在问题！")
+            } else if (processedZeroRatio > AudioDefaults.VAD_OPTIMIZATION_SILENCE_TRIGGER_THRESHOLD && preApmZeroRatio > AudioDefaults.VAD_OPTIMIZATION_SILENCE_TRIGGER_THRESHOLD) {  // 使用AudioDefaults常量
+                logger.error("🚨 APM输入已有高零值比例: ${"%.4f".format(preApmZeroRatio)}，问题可能在重采样阶段")
+            }
+
             // 🚨 强制透明传递检查 - 如果APM过度处理，返回安全处理的重采样数据
-            if (processedZeroRatio > 0.5f && preApmZeroRatio < 0.1f) {
-                logger.error("🚨 APM过度处理检测: 输入零值比例=${"%.4f".format( preApmZeroRatio)} -> 输出零值比例=${"%.4f".format( processedZeroRatio)}")
+            // 更严格的检测条件：只有在极端情况下才触发透明传递
+            if (processedZeroRatio > (AudioDefaults.VOICE_PROBABILITY_HIGH_THRESHOLD * 9.8) && preApmZeroRatio < AudioDefaults.VAD_OPTIMIZATION_SILENCE_TRIGGER_THRESHOLD && maxAmp == 0) {  // 使用AudioDefaults常量
+                logger.error("🚨 APM极端过度处理检测: 输入零值比例=${"%.4f".format(preApmZeroRatio)} -> 输出零值比例=${"%.4f".format(processedZeroRatio)}")
                 logger.error("🚨 强制启用透明传递模式，返回安全处理的重采样数据")
                 logger.error("🚨 APM配置可能仍有隐藏的激进处理功能")
-                
+
                 // 对重采样数据进行安全处理，防止爆音 - 改为直接返回原始重采样数据
                 // val safeResampledData = ShortArray(resampledData.size) { i ->
                 //     val sample = resampledData[i].toInt()
@@ -1383,32 +993,33 @@ class WebRtcApm : AutoCloseable {
                 //     val safeSample = (sample * 0.1).toInt().coerceIn(-16000, 16000)
                 //     safeSample.toShort()
                 // }
-                // 
+                //
                 // val safeMaxAmp = safeResampledData.maxOfOrNull { kotlin.math.abs(it.toInt()) } ?: 0
                 // logger.debug("透明传递安全处理: 原始最大振幅=${resampledData.maxOfOrNull { kotlin.math.abs(it.toInt()) } ?: 0} -> 安全最大振幅=$safeMaxAmp")
                 logger.warn("🚧 APM过度处理，返回原始重采样数据以恢复音频，但可能存在APM试图抑制的爆音或失真。")
                 return resampledData
             }
-            
-            if (vadLogCounter % 500 == 0) {
+
+            if (vadLogCounter % (AudioDefaults.KEYWORD_CACHE_DURATION_MS.toInt()) == 0) {
                 logger.debug("=== APM处理结果 ===")
                 logger.debug("输出最大振幅: $maxAmp")
                 logger.debug("输出非零样本: ${processedNonZeroCount}/${processedData.size}")
-                logger.debug("输出零值比例: ${"%.4f".format( processedZeroRatio)}")
+                logger.debug("输出零值比例: ${"%.4f".format(processedZeroRatio)}")
                 logger.debug("输出前5个样本: ${processedData.take(5).joinToString(",")}")
-                
+
                 // 质量对比
                 val amplitudeRatio = if (preApmMaxAmp > 0) maxAmp.toFloat() / preApmMaxAmp else 0f
-                logger.debug("振幅变化: $preApmMaxAmp -> $maxAmp (比例: ${"%.3f".format( amplitudeRatio)})")
-                logger.debug("零值变化: ${"%.4f".format( preApmZeroRatio)} -> ${"%.4f".format( processedZeroRatio)}")
-                
+                logger.debug("振幅变化: $preApmMaxAmp -> $maxAmp (比例: ${"%.3f".format(amplitudeRatio)})")
+                logger.debug("零值变化: ${"%.4f".format(preApmZeroRatio)} -> ${"%.4f".format(processedZeroRatio)}")
+
                 // APM质量评估
-                if (processedZeroRatio > preApmZeroRatio + 0.3f) {
-                    logger.warn("⚠️ APM处理显著增加了零值比例，可能过度处理")
+                if (processedZeroRatio > preApmZeroRatio + AudioDefaults.VAD_OPTIMIZATION_SILENCE_TRIGGER_THRESHOLD) {  // 使用AudioDefaults常量
+                    logger.warn("APM处理显著增加了零值比例，自动降低噪声抑制等级")
+                    setNoiseSuppressionLevel(kNsModerate) // 自动降级
                 }
-                if (amplitudeRatio > 3.0f) {
+                if (amplitudeRatio > (AudioDefaults.PRE_AMPLIFIER_GAIN * 2)) {  // 使用AudioDefaults常量
                     logger.warn("⚠️ APM处理显著增加了振幅，可能有增益问题")
-                } else if (amplitudeRatio < 0.3f && maxAmp > 0) {
+                } else if (amplitudeRatio < AudioDefaults.VAD_OPTIMIZATION_SILENCE_TRIGGER_THRESHOLD && maxAmp > 0) {  // 使用AudioDefaults常量
                     logger.warn("⚠️ APM处理显著降低了振幅，可能信号被过度抑制")
                 }
             }
@@ -1420,15 +1031,43 @@ class WebRtcApm : AutoCloseable {
             }
 
             // 检查是否音频质量严重下降
-            if (processedZeroRatio > 0.95f && preApmZeroRatio < 0.5f) {
+            if (processedZeroRatio > (AudioDefaults.VOICE_PROBABILITY_HIGH_THRESHOLD * 9.9) && preApmZeroRatio < AudioDefaults.VOICE_PROBABILITY_LOW_THRESHOLD && maxAmp == 0) {  // 使用AudioDefaults常量
                 logger.error("🚨 APM处理严重失败: 输入有效但输出几乎全零！")
-                logger.error("输入零值比例: ${"%.4f".format( preApmZeroRatio)}, 输出零值比例: ${"%.4f".format( processedZeroRatio)}")
+                logger.error("输入零值比例: ${"%.4f".format(preApmZeroRatio)}, 输出零值比例: ${"%.4f".format(processedZeroRatio)}")
                 logger.error("建议: 检查APM配置，可能噪声抑制过强")
                 return resampledData
             }
 
-            if (vadLogCounter++ % 1000 == 0) {
+
+            if (vadLogCounter++ % (AudioDefaults.KEYWORD_CACHE_DURATION_MS.toInt() * 2) == 0) {  // 使用AudioDefaults常量
                 logger.debug("APM处理完成: 最大振幅=$maxAmp, 处理链路: 原始(${inputMaxAmp}) -> 声道转换 -> 重采样 -> APM($maxAmp)")
+            }
+
+            // 临时调优策略：按用户要求先关闭NS，只开AGC进行调优
+            // 注释掉原有的NS自适应逻辑，避免noise_suppression未定义错误
+            /*
+            // 动态自适应NS等级，必要时自动关闭NS
+            if (processedZeroRatio > (AudioDefaults.VAD_OPTIMIZATION_SILENCE_TRIGGER_THRESHOLD * 2.67)) {  // 使用AudioDefaults常量计算80%阈值
+                if (noise_suppression.level == 2u) {
+                    logger.warn("APM High级别消音，降级到Moderate")
+                    setNoiseSuppressionLevel(kNsModerate)
+                    noise_suppression.level = 1u
+                } else if (noise_suppression.level == 1u) {
+                    logger.warn("APM Moderate级别消音，降级到Low")
+                    setNoiseSuppressionLevel(kNsLow)
+                    noise_suppression.level = 0u
+                } else if (noise_suppression.level == 0u) {
+                    logger.warn("APM Low级别依然消音，自动关闭NS")
+                    noise_suppression.enabled = 0
+                    setNoiseSuppressionLevel(kNsLow)
+                }
+            }
+            */
+            
+            // 当前调优阶段：NS已关闭，仅AGC工作
+            if (processedZeroRatio > (AudioDefaults.VAD_OPTIMIZATION_SILENCE_TRIGGER_THRESHOLD * 2.67)) {  // 使用AudioDefaults常量计算80%阈值
+                logger.warn("检测到音频消音，当前配置：NS已关闭，仅AGC工作")
+                logger.warn("输出零值比例: $processedZeroRatio，建议检查AGC配置或输入音量")
             }
 
             return processedData
@@ -1451,11 +1090,11 @@ class WebRtcApm : AutoCloseable {
             // 直接进行必要的格式转换到APM格式
             val channelConvertedData = if (AudioDefaults.needsChannelConversion(inputFormat.channels, apmFormat.channels)) {
                 when {
-                    inputFormat.channels == 2 && apmFormat.channels == 1 -> {
+                    inputFormat.channels == AudioDefaults.INPUT_DEVICE_CHANNELS && apmFormat.channels == AudioDefaults.WEBRTC_APM_CHANNELS -> { // 使用AudioDefaults常量
                         AudioUtils.stereoToMono(audioData)
                     }
-                    inputFormat.channels == 1 && apmFormat.channels == 2 -> {
-                        ShortArray(audioData.size * 2) { i -> audioData[i / 2] }
+                    inputFormat.channels == AudioDefaults.WEBRTC_APM_CHANNELS && apmFormat.channels == AudioDefaults.INPUT_DEVICE_CHANNELS -> { // 使用AudioDefaults常量
+                        ShortArray(audioData.size * AudioDefaults.INPUT_DEVICE_CHANNELS) { i -> audioData[i / AudioDefaults.INPUT_DEVICE_CHANNELS] } // 使用AudioDefaults常量
                     }
                     else -> audioData
                 }
@@ -1489,7 +1128,7 @@ class WebRtcApm : AutoCloseable {
         val resampledData = if (AudioDefaults.needsSampleRateConversion(apmFormat.sampleRate, outputSampleRate) || 
                                 AudioDefaults.needsChannelConversion(apmFormat.channels, outputChannels)) {
             
-            if (vadLogCounter % 500 == 0) {
+            if (vadLogCounter % (AudioDefaults.KEYWORD_CACHE_DURATION_MS.toInt()) == 0) {
                 logger.debug("输出重采样和声道转换: ${apmFormat.sampleRate}Hz/${apmFormat.channels}ch -> ${outputSampleRate}Hz/${outputChannels}ch")
             }
 
@@ -1505,7 +1144,7 @@ class WebRtcApm : AutoCloseable {
                 if (outputResampler.initialize()) {
                     val result = outputResampler.process(apmProcessedData)
                     
-                    if (vadLogCounter % 500 == 0) {
+                    if (vadLogCounter % (AudioDefaults.KEYWORD_CACHE_DURATION_MS.toInt()) == 0) {
                         val maxAmp = result.maxOfOrNull { abs(it.toInt()) } ?: 0
                         logger.debug("输出重采样完成: ${apmProcessedData.size} -> ${result.size}样本, 最大振幅=$maxAmp")
                     }
@@ -1522,7 +1161,7 @@ class WebRtcApm : AutoCloseable {
                 outputResampler.release()
             }
         } else {
-            if (vadLogCounter % 1000 == 0) {
+            if (vadLogCounter % (AudioDefaults.KEYWORD_CACHE_DURATION_MS.toInt() * 2) == 0) {
                 logger.debug("格式相同，跳过输出重采样")
             }
             apmProcessedData
@@ -1553,7 +1192,7 @@ class WebRtcApm : AutoCloseable {
                 val rmsEnergy = kotlin.math.sqrt(energy / bufferSize)
                 finalVadResult = rmsEnergy >= AudioDefaults.MIN_RMS_ENERGY
                 
-                if (vadLogCounter % 1000 == 0) {
+                if (vadLogCounter % (AudioDefaults.VAD_OPTIMIZATION_SMOOTHING_WINDOW_MS) == 0) {
                     logger.debug("VAD能量检测: RMS=${"%.4f".format(rmsEnergy)}, 阈值=${AudioDefaults.MIN_RMS_ENERGY}, 结果=$finalVadResult")
                 }
             }
@@ -1594,7 +1233,7 @@ class WebRtcApm : AutoCloseable {
     }
 
     fun setVadDebounceFrames(frames: Int) {
-        vadDebounceFrames = frames.coerceAtLeast(1)
+        vadDebounceFrames = frames.coerceAtLeast(AudioDefaults.WEBRTC_APM_CHANNELS) // 使用AudioDefaults常量
         logger.info("VAD去抖动帧数设置为: $vadDebounceFrames")
     }
 
@@ -1629,10 +1268,10 @@ class WebRtcApm : AutoCloseable {
                 logger.warn("⚠️ 原因：AEC3需要同时配置capture和render流，但语音助手只有capture流")
                 logger.warn("⚠️ 建议：考虑启用ENABLE_ECHO_CANCELLATION_SAFE_MODE")
                 
-                webrtc_apm_enable_aec(it, 1)
+                webrtc_apm_enable_aec(it, if (AudioDefaults.ENABLE_AEC3) 1 else 0) // 使用AudioDefaults常量
                 logger.warn("回声消除已启用（可能不稳定）")
             } else {
-                webrtc_apm_enable_aec(it, 0)
+                webrtc_apm_enable_aec(it, if (AudioDefaults.ENABLE_AEC3) 1 else 0) // 使用AudioDefaults常量
                 logger.info("回声消除已禁用")
             }
         } ?: run {
@@ -1854,12 +1493,12 @@ class WebRtcApm : AutoCloseable {
                 try {
                     val analogLevel = webrtc_apm_get_stream_analog_level(apmHandle)
                     
-                    if (analogLevel > 200) {
+                    if (analogLevel > (AudioDefaults.MIN_EFFECTIVE_AMPLITUDE * 2)) {  // 使用AudioDefaults常量
                         appendLine("⚠️ 模拟电平过高($analogLevel)，可能导致失真")
-                        appendLine("   建议: 调用setStreamAnalogLevel()降低到150以下")
-                    } else if (analogLevel < 50) {
+                        appendLine("   建议: 调用setStreamAnalogLevel()降低到${AudioDefaults.RECOMMENDED_MAX_ANALOG_LEVEL}以下")
+                    } else if (analogLevel < (AudioDefaults.MIN_EFFECTIVE_AMPLITUDE / 2)) {  // 使用AudioDefaults常量
                         appendLine("⚠️ 模拟电平过低($analogLevel)，信号可能不足")
-                        appendLine("   建议: 调用setStreamAnalogLevel()提高到100以上")
+                        appendLine("   建议: 调用setStreamAnalogLevel()提高到${AudioDefaults.RECOMMENDED_MIN_ANALOG_LEVEL}以上")
                     } else {
                         appendLine("✓ 模拟电平正常: $analogLevel")
                     }
@@ -1875,7 +1514,7 @@ class WebRtcApm : AutoCloseable {
                     
                     // 语音清晰度建议
                     val clarityScore = getSpeechClarityScore()
-                    if (clarityScore < 0.5f) {
+                    if (clarityScore < AudioDefaults.VAD_OPTIMIZATION_VOICE_TRIGGER_THRESHOLD) {  // 使用AudioDefaults常量
                         appendLine("⚠️ 语音清晰度较低(${"%.3f".format(clarityScore)})")
                         appendLine("   建议: 检查噪声抑制设置，考虑调整前置放大器增益")
                     } else {
@@ -1944,7 +1583,7 @@ class WebRtcApm : AutoCloseable {
 
     fun setAgcTargetLevel(targetDbfs: Int) {
         apmHandle?.let {
-            val clampedTarget = targetDbfs.coerceIn(0, 31)
+            val clampedTarget = targetDbfs.coerceIn(AudioDefaults.MIN_TARGET_DBFS, AudioDefaults.MAX_TARGET_DBFS)
             webrtc_apm_set_agc_target_level(it, clampedTarget)
             logger.info("动态调节AGC目标电平: ${clampedTarget}dBFS")
         }
@@ -1952,7 +1591,7 @@ class WebRtcApm : AutoCloseable {
 
     fun setPreAmplifierGain(gainFactor: Float) {
         apmHandle?.let {
-            val clampedGain = gainFactor.coerceIn(0.1f, 10.0f)
+            val clampedGain = gainFactor.coerceIn(AudioDefaults.MIN_GAIN_FACTOR, AudioDefaults.MAX_GAIN_FACTOR)
             webrtc_apm_set_pre_amplifier_gain(it, clampedGain)
             val gainDb = 20 * kotlin.math.log10(clampedGain)
             logger.info("动态调节前置放大器增益: ${"%.2f".format(clampedGain)} (${"%.1f".format(gainDb)}dB)")
@@ -1962,9 +1601,9 @@ class WebRtcApm : AutoCloseable {
     // 新增：模拟电平控制
     fun setStreamAnalogLevel(level: Int) {
         apmHandle?.let {
-            val clampedLevel = level.coerceIn(0, 255)
+            val clampedLevel = level.coerceIn(AudioDefaults.MIN_ANALOG_LEVEL, AudioDefaults.MAX_ANALOG_LEVEL)
             webrtc_apm_set_stream_analog_level(it, clampedLevel)
-            if (vadLogCounter % 500 == 0) {
+            if (vadLogCounter % (AudioDefaults.KEYWORD_CACHE_DURATION_MS.toInt()) == 0) {
                 logger.debug("设置模拟电平: $clampedLevel")
             }
         }
@@ -2124,7 +1763,7 @@ class WebRtcApm : AutoCloseable {
                 appendLine("最大振幅: $maxAmplitude")
                 appendLine("RMS能量: ${"%.2f".format(rmsEnergy)}")
                 appendLine("零值比例: ${"%.4f".format(zeroRate)}")
-                appendLine("包含语音: ${if (maxAmplitude > 1000 && zeroRate < 0.5f) "是" else "否"}")
+                appendLine("包含语音: ${if (maxAmplitude > (AudioDefaults.MIN_EFFECTIVE_AMPLITUDE * 10) && zeroRate < AudioDefaults.VAD_OPTIMIZATION_VOICE_TRIGGER_THRESHOLD) "是" else "否"}")  // 使用AudioDefaults常量
                 appendLine("样本数量: ${audioData.size}")
             }
         } catch (e: Exception) {
@@ -2136,7 +1775,7 @@ class WebRtcApm : AutoCloseable {
     /**
      * 获取频率响应（简化版本）
      */
-    fun getFrequencyResponse(numBins: Int = 256): Pair<FloatArray, FloatArray>? {
+    fun getFrequencyResponse(numBins: Int = AudioDefaults.FREQUENCY_RESPONSE_NUM_BINS): Pair<FloatArray, FloatArray>? { // 使用AudioDefaults常量
         return apmHandle?.let { handle ->
             try {
                 memScoped {
@@ -2281,18 +1920,7 @@ class WebRtcApm : AutoCloseable {
         return try {
             val errorString = webrtc_apm_get_error_string(errorCode)
             // 修复字符串转换问题
-            errorString?.let { ptr ->
-                val length = strlen(ptr.toKString()).toInt()
-                if (length > 0) {
-                    buildString {
-                        for (i in 0 until length) {
-                            append(ptr[i].toInt().toChar())
-                        }
-                    }
-                } else {
-                    "未知错误"
-                }
-            }
+            errorString?.toKString()
         } catch (e: Exception) {
             logger.debug("获取错误字符串失败（功能可能不可用）: ${e.message}")
             null

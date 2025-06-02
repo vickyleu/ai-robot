@@ -50,10 +50,15 @@ object LogManager {
          * 记录调试日志
          */
         fun debug(message: String) {
-            // 对于包含🎯标识的调试日志，强制输出
-            if (message.contains("🎯") || defaultLogLevel.ordinal <= LogLevel.DEBUG.ordinal) {
-                println("[DEBUG][$tag] $message")
+            try {
+                // 对于包含🎯标识的调试日志，强制输出
+                if (message.contains("🎯") || defaultLogLevel.ordinal <= LogLevel.DEBUG.ordinal) {
+                    println("[DEBUG][$tag] $message")
+                }
+            }catch (e: Exception) {
+                e.printStackTrace()
             }
+
         }
 
         /**

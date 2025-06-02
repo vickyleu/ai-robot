@@ -15,6 +15,8 @@ import kotlinx.cinterop.memScoped
 import kotlinx.cinterop.set
 import kotlinx.cinterop.usePinned
 import kotlin.math.abs
+import platform.posix.*
+import kotlinx.cinterop.refTo
 
 /**
  * 音频处理工具类
@@ -263,5 +265,60 @@ object AudioUtils {
         // 转回ByteArray
         val bytesWritten = shortArrayToByteArray(outputShorts, outputShorts.size, output)
         return output
+    }
+
+    /**
+     * 将ShortArray保存为WAV文件（16bit PCM，支持多声道）。
+     * @param data 音频数据（PCM 16bit）
+     * @param sampleRate 采样率
+     * @param channels 声道数
+     * @param filePath 保存路径
+     */
+    fun saveShortArrayAsWav(data: ShortArray, sampleRate: Int, channels: Int, filePath: String) {
+        val byteRate = sampleRate * channels * 2
+        val totalAudioLen = data.size * 2L
+        val totalDataLen = totalAudioLen + 36
+        val header = ByteArray(44)
+        // RIFF/WAVE header
+        header[0] = 'R'.code.toByte(); header[1] = 'I'.code.toByte(); header[2] = 'F'.code.toByte(); header[3] =
+            'F'.code.toByte()
+        val totalDataLenInt = totalDataLen.toInt()
+        header[4] = (totalDataLenInt and 0xff).toByte()
+        header[5] = ((totalDataLenInt shr 8) and 0xff).toByte()
+        header[6] = ((totalDataLenInt shr 16) and 0xff).toByte()
+        header[7] = ((totalDataLenInt shr 24) and 0xff).toByte()
+        header[8] = 'W'.code.toByte(); header[9] = 'A'.code.toByte(); header[10] =
+            'V'.code.toByte(); header[11] = 'E'.code.toByte()
+        header[12] = 'f'.code.toByte(); header[13] = 'm'.code.toByte(); header[14] =
+            't'.code.toByte(); header[15] = ' '.code.toByte()
+        header[16] = 16; header[17] = 0; header[18] = 0; header[19] = 0 // Subchunk1Size (16 for PCM)
+        header[20] = 1; header[21] = 0 // AudioFormat (1 = PCM)
+        header[22] = channels.toByte(); header[23] = 0
+        header[24] = (sampleRate and 0xff).toByte()
+        header[25] = ((sampleRate shr 8) and 0xff).toByte()
+        header[26] = ((sampleRate shr 16) and 0xff).toByte()
+        header[27] = ((sampleRate shr 24) and 0xff).toByte()
+        header[28] = (byteRate and 0xff).toByte()
+        header[29] = ((byteRate shr 8) and 0xff).toByte()
+        header[30] = ((byteRate shr 16) and 0xff).toByte()
+        header[31] = ((byteRate shr 24) and 0xff).toByte()
+        header[32] = (channels * 2).toByte(); header[33] = 0 // BlockAlign
+        header[34] = 16; header[35] = 0 // BitsPerSample
+        header[36] = 'd'.code.toByte(); header[37] = 'a'.code.toByte(); header[38] = 't'.code.toByte(); header[39] =
+            'a'.code.toByte()
+        header[40] = (totalAudioLen and 0xff).toByte()
+        header[41] = ((totalAudioLen shr 8) and 0xff).toByte()
+        header[42] = ((totalAudioLen shr 16) and 0xff).toByte()
+        header[43] = ((totalAudioLen shr 24) and 0xff).toByte()
+        val file = fopen(filePath, "wb") ?: return
+        fwrite(header.refTo(0), 1.convert(), 44.convert(), file)
+        // 写PCM数据（小端序）
+        for (sample in data) {
+            val lo = (sample.toInt() and 0xff).toByte()
+            val hi = ((sample.toInt() shr 8) and 0xff).toByte()
+            fwrite(byteArrayOf(lo).refTo(0), 1.convert(), 1.convert(), file)
+            fwrite(byteArrayOf(hi).refTo(0), 1.convert(), 1.convert(), file)
+        }
+        fclose(file)
     }
 } 

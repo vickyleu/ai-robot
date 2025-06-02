@@ -10,6 +10,12 @@ import kotlin.time.ExperimentalTime
  * 语音助手配置类
  * 保存各种配置参数
  * 已针对Microsemi DAC做了特别优化
+ * 
+ * 🎯 语音识别触发策略：
+ * - 说话时：累积音频数据
+ * - 说完话（VAD检测到静音）时：如果累积≥800ms，触发识别
+ * - 没说话：绝对不识别
+ * - 安全保护：累积达到10秒时强制触发（防止内存溢出）
  */
 data class VoiceAssistantConfig(
     // 关键词设置
@@ -34,7 +40,7 @@ data class VoiceAssistantConfig(
     val minSpeechConfidence: Float = 0.6f,
     
     // 基本参数 - 使用立体声模式(2通道)以兼容Microsemi DAC
-    val bufferSize: Int = 1024, // 增大缓冲区提高稳定性
+    val bufferSize: Int = AudioDefaults.AUDIO_BUFFER_SIZE, // 增大缓冲区提高稳定性，减少回调频率
     
     // 检测器参数
     val sensitivity: Float = 0.65f, // 提高灵敏度

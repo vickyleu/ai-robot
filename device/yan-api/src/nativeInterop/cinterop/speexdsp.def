@@ -1,0 +1,8 @@
+language: C++
+headers: speexdsp_config_types.h speexdsp_types.h speex_echo.h speex_jitter.h speex_preprocess.h  speex_resampler.h
+linkerOpts: -L../cpp/libs/ -lspeexdsp
+# 下面是不透明指针的映射
+---
+struct SpeexPreprocessState_{};
+struct SpeexEchoState_{};
+struct SpeexResamplerState_{};

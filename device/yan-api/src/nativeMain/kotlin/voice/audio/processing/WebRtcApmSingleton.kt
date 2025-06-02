@@ -161,9 +161,9 @@ object WebRtcApmSingleton {
             if (newInstance.initialize(sampleRate, channels)) {
                 logger.info("创建新的WebRTC APM实例: 采样率=$sampleRate Hz, 通道数=$channels")
                 
-                // 设置更高的VAD阈值，减少误触发
-                newInstance.setVadThreshold(0.15f) // 增加阈值，原来是0.08f
-                newInstance.setVadDebounceFrames(3) // 增加去抖动帧数，原来是1
+                // 设置VAD参数 - 使用AudioDefaults常量配置
+                newInstance.setVadThreshold(AudioDefaults.VAD_THRESHOLD)
+                newInstance.setVadDebounceFrames(AudioDefaults.VAD_DEBOUNCE_FRAMES)
                 
                 return newInstance
             }

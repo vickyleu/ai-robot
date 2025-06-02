@@ -3,6 +3,7 @@ package com.airobot.device.yanapi.voice.util
 import kotlinx.atomicfu.locks.SynchronizedObject
 import kotlinx.atomicfu.locks.synchronized
 import kotlinx.datetime.Clock
+import voice.util.AudioDefaults
 import voice.util.LogManager
 import kotlin.math.roundToInt
 
@@ -24,7 +25,7 @@ class PerformanceMonitor(private val name: String) {
     // 自适应参数
     private var qualityLevel = QualityLevel.HIGH
     private var lastQualityAdjustTime = 0L
-    private val qualityAdjustInterval = 5000L // 5秒调整一次
+    private val qualityAdjustInterval = AudioDefaults.QUALITY_ADJUST_INTERVAL_MS // 5秒调整一次
 
     enum class QualityLevel {
         LOW,    // CPU占用高，降低质量

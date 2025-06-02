@@ -78,6 +78,9 @@ kotlin {
                     "-lvosk",
                     "-lportaudio",
                     "-lwebrtc_apm",
+                    "-lspeexdsp",
+                    "-lgomp",
+                    "-lrnnoise",
                     "-lpiper",
                     "-lopencc",
                     "-latomic",
@@ -88,7 +91,9 @@ kotlin {
                     "-l:libvosk.a",
                     "-l:libwebrtc_apm.a",
                     "-l:libportaudio.a",
+                    "-l:libspeexdsp.a",
                     "-l:libopencc.a",
+                    "-l:librnnoise.a",
                     "-l:libpiper.a",
                     "-lasound",
                     "-lpython3.5m",
@@ -142,6 +147,23 @@ kotlin {
                     includeDirs(
                         file("src/nativeInterop/cpp"),
                         file("src/nativeInterop/cpp/include/porcupine/"),
+                    )
+                    compilerOpts(
+                        "-fPIC",
+                        "-nostdinc++",
+                        "-std=c++17",
+                        "-D_GLIBCXX_USE_CXX11_ABI=1",
+                        "-ffunction-sections",
+                        "-fdata-sections",
+                        *armhfToolchain.includedDirs.map { "-I$it" }.toTypedArray()
+                    )
+                }
+                create("speexdsp") {
+                    defFile("src/nativeInterop/cinterop/speexdsp.def")
+                    packageName("com.airobot.speexdspinterop")
+                    // 从上面四个目录中查找所有的头文件,添加到headers.files
+                    includeDirs(
+                        file("src/nativeInterop/cpp/include/speex"),
                     )
                     compilerOpts(
                         "-fPIC",
