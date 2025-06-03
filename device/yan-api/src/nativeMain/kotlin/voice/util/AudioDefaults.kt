@@ -56,15 +56,15 @@ object AudioDefaults {
     const val ALLOW_AEC3_IN_VOICE_ASSISTANT = false      // 是否允许在语音助手模式下使用AEC3（不推荐）
     
     // === VAD（语音活动检测）参数配置 ===
-    const val VAD_THRESHOLD = 0.05f                      // VAD阈值：提高到0.05f减少误触发
-    const val VAD_DEBOUNCE_FRAMES = 5                     // VAD防抖帧数：增加到5帧提高稳定性
+    const val VAD_THRESHOLD = 0.08f                      // VAD阈值：提高到0.08f减少非人声误判
+    const val VAD_DEBOUNCE_FRAMES = 5                     // VAD防抖帧数：提高到5帧增强稳定性
     const val ENABLE_ECHO_CANCELLATION = false           // 回声消除：在CallbackAudioProcessor中默认禁用
     
     // === 噪声抑制级别配置 ===
     const val NOISE_SUPPRESSION_LEVEL_VERY_HIGH = com.airobot.webrtcapminterop.kNsVeryHigh  // 非常高的噪声抑制级别
     
     // === 前置放大器增益配置 ===
-    const val PRE_AMPLIFIER_GAIN = 1.5f                  // 前置放大器增益：1.5倍增益
+    const val PRE_AMPLIFIER_GAIN = 8f                  // 前置放大器增益：提高到8倍增益
     
     // === PCM音频范围配置 ===
     const val PCM_16BIT_MIN = -32767                     // 16位PCM最小值
@@ -104,9 +104,9 @@ object AudioDefaults {
     
     // === WebRTC APM 音频处理参数 ===
     // AGC目标电平（dBFS）
-    const val AGC_TARGET_LEVEL_DBFS = 15                 // AGC目标电平
+    const val AGC_TARGET_LEVEL_DBFS = -6                 // AGC目标电平
     // 前置放大器固定增益因子
-    const val PRE_AMPLIFIER_FIXED_GAIN_FACTOR = 1.0f     // 前置放大器固定增益因子
+    const val PRE_AMPLIFIER_FIXED_GAIN_FACTOR = 2.0f     // 前置放大器固定增益因子：提高到2倍
     // 语音概率阈值
     const val VOICE_PROBABILITY_HIGH_THRESHOLD = 0.1f    // 高置信度阈值
     const val VOICE_PROBABILITY_LOW_THRESHOLD = 0.01f    // 低置信度阈值
@@ -161,15 +161,15 @@ object AudioDefaults {
     const val AGC2_ENABLED = false
     const val AGC2_ADAPTIVE_DIGITAL_ENABLED = false
     // 前置放大器
-    const val ENABLE_PRE_AMPLIFIER = false
+    const val ENABLE_PRE_AMPLIFIER = true               // 启用前置放大器
     // RNN-VAD参数
-    const val RNN_VAD_PROBABILITY_THRESHOLD = 0.5f
+    const val RNN_VAD_PROBABILITY_THRESHOLD = 0.6f        // 提高阈值减少非人声误判
     const val RNN_VAD_USE_SPECTRAL_FEATURES = false
     const val RNN_VAD_USE_PITCH_FEATURES = false
     // VAD优化参数
     const val VAD_OPTIMIZATION_SMOOTHING_WINDOW_MS = 100
-    const val VAD_OPTIMIZATION_VOICE_TRIGGER_THRESHOLD = 0.5f
-    const val VAD_OPTIMIZATION_SILENCE_TRIGGER_THRESHOLD = 0.3f
+    const val VAD_OPTIMIZATION_VOICE_TRIGGER_THRESHOLD = 0.6f  // 提高语音触发阈值减少误判
+    const val VAD_OPTIMIZATION_SILENCE_TRIGGER_THRESHOLD = 0.4f  // 提高静音触发阈值增强区分度
     const val VAD_OPTIMIZATION_ADAPTIVE_THRESHOLD = false
     // 短暂噪声抑制
     const val ENABLE_TRANSIENT_SUPPRESSION_CHAIN = false
@@ -228,14 +228,14 @@ object AudioDefaults {
     // RNNoise配置
     const val ENABLE_RNNOISE = true                    // 启用RNNoise降噪（仅降噪，不用VAD）
     const val RNNOISE_VAD_THRESHOLD = 0.01f            // RNNoise VAD阈值（已禁用）
-    const val RNNOISE_GAIN = 1.0f                      // RNNoise增益
+    const val RNNOISE_GAIN = 3.0f                      // RNNoise增益：提高到3倍
     const val DISABLE_RNNOISE_VAD = true               // 完全禁用RNNoise VAD功能
     
     // SpeexDSP配置
     const val ENABLE_SPEEX_AGC = true                  // 重新启用SpeexDSP AGC，通过参数调优解决振幅问题
     const val ENABLE_SPEEX_VAD = true                  // 启用SpeexDSP VAD
     const val ENABLE_SPEEX_DENOISE = true              // 启用SpeexDSP降噪
-    const val SPEEX_AGC_LEVEL = 2500.0f               // SpeexDSP AGC目标电平 - 🔧 从6000大幅降到2500，防止振幅异常波动
+    const val SPEEX_AGC_LEVEL = 4000.0f               // SpeexDSP AGC目标电平 - 🔧 提高到4000，增强音频增益
     const val SPEEX_NOISE_SUPPRESS_DB = -10            // SpeexDSP噪声抑制强度(dB) - 🔧 从-15调到-10减少过度抑制
     
     // SoXR重采样配置
@@ -537,7 +537,7 @@ object AudioDefaults {
     
     // 🔧 VAD策略配置 - 完全使用SpeexDSP VAD
     const val USE_SPEEX_VAD_AS_PRIMARY = true          // 使用SpeexDSP VAD作为唯一VAD
-    const val SPEEX_VAD_VOICE_THRESHOLD = 0.7f         // SpeexDSP VAD语音帧比例阈值
+    const val SPEEX_VAD_VOICE_THRESHOLD = 0.75f        // SpeexDSP VAD语音帧比例阈值：提高到0.75减少非人声误判
     
     init {
         when (DEBUG_APM_MODE) {

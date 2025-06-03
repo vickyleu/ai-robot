@@ -101,8 +101,8 @@ class VoskSpeechRecognizer : SpeechRecognizerApi {
     private val voskMaxDuration: Float = 8.0f                    // 🔧 增加到8.0秒，给足够的时间说完整的唤醒词
     
     // 置信度过滤设置
-    private val voskMinConfidence: Float = 0.2f                  // 🔧 恢复到适中的0.2，不要太低也不要太高
-    private val voskPartialMinConfidence: Float = 0.1f           // 🔧 部分结果用更低的阈值
+    private val voskMinConfidence: Float = 0.1f                  // 🔧 降低到0.1提高识别速度
+    private val voskPartialMinConfidence: Float = 0.05f          // 🔧 部分结果用更低的阈值提高响应速度
     private val voskEnableConfidenceFilter: Boolean = true       // 🔧 重新启用置信度过滤，避免接受质量太低的结果
     
     // 中文文本后处理设置
@@ -117,7 +117,7 @@ class VoskSpeechRecognizer : SpeechRecognizerApi {
         "小度", "你好", "在吗", "开始", "停止", "暂停", "继续",
         "音量", "声音", "大声", "小声", "播放", "关闭", "打开"
     )
-    private val contextBoostScore: Float = 0.2f                  // 上下文关键词置信度加成
+    private val contextBoostScore: Float = 0.3f                  // 上下文关键词置信度加成：提高到0.3
     
     // 常见错误替换映射
     private val commonCorrections = mapOf(

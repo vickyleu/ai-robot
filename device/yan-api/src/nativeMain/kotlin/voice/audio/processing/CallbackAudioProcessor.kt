@@ -76,11 +76,11 @@ class CallbackAudioProcessor : PortAudioDevice.AudioDataCallback {
     
     // 音频读取计数器
     private var audioReadCounter = 0
-    private val minValidRms = 0.012 // 🔧 从0.020降到0.012，确保正常语音（RMS=0.011）能够通过能量检测
+    private val minValidRms = 0.003 // 🔧 从0.008进一步降低到0.003，适应实际的RMS水平
     
-    // 🔧 新增：更严格的音频质量检测阈值
-    private val minValidAmplitude = 2000 // 🔧 从1500提高到2000，确保只有真正的语音才被检测
-    private val minConsecutiveValidFrames = 1 // 🔧 从2降到1，因为连续2帧都很难达到
+    // 🔧 修复：降低音频质量检测阈值，适应第三方处理器的输出水平
+    private val minValidAmplitude = 1000 // 🔧 从3500大幅降低到1000，适应RNNoise/SpeexDSP处理后的音频
+    private val minConsecutiveValidFrames = 2 // 🔧 从3降低到2帧，提高响应速度
     private var consecutiveValidFrameCount = 0 // 🔧 连续有效帧计数器
     
     // 🔧 智能日志打印策略
@@ -374,33 +374,28 @@ class CallbackAudioProcessor : PortAudioDevice.AudioDataCallback {
                 val normalizedRms = rms // calculateRms已经返回归一化值(0-1范围)
                 val isValidAudio = processedMaxAmp >= minValidAmplitude && normalizedRms >= minValidRms
                 
-                // 🔧 修复：更宽松的连续帧检测，避免因偶尔的低质量帧就重置
+                // 🔧 修复：简化连续帧检测逻辑
                 if (isValidAudio) {
                     consecutiveValidFrameCount++
                 } else {
-                    // 🔧 只有连续多帧都不满足条件才重置，避免因偶尔的噪音帧就重置
-                    if (consecutiveValidFrameCount > 0) {
-                        consecutiveValidFrameCount-- // 逐渐减少而不是立即重置
-                        if (consecutiveValidFrameCount < 0) {
-                            consecutiveValidFrameCount = 0
-                        }
-                    }
+                    // 🔧 简化：直接重置连续帧计数，避免复杂的逐渐减少逻辑
+                    consecutiveValidFrameCount = 0
                 }
                 
                 // 🔧 修复：只有连续多帧都满足条件才认为是真正的语音
                 val hasConsecutiveValidFrames = consecutiveValidFrameCount >= minConsecutiveValidFrames
                 
-                // 🔧 修复：改为OR逻辑，SpeexDSP VAD或能量检测任一满足即可
-                // 如果SpeexDSP检测到语音，即使能量稍低也认为是语音
-                // 如果能量足够高，即使SpeexDSP未检测到也认为可能是语音
-                val finalVadResult = vadResult || (isValidAudio && hasConsecutiveValidFrames)
+                // 🔧 修复：改为AND逻辑，SpeexDSP VAD和能量检测都必须通过才认为是人声
+                // 这样可以有效过滤掉非人声的大音量噪音（如音乐、机械声等）
+                // 只有当SpeexDSP检测到语音特征且能量也符合要求时才判定为人声
+                val finalVadResult = vadResult && isValidAudio && hasConsecutiveValidFrames
                 
                 // 🔧 VAD调试：显示各组件的检测结果
                 if (audioReadCounter % 10 == 0) {  // 每10帧显示一次调试信息
                     logger.debug("VAD调试: SpeexDSP=$vadResult, 能量检测=$isValidAudio(振幅≥$minValidAmplitude=${processedMaxAmp >= minValidAmplitude}, RMS≥$minValidRms=${normalizedRms >= minValidRms}), 连续帧=$hasConsecutiveValidFrames($consecutiveValidFrameCount>=$minConsecutiveValidFrames), 最终=$finalVadResult")
                 }
                 
-                // 🔧 智能日志打印策略：持续静音时降低频率，有语音或状态变化时提高频率
+                // 🔧 智能日志打印策略：只在检测到语音或状态变化时打印，静音状态不打印
                 val vadStateChanged = finalVadResult != lastVadResult
                 
                 // 更新静音帧计数器
@@ -410,12 +405,11 @@ class CallbackAudioProcessor : PortAudioDevice.AudioDataCallback {
                     silentFrameCount = 0  // 检测到语音时重置
                 }
                 
-                // 智能打印频率控制
+                // 智能打印频率控制：只在有语音或状态变化时打印
                 val shouldPrint = when {
                     vadStateChanged -> true  // VAD状态变化时立即打印
-                    finalVadResult -> audioReadCounter % 3 == 0  // 有语音时每3次打印一次
-                    silentFrameCount > 50 -> audioReadCounter % 100 == 0  // 持续静音50帧后，每100次打印一次
-                    else -> audioReadCounter % 20 == 0  // 刚开始静音时，每20次打印一次（过渡期）
+                    finalVadResult -> audioReadCounter % 5 == 0  // 有语音时每5次打印一次
+                    else -> false  // 静音状态不打印日志
                 }
                 
                 if (shouldPrint) {
@@ -431,7 +425,10 @@ class CallbackAudioProcessor : PortAudioDevice.AudioDataCallback {
                 // 发送处理后的音频数据
                 synchronized(callbackLock) {
                     processedAudioCallback?.invoke(processedAudio, frameCount)
-                    vadCallback?.invoke(finalVadResult)
+                    // 🔧 关键修复：只在VAD状态变化时才调用VAD回调
+                    if (vadStateChanged) {
+                        vadCallback?.invoke(finalVadResult)
+                    }
                 }
                 
             } catch (e: Exception) {

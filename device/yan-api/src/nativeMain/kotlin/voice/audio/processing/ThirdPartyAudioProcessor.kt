@@ -568,13 +568,21 @@ class ThirdPartyAudioProcessor {
                     stats.speexVadFrames += totalVadFrames.toLong()
                     val voiceRatio = voiceFrameCount.toFloat() / totalVadFrames
                     
-                    // 🔧 关键修复：要求更严格的语音比例判断
-                    // 需要至少25%的帧被检测为语音才认为当前块包含语音
-                    stats.lastSpeexVadResult = voiceFrameCount > 0 && voiceRatio >= 0.5f  // 从0.25提高到0.5，需要50%的帧是语音
+                    // 🔧 关键修复：要求更严格的语音判断条件
+                    // 1. 至少需要3个语音帧（避免偶然噪音）
+                    // 2. 语音比例至少75%（确保大部分帧都是语音）
+                    // 3. 总帧数至少5帧（确保有足够的样本）
+                    val minVoiceFrames = 3
+                    val minVoiceRatio = 0.75f
+                    val minTotalFrames = 5
+                    
+                    stats.lastSpeexVadResult = totalVadFrames >= minTotalFrames && 
+                                               voiceFrameCount >= minVoiceFrames && 
+                                               voiceRatio >= minVoiceRatio
                     
                     // 🔧 调试：显示SpeexDSP VAD检测详情
                     if (stats.framesProcessed % 1000 == 0L) {  // 从每100帧减少到每1000帧记录一次
-                        logger.debug("SpeexDSP VAD: 总帧=${totalVadFrames}, 语音帧=${voiceFrameCount}, 比例=${"%.3f".format(voiceRatio)}, 最终结果=${stats.lastSpeexVadResult}")
+                        logger.debug("SpeexDSP VAD: 总帧=${totalVadFrames}(≥$minTotalFrames), 语音帧=${voiceFrameCount}(≥$minVoiceFrames), 比例=${"%.3f".format(voiceRatio)}(≥$minVoiceRatio), 最终结果=${stats.lastSpeexVadResult}")
                     }
                     
                     // 🔧 简化：直接使用SpeexDSP VAD结果，不再fallback

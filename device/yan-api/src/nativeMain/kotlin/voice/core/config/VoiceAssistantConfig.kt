@@ -20,7 +20,7 @@ import kotlin.time.ExperimentalTime
 data class VoiceAssistantConfig(
     // 关键词设置
     val keywords: List<String> = listOf("小度", "你好","在吗"),
-    val keywordSensitivity: Float = 0.7f,
+    val keywordSensitivity: Float = 0.8f,  // 提高关键词敏感度到0.8
     
     // 音频配置 - 使用AudioDefaults预定义格式
     val inputFormat: AudioDefaults.AudioFormat = AudioDefaults.Formats.INPUT_DEVICE,
