@@ -300,25 +300,36 @@ class KeywordDetector(
                                     try {
                                         kotlinx.coroutines.delay(silenceThresholdMs)
                                         
-                                        // 延迟后检查是否仍然静音
-                                        val silenceDuration = Clock.System.now().toEpochMilliseconds() - lastValidVoiceTime
-                                        logger.info("静音检测Job触发: 静音时长=${silenceDuration}ms, 重置语音活动状态")
-                                        
-                                        // 重置语音活动状态
-                                        consecutiveAudioFrames = 0
-                                        isInVoiceActivity = false
-                                        audioBufferMutex.withLock {
-                                            audioBuffer.clear()
-                                            totalAudioSamples = 0
-                                        }
-                                        rawAudioBufferMutex.withLock {
-                                            rawAudioBuffer.clear()
-                                            totalRawAudioSamples = 0
+                                        // 延迟后再次检查是否仍然静音且没有语音活动
+                                        if (!isInVoiceActivity) {
+                                            // 如果语音活动已经结束（可能被VAD回调处理了），不需要重置
+                                            logger.debug("静音检测Job完成: 语音活动已结束，无需重置")
+                                        } else {
+                                            // 检查最近是否有语音活动
+                                            val silenceDuration = Clock.System.now().toEpochMilliseconds() - lastValidVoiceTime
+                                            if (silenceDuration >= silenceThresholdMs) {
+                                                logger.info("静音检测Job触发: 静音时长=${silenceDuration}ms, 重置语音活动状态")
+                                                
+                                                // 重置语音活动状态
+                                                consecutiveAudioFrames = 0
+                                                isInVoiceActivity = false
+                                                audioBufferMutex.withLock {
+                                                    audioBuffer.clear()
+                                                    totalAudioSamples = 0
+                                                }
+                                                rawAudioBufferMutex.withLock {
+                                                    rawAudioBuffer.clear()
+                                                    totalRawAudioSamples = 0
+                                                }
+                                            } else {
+                                                logger.debug("静音检测Job取消: 检测到最近有语音活动，静音时长=${silenceDuration}ms < ${silenceThresholdMs}ms")
+                                            }
                                         }
                                         
                                         silenceDetectionJob = null
                                     } catch (e: kotlinx.coroutines.CancellationException) {
                                         logger.debug("静音检测Job被取消: 检测到新的语音活动")
+                                        silenceDetectionJob = null
                                     }
                                 }
                             }
@@ -492,6 +503,10 @@ class KeywordDetector(
                                 if (maxAmp >= minAmp && normalizedRms >= minRms) {
                                     logger.info("✅ 第三方处理器触发Vosk检测: 语音活动结束, 累积时长=${accumulationDurationMs}ms, 距上次处理=${timeSinceLastProcess}ms, 质量检查通过")
                                     
+                                    // 🔧 取消静音检测Job，因为我们要立即处理识别
+                                    silenceDetectionJob?.cancel()
+                                    silenceDetectionJob = null
+                                    
                                     logger.info("🚀 第三方处理器Vosk检测开始: ${totalSamplesCopy}样本, 时长${accumulationDurationMs}ms")
                                     lastVoskProcessTime = currentTime
                                     
@@ -516,6 +531,11 @@ class KeywordDetector(
                                     logger.debug("🎯 累积状态已清理")
                                 } else {
                                     logger.warn("❌ 语音活动结束触发：音频质量不足，跳过识别(振幅=$maxAmp<$minAmp, RMS=${"%.4f".format(normalizedRms)}<$minRms)")
+                                    
+                                    // 🔧 取消静音检测Job，因为我们要清理状态
+                                    silenceDetectionJob?.cancel()
+                                    silenceDetectionJob = null
+                                    
                                     // 质量不足时也要清理状态
                                     audioBuffer.clear()
                                     totalAudioSamples = 0
