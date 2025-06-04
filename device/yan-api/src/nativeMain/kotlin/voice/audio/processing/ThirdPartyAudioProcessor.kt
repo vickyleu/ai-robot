@@ -249,18 +249,18 @@ class ThirdPartyAudioProcessor {
                     val vadResult = speex_preprocess_ctl(speexPreprocessor, SPEEX_PREPROCESS_SET_VAD, enableVad.ptr)
                     logger.info("🔧 VAD启用结果: $vadResult")
                     
-                    // 🔧 修复：提高VAD阈值，减少误触发
+                    // 🔧 降低VAD阈值，容忍正常说话中的短暂停顿
                     val vadProbStart = alloc<IntVar>()
-                    vadProbStart.value = 85  // VAD开始概率阈值：85% (从60%大幅提高，需要很确定才认为是语音)
+                    vadProbStart.value = 30  // VAD开始概率阈值：30% (大幅降低，容易开始检测语音)
                     val startResult = speex_preprocess_ctl(speexPreprocessor, 14, vadProbStart.ptr)  // SPEEX_PREPROCESS_SET_PROB_START
-                    logger.info("🔧 VAD开始阈值设置结果: $startResult (值=85%)")
+                    logger.info("🔧 VAD开始阈值设置结果: $startResult (值=30%)")
                     
                     val vadProbContinue = alloc<IntVar>()
-                    vadProbContinue.value = 70  // VAD继续概率阈值：70% (从40%大幅提高，严格要求)
+                    vadProbContinue.value = 20  // VAD继续概率阈值：20% (大幅降低，容易继续检测语音)
                     val continueResult = speex_preprocess_ctl(speexPreprocessor, 16, vadProbContinue.ptr)  // SPEEX_PREPROCESS_SET_PROB_CONTINUE
-                    logger.info("🔧 VAD继续阈值设置结果: $continueResult (值=70%)")
+                    logger.info("🔧 VAD继续阈值设置结果: $continueResult (值=20%)")
                     
-                    logger.info("✅ SpeexDSP VAD已启用 (开始阈值=85%, 继续阈值=70%)")
+                    logger.info("✅ SpeexDSP VAD已启用 (开始阈值=30%, 继续阈值=20%)")
                 } else {
                     val disableVad = alloc<IntVar>()
                     disableVad.value = 0
@@ -568,13 +568,13 @@ class ThirdPartyAudioProcessor {
                     stats.speexVadFrames += totalVadFrames.toLong()
                     val voiceRatio = voiceFrameCount.toFloat() / totalVadFrames
                     
-                    // 🔧 关键修复：要求更严格的语音判断条件
-                    // 1. 至少需要3个语音帧（避免偶然噪音）
-                    // 2. 语音比例至少75%（确保大部分帧都是语音）
-                    // 3. 总帧数至少5帧（确保有足够的样本）
-                    val minVoiceFrames = 3
-                    val minVoiceRatio = 0.75f
-                    val minTotalFrames = 5
+                    // 🔧 降低语音判断条件，容忍正常说话中的停顿
+                    // 1. 至少需要2个语音帧（降低要求）
+                    // 2. 语音比例至少30%（大幅降低，容忍停顿）
+                    // 3. 总帧数至少3帧（降低要求）
+                    val minVoiceFrames = 2
+                    val minVoiceRatio = 0.30f
+                    val minTotalFrames = 3
                     
                     stats.lastSpeexVadResult = totalVadFrames >= minTotalFrames && 
                                                voiceFrameCount >= minVoiceFrames && 
@@ -669,7 +669,7 @@ class ThirdPartyAudioProcessor {
         logger.info("SpeexDSP VAD: ${if (config.enableSpeexVAD) "启用(主要VAD)" else "禁用"}")
         if (config.enableSpeexVAD) {
             logger.info("  - 功能: 语音活动检测的唯一来源")
-            logger.info("  - 阈值: 开始85%, 继续70%, 语音比例≥50% (严格设置，大幅降低敏感度)")
+            logger.info("  - 阈值: 开始30%, 继续20%, 语音比例≥50% (严格设置，大幅降低敏感度)")
         }
         
         logger.info("重采样: ${if (needsResampling()) "需要" else "跳过"}")

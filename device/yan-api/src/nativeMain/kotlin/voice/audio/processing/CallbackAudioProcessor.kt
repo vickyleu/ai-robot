@@ -76,11 +76,11 @@ class CallbackAudioProcessor : PortAudioDevice.AudioDataCallback {
     
     // 音频读取计数器
     private var audioReadCounter = 0
-    private val minValidRms = 0.003 // 🔧 从0.008进一步降低到0.003，适应实际的RMS水平
+    private val minValidRms = 0.008 // 🔧 按推荐从0.003提高到0.008，减少环境噪音误判
     
-    // 🔧 修复：降低音频质量检测阈值，适应第三方处理器的输出水平
-    private val minValidAmplitude = 1000 // 🔧 从3500大幅降低到1000，适应RNNoise/SpeexDSP处理后的音频
-    private val minConsecutiveValidFrames = 2 // 🔧 从3降低到2帧，提高响应速度
+    // 🔧 修复：提高音频质量检测阈值，减少环境噪音误判
+    private val minValidAmplitude = 1500 // 🔧 按推荐从1000提高到1500，减少环境噪音误判
+    private val minConsecutiveValidFrames = 3 // 🔧 按推荐从2提高到3，要求更稳定的连续语音
     private var consecutiveValidFrameCount = 0 // 🔧 连续有效帧计数器
     
     // 🔧 智能日志打印策略
@@ -384,11 +384,11 @@ class CallbackAudioProcessor : PortAudioDevice.AudioDataCallback {
                 
                 // 🔧 修复：只有连续多帧都满足条件才认为是真正的语音
                 val hasConsecutiveValidFrames = consecutiveValidFrameCount >= minConsecutiveValidFrames
-                
-                // 🔧 修复：改为AND逻辑，SpeexDSP VAD和能量检测都必须通过才认为是人声
-                // 这样可以有效过滤掉非人声的大音量噪音（如音乐、机械声等）
-                // 只有当SpeexDSP检测到语音特征且能量也符合要求时才判定为人声
-                val finalVadResult = vadResult && isValidAudio && hasConsecutiveValidFrames
+
+                // 🔧 修复：提高VAD检测门槛，减少环境噪音误判
+                val finalVadResult = vadResult && isValidAudio && hasConsecutiveValidFrames &&
+                        processedMaxAmp >= 1500 && // 按推荐提高振幅要求
+                        normalizedRms >= 0.008     // 按推荐提高RMS要求
                 
                 // 🔧 VAD调试：显示各组件的检测结果
                 if (audioReadCounter % 10 == 0) {  // 每10帧显示一次调试信息

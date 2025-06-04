@@ -65,7 +65,12 @@ class KeywordDetector(
     
     // VAD参数 - 使用WebRTC提供的VAD功能
     private val vadDebounceFrames = 5   // 从10降低到5，减少所需的连续帧数
-    
+
+    // 🔧 新增：环境噪音基线检测
+    private var environmentNoiseBaseline = 0.0f
+    private var noiseCalibrationFrames = 0
+    private val maxCalibrationFrames = 50  // 前50帧用于噪音基线校准
+
     // 音频质量判断参数
     // 当 calculateRmsEnergy 归一化到 0~1 区间后，正常语音 RMS ≈ 0.03~0.3。
     // 🔧 调整阈值：既能累积正常语音，又不会过于敏感
@@ -96,11 +101,6 @@ class KeywordDetector(
     private val maxSilenceGapMs = 3000L                  // 🔧 从5秒减少到3秒，更快重置累积状态
     private var consecutiveAudioFrames = 0
     private val minConsecutiveFrames = 3  // 🔧 从1增加到3帧，要求更稳定的连续语音才开始累积
-    
-    // 🔧 振幅稳定化 - 添加移动平均滤波器
-    private val amplitudeHistory = mutableListOf<Int>()
-    private val maxAmplitudeHistorySize = 10 // 保持最近10帧的振幅历史
-    private var smoothedAmplitude = 0
     
     // 语音活动状态检测 - 基于连续说话来判断语音周期
     private var firstAudioTime = 0L // 记录第一个音频帧的时间
@@ -221,80 +221,57 @@ class KeywordDetector(
                     
                     lastAudioTime = currentTime
                     
-                    // 计算音频能量，只有能量足够时才累积
-                    val rmsEnergy = kotlin.math.sqrt(processedAudioData.map { it.toFloat() * it.toFloat() }.average())
-                    var normalizedRms = rmsEnergy / 32768.0f // 归一化到0-1范围
+                    // 🔧 关键修复：完全信任CallbackAudioProcessor的VAD结果
+                    // CallbackAudioProcessor已经做了完整的检测（SpeexDSP VAD + 能量检测 + 连续帧检测）
+                    // KeywordDetector只需要根据VAD回调来累积音频，不需要重复检测
+                    val vadDetected = audioProcessor.isVoiceDetected()
                     
-                    // 🔧 振幅稳定化处理 - 检测和修复异常的振幅跳跃
+                    // 🔧 简化：只计算基本信息用于调试，不用于判断
+                    val rmsEnergy = sqrt(processedAudioData.map { it.toFloat() * it.toFloat() }.average()).toFloat()
+                    val normalizedRms = rmsEnergy / 32768.0f
                     val maxAmp = processedAudioData.maxOfOrNull { kotlin.math.abs(it.toInt()) } ?: 0
                     
-                    // 更新振幅历史记录
-                    amplitudeHistory.add(maxAmp)
-                    if (amplitudeHistory.size > maxAmplitudeHistorySize) {
-                        amplitudeHistory.removeFirst()
-                    }
+                    // 🔧 新增：使用动态噪音基线检测
+                    val isDynamicSilent = isDynamicSilence(normalizedRms)
                     
-                    // 计算移动平均振幅
-                    smoothedAmplitude = if (amplitudeHistory.isNotEmpty()) {
-                        amplitudeHistory.average().toInt()
-                    } else {
-                        maxAmp
-                    }
-                    
-                    // 检测异常振幅尖峰：当前振幅比平均值高3倍以上
-                    val amplitudeRatio = if (smoothedAmplitude > 0) maxAmp.toFloat() / smoothedAmplitude else 1.0f
-                    val isAmplitudeSpike = amplitudeRatio > 3.0f && maxAmp > 5000 // 检测异常振幅尖峰
-                    
-                    // 🔧 保存原始RMS用于语音检测，避免稳定化影响检测逻辑
-                    val originalNormalizedRms = normalizedRms
-                    
-                    if (isAmplitudeSpike) {
-                        // 检测到振幅异常，进行稳定化处理
-                        val targetAmplitude = (smoothedAmplitude * 1.5f).toInt() // 目标振幅为平均值的1.5倍
-                        val scaleFactor = targetAmplitude.toFloat() / maxAmp
-                        
-                        for (i in processedAudioData.indices) {
-                            val original = processedAudioData[i].toFloat()
-                            val scaled = original * scaleFactor // 缩放到目标振幅
-                            processedAudioData[i] = scaled.toInt().coerceIn(-16000, 16000).toShort()
-                        }
-                        
-                        // 重新计算RMS（仅用于日志）
-                        val smoothedRmsEnergy = kotlin.math.sqrt(processedAudioData.map { it.toFloat() * it.toFloat() }.average())
-                        normalizedRms = smoothedRmsEnergy / 32768.0f // 更新RMS值
-                        
-                        val newMaxAmp = processedAudioData.maxOfOrNull { kotlin.math.abs(it.toInt()) } ?: 0
-                        logger.info("🔧 振幅异常修复: $maxAmp -> $newMaxAmp (平均: $smoothedAmplitude, 比例: ${"%.2f".format(amplitudeRatio)}), RMS: ${"%.4f".format(rmsEnergy / 32768.0f)} -> ${"%.4f".format(normalizedRms)}")
-                    }
-                    
-                    // 🔧 使用原始RMS进行语音检测，确保振幅稳定化不影响检测逻辑
-                    val rmsForDetection = originalNormalizedRms
-                    
-                    // 🔧 智能语音检测：使用协程Job实现延迟静音检测
-                    val vadDetected = audioProcessor.isVoiceDetected()
-                    val energyThreshold = 0.003f
-                    val hasValidVoice = vadDetected && rmsForDetection >= energyThreshold
+                    // 🔧 关键修复：直接使用VAD结果，不再进行任何额外检测
+                    // 如果CallbackAudioProcessor说是语音，我们就累积；如果说是静音，我们就等待
+                    val hasValidVoice = vadDetected && !isDynamicSilent
                     
                     val currentTime2 = Clock.System.now().toEpochMilliseconds()
+                    
+                    // 🔧 调试：显示简化的检测信息
+                    if (audioReadCounter % 10 == 0) {  // 每10帧显示一次关键信息
+                        logger.debug("🎯 KeywordDetector: VAD=$vadDetected, RMS=${"%.4f".format(normalizedRms)}, 振幅=$maxAmp, 最终=$hasValidVoice")
+                    }
                     
                     if (hasValidVoice) {
                         // 检测到有效语音
                         lastValidVoiceTime = currentTime2
-                        consecutiveAudioFrames++
                         
                         // 取消之前的静音检测Job
                         silenceDetectionJob?.cancel()
                         silenceDetectionJob = null
                         
-                        if (consecutiveAudioFrames <= 5) {
-                            logger.debug("连续帧数增加: ${consecutiveAudioFrames-1} -> $consecutiveAudioFrames, RMS=${"%.4f".format(rmsForDetection)}")
-                        }
+                        logger.debug("🎯 检测到语音，开始累积音频")
                     } else {
                         // 检测到静音或能量不足
-                        if (consecutiveAudioFrames > 0 && isInVoiceActivity) {
-                            // 如果之前有语音活动，启动延迟静音检测
-                            if (silenceDetectionJob == null) {
-                                logger.debug("启动静音检测Job: 当前连续帧=$consecutiveAudioFrames, VAD=$vadDetected, RMS=${"%.4f".format(rmsForDetection)}")
+                        if (isInVoiceActivity) {
+                            // 🔧 如果是真正的静音，直接重置而不启动Job
+                            if (isDynamicSilent) {
+                                logger.debug("检测到真正静音，直接重置语音活动状态")
+                                isInVoiceActivity = false
+                                audioBufferMutex.withLock {
+                                    audioBuffer.clear()
+                                    totalAudioSamples = 0
+                                }
+                                rawAudioBufferMutex.withLock {
+                                    rawAudioBuffer.clear()
+                                    totalRawAudioSamples = 0
+                                }
+                            } else if (silenceDetectionJob == null) {
+                                // 如果不是真正静音，启动延迟静音检测
+                                logger.debug("启动静音检测Job: VAD=$vadDetected, RMS=${"%.4f".format(normalizedRms)}")
                                 
                                 silenceDetectionJob = scope.launch {
                                     try {
@@ -311,7 +288,6 @@ class KeywordDetector(
                                                 logger.info("静音检测Job触发: 静音时长=${silenceDuration}ms, 重置语音活动状态")
                                                 
                                                 // 重置语音活动状态
-                                                consecutiveAudioFrames = 0
                                                 isInVoiceActivity = false
                                                 audioBufferMutex.withLock {
                                                     audioBuffer.clear()
@@ -333,44 +309,24 @@ class KeywordDetector(
                                     }
                                 }
                             }
-                        } else if (!isInVoiceActivity) {
-                            // 如果没有语音活动，直接重置连续帧计数
-                            consecutiveAudioFrames = 0
                         }
                     }
                     
                     // 调试日志：显示检测结果
                     if (AudioDefaults.ENABLE_DEBUG_LOGS && audioReadCounter % AudioDefaults.LOG_INTERVAL_FRAMES == 0) {
                         val silenceJobStatus = if (silenceDetectionJob != null) "运行中" else "无"
-                        val strategy = when {
-                            hasValidVoice -> "VAD+能量双重通过"
-                            vadDetected && rmsForDetection < energyThreshold -> "VAD通过但能量不足"
-                            !vadDetected && rmsForDetection >= energyThreshold -> "能量通过但VAD静音"
-                            else -> "VAD静音且能量不足"
-                        }
-                        logger.debug("KeywordDetector语音检测: 策略=[$strategy], VAD=$vadDetected, RMS=${"%.4f".format(rmsForDetection)}, 阈值=${"%.4f".format(energyThreshold)}, 静音Job=$silenceJobStatus")
+                        val strategy = if (hasValidVoice) "VAD检测通过" else "VAD静音"
+                        logger.debug("KeywordDetector语音检测: 策略=[$strategy], VAD=$vadDetected, RMS=${"%.4f".format(normalizedRms)}, 静音Job=$silenceJobStatus")
                     }
                     
-                    // 🔧 修复：日志条件与实际累积条件保持一致，避免误导性日志
-                    val canStartAccumulation = consecutiveAudioFrames >= minConsecutiveFrames && rmsForDetection >= energyThreshold
-                    if (consecutiveAudioFrames == minConsecutiveFrames) {
-                        if (canStartAccumulation) {
-                            logger.info("🎯 连续帧数达到要求: $consecutiveAudioFrames/$minConsecutiveFrames, RMS=${"%.4f".format(rmsForDetection)}(≥${"%.4f".format(energyThreshold)}), ✅开始累积音频")
-                        } else {
-                            logger.info("🎯 连续帧数达到要求: $consecutiveAudioFrames/$minConsecutiveFrames, 但RMS=${"%.4f".format(rmsForDetection)}<${"%.4f".format(energyThreshold)}, ❌暂不累积音频")
-                        }
-                    }
-                    
-                    // 只有连续帧数足够且音频能量超过阈值时才开始累积
-                    if (canStartAccumulation) {
+                    // 🔧 修复：直接根据VAD结果累积音频，不需要连续帧检测
+                    if (hasValidVoice) {
                         audioBufferMutex.withLock {
                             // 记录第一个音频帧的时间和语音活动状态
                             if (audioBuffer.isEmpty()) {
                                 firstAudioTime = currentTime2
                                 isInVoiceActivity = true
-                                if (AudioDefaults.ENABLE_DEBUG_LOGS) {
-                                    logger.debug("开始新的语音活动周期，起始时间: $firstAudioTime")
-                                }
+                                logger.info("🎯 开始新的语音活动周期，起始时间: $firstAudioTime")
                             }
                             
                             // 更新最后一次语音活动时间
@@ -411,25 +367,25 @@ class KeywordDetector(
                                     }
                                     
                                     logger.info("🚨 10秒强制识别开始: ${totalSamplesCopy}样本, 时长${newTotalDurationMs}ms")
-                                            lastVoskProcessTime = currentTime2
-                                            
+                                    lastVoskProcessTime = currentTime2
+                                    
                                     // 🔧 异步执行识别，避免阻塞
-                                                scope.launch {
+                                    scope.launch {
                                         try {
                                             voskDetector.detect(combinedAudio)
                                             logger.info("🚨 10秒强制识别完成")
                                         } catch (e: Exception) {
                                             logger.error("🚨 10秒强制识别异常: ${e.message}")
-                                                }
-                                            }
-                                            
+                                        }
+                                    }
+                                    
                                     // 🔧 强制识别后清理状态，重新开始累积
-                                            audioBuffer.clear()
-                                            totalAudioSamples = 0
-                                            rawAudioBufferMutex.withLock {
-                                                rawAudioBuffer.clear()
-                                                totalRawAudioSamples = 0
-                                            }
+                                    audioBuffer.clear()
+                                    totalAudioSamples = 0
+                                    rawAudioBufferMutex.withLock {
+                                        rawAudioBuffer.clear()
+                                        totalRawAudioSamples = 0
+                                    }
                                     // 🔧 注意：不重置isInVoiceActivity，继续保持语音状态
                                     logger.debug("🚨 10秒强制识别后状态已清理，继续累积语音")
                                 }
@@ -440,7 +396,7 @@ class KeywordDetector(
                         if (!AudioDefaults.USE_THIRD_PARTY_PROCESSOR) {
                             val currentDurationMs = totalAudioSamples * 1000 / AudioDefaults.Formats.WEBRTC_APM.sampleRate
                             if (AudioDefaults.ENABLE_DEBUG_LOGS && audioReadCounter % 100 == 0) {
-                                logger.debug("累积语音活动中: ${totalAudioSamples}样本, 时长${currentDurationMs}ms, 连续帧${consecutiveAudioFrames}")
+                                logger.debug("累积语音活动中: ${totalAudioSamples}样本, 时长${currentDurationMs}ms")
                             }
                         }
                     }
@@ -450,113 +406,58 @@ class KeywordDetector(
         
         // 配置VAD回调 - 🎯 这是语音识别的主要触发方式
         audioProcessor.setVadCallback { hasVoice ->
-            // 🔧 修复：添加VAD回调的详细日志，诊断触发问题
-                                                    scope.launch {
+            scope.launch {
                 val currentTime = Clock.System.now().toEpochMilliseconds()
-                
-                // 🔧 新增：记录每次VAD回调，不管是否触发识别
-                if (AudioDefaults.ENABLE_DEBUG_LOGS && audioReadCounter % 50 == 0) { // 减少频率避免刷屏
-                    logger.debug("🎯 VAD回调触发: hasVoice=$hasVoice, isInVoiceActivity=$isInVoiceActivity, 累积样本=$totalAudioSamples")
-        }
-        
-                // 🎯 语音结束触发：只在VAD检测到语音活动结束时触发识别
-                if (AudioDefaults.USE_THIRD_PARTY_PROCESSOR && !hasVoice) {
-                    // 🔧 新增：记录每次语音结束检测
-                    logger.debug("🎯 检测到语音结束，开始检查是否可以触发识别...")
-                    
-                    // 检测到语音活动结束，检查是否有足够的音频进行识别
-                    audioBufferMutex.withLock {
-                        logger.debug("🎯 检查触发条件: audioBuffer.size=${audioBuffer.size}, isInVoiceActivity=$isInVoiceActivity, totalAudioSamples=$totalAudioSamples")
-                        
-                        if (audioBuffer.isNotEmpty() && isInVoiceActivity) {
-                            val accumulationDurationMs = (totalAudioSamples * 1000) / (AudioDefaults.Formats.WEBRTC_APM.sampleRate * AudioDefaults.Formats.WEBRTC_APM.channels)
-                            val timeSinceLastProcess = currentTime - lastVoskProcessTime
-                            
-                            logger.info("🎯 语音结束触发: 累积时长=${accumulationDurationMs}ms, 距上次处理=${timeSinceLastProcess}ms")
-                            
-                            // 🔧 修复：移除时长限制，只要有语音活动结束就触发识别
-                            if (timeSinceLastProcess >= 200L) { // 只保留最小间隔保护，避免重复触发
-                                
-                                // 🔧 新增：VAD触发也需要质量检查
-                                val audioBufferCopy = audioBuffer.toList()
-                                val totalSamplesCopy = totalAudioSamples
-                                
-                                val combinedAudio = ShortArray(totalSamplesCopy)
-                                var offset = 0
-                                for (chunk in audioBufferCopy) {
-                                    chunk.copyInto(combinedAudio, offset)
-                                    offset += chunk.size
-                                }
-                                
-                                // 检查音频质量
-                                val maxAmp = combinedAudio.maxOfOrNull { kotlin.math.abs(it.toInt()) } ?: 0
-                                val rmsEnergy = kotlin.math.sqrt(combinedAudio.map { it.toFloat() * it.toFloat() }.average())
-                                val normalizedRms = rmsEnergy / 32768.0f
-                                
-                                // 🔧 更严格的质量检查阈值
-                                val minAmp = 500  // 🔧 从200提高到500，要求更高的振幅
-                                val minRms = 0.003f  // 🔧 从0.008降低到0.003，与音频累积阈值保持一致
-                                
-                                logger.info("🎯 VAD触发质量检查: 振幅=$maxAmp(≥$minAmp=${maxAmp >= minAmp}), RMS=${"%.4f".format(normalizedRms)}(≥$minRms=${normalizedRms >= minRms})")
-                                
-                                // 只有音频质量足够好才进行识别
-                                if (maxAmp >= minAmp && normalizedRms >= minRms) {
-                                    logger.info("✅ 第三方处理器触发Vosk检测: 语音活动结束, 累积时长=${accumulationDurationMs}ms, 距上次处理=${timeSinceLastProcess}ms, 质量检查通过")
-                                    
-                                    // 🔧 取消静音检测Job，因为我们要立即处理识别
-                                    silenceDetectionJob?.cancel()
-                                    silenceDetectionJob = null
-                                    
-                                    logger.info("🚀 第三方处理器Vosk检测开始: ${totalSamplesCopy}样本, 时长${accumulationDurationMs}ms")
-                                    lastVoskProcessTime = currentTime
-                                    
-                                    // 🔧 异步执行Vosk检测，避免阻塞VAD回调
-                                    scope.launch {
-                                        try {
-                                    voskDetector.detect(combinedAudio)
-                                            logger.info("🎯 Vosk检测完成")
-                                        } catch (e: Exception) {
-                                            logger.error("🚨 Vosk检测异常: ${e.message}")
+
+                if (hasVoice) {
+                    // 检测到语音：记录时间，取消任何静音计时
+                    lastValidVoiceTime = currentTime
+                    silenceDetectionJob?.cancel()
+                    silenceDetectionJob = null
+                    logger.debug("🎯 检测到语音，更新时间: $currentTime")
+                } else {
+                    // 检测到静音：添加额外验证，确保真的是静音
+                    if (isInVoiceActivity && audioBuffer.isNotEmpty() && silenceDetectionJob == null) {
+                        // 🔧 新增：二次验证静音状态
+                        val currentVadState = audioProcessor.isVoiceDetected()
+                        if (!currentVadState) {  // 再次确认确实是静音状态
+                            logger.debug("🎯 检测到静音，启动800ms计时...")
+
+                            silenceDetectionJob = scope.launch {
+                                try {
+                                    var silenceStartTime = Clock.System.now().toEpochMilliseconds()
+
+                                    while (true) {
+                                        kotlinx.coroutines.delay(100L) // 每100ms检查一次
+
+                                        // 🔧 关键修复：在等待期间持续检查VAD状态
+                                        val stillSilent = !audioProcessor.isVoiceDetected()
+                                        if (!stillSilent) {
+                                            logger.debug("🎯 静音计时被取消: 检测到新语音")
+                                            break
+                                        }
+
+                                        val silenceDuration = Clock.System.now().toEpochMilliseconds() - silenceStartTime
+
+                                        if (silenceDuration >= 800L) {
+                                            // 真正超过800ms没声音，触发识别
+                                            logger.info("🎯 超过800ms没声音，触发识别")
+
+                                            // 🔧 修复：在协程中调用suspend函数
+                                            triggerRecognition()
+                                            break
                                         }
                                     }
-                                    
-                                    // 清理累积状态
-                                    audioBuffer.clear()
-                                    totalAudioSamples = 0
-                                    rawAudioBufferMutex.withLock {
-                                        rawAudioBuffer.clear()
-                                        totalRawAudioSamples = 0
-                                    }
-                                    isInVoiceActivity = false
-                                    logger.debug("🎯 累积状态已清理")
-                                } else {
-                                    logger.warn("❌ 语音活动结束触发：音频质量不足，跳过识别(振幅=$maxAmp<$minAmp, RMS=${"%.4f".format(normalizedRms)}<$minRms)")
-                                    
-                                    // 🔧 取消静音检测Job，因为我们要清理状态
-                                    silenceDetectionJob?.cancel()
+
                                     silenceDetectionJob = null
-                                    
-                                    // 质量不足时也要清理状态
-                                    audioBuffer.clear()
-                                    totalAudioSamples = 0
-                                    rawAudioBufferMutex.withLock {
-                                        rawAudioBuffer.clear()
-                                        totalRawAudioSamples = 0
-                                    }
-                                    isInVoiceActivity = false
-                                    logger.debug("🎯 低质量音频状态已清理")
+                                } catch (e: kotlinx.coroutines.CancellationException) {
+                                    logger.debug("🎯 静音计时被取消")
+                                    silenceDetectionJob = null
                                 }
-                            } else {
-                                logger.debug("🎯 语音结束触发条件不满足: 处理间隔太短")
                             }
                         } else {
-                            logger.debug("🎯 语音结束触发跳过: audioBuffer空或非语音活动状态")
+                            logger.debug("🎯 二次验证发现仍有语音，跳过静音检测")
                         }
-                    }
-                } else if (AudioDefaults.USE_THIRD_PARTY_PROCESSOR && hasVoice) {
-                    // 🔧 新增：记录语音开始检测
-                    if (audioReadCounter % 100 == 0) { // 减少频率
-                        logger.debug("🎯 检测到语音开始，当前累积样本: $totalAudioSamples")
                     }
                 }
             }
@@ -567,7 +468,28 @@ class KeywordDetector(
         logger.info("关键词检测器初始化成功")
         return true
     }
+    private fun calibrateEnvironmentNoise(rms: Float) {
+        if (noiseCalibrationFrames < maxCalibrationFrames) {
+            environmentNoiseBaseline = (environmentNoiseBaseline * noiseCalibrationFrames + rms) / (noiseCalibrationFrames + 1)
+            noiseCalibrationFrames++
 
+            if (noiseCalibrationFrames == maxCalibrationFrames) {
+                val adjustedThreshold = environmentNoiseBaseline * 3.0f  // 噪音基线的3倍作为阈值
+                logger.info("🎯 环境噪音校准完成: 基线=${environmentNoiseBaseline}, 调整后阈值=${adjustedThreshold}")
+            }
+        }
+    }
+
+    // 在音频处理回调中使用动态阈值
+    private fun isDynamicSilence(rms: Float): Boolean {
+        if (noiseCalibrationFrames < maxCalibrationFrames) {
+            calibrateEnvironmentNoise(rms)
+            return true  // 校准期间认为是静音
+        }
+
+        val dynamicThreshold = environmentNoiseBaseline * 3.0f
+        return rms < dynamicThreshold
+    }
     /**
      * 添加关键词
      * @param keyword 关键词
@@ -1370,5 +1292,50 @@ class KeywordDetector(
         
         logger.info("[质量检查] ✅ 音频质量通过: 振幅=$maxAmp, RMS=${"%.4f".format(normalizedRms)}, 零值比例=${"%.4f".format(zeroRatio)}, 时长=${durationMs}ms, 动态范围=$dynamicRange")
         return true
+    }
+
+    /**
+     * 触发语音识别
+     */
+    private suspend fun triggerRecognition() {
+        audioBufferMutex.withLock {
+            if (audioBuffer.isNotEmpty() && isInVoiceActivity) {
+                val accumulationDurationMs = (totalAudioSamples * 1000) / (AudioDefaults.Formats.WEBRTC_APM.sampleRate * AudioDefaults.Formats.WEBRTC_APM.channels)
+                
+                logger.info("🚀 开始识别: 累积时长=${accumulationDurationMs}ms")
+                
+                val audioBufferCopy = audioBuffer.toList()
+                val totalSamplesCopy = totalAudioSamples
+                
+                val combinedAudio = ShortArray(totalSamplesCopy)
+                var offset = 0
+                for (chunk in audioBufferCopy) {
+                    chunk.copyInto(combinedAudio, offset)
+                    offset += chunk.size
+                }
+                
+                lastVoskProcessTime = Clock.System.now().toEpochMilliseconds()
+                
+                // 异步执行识别
+                scope.launch {
+                    try {
+                        voskDetector.detect(combinedAudio)
+                        logger.info("🎯 识别完成")
+                    } catch (e: Exception) {
+                        logger.error("🚨 识别异常: ${e.message}")
+                    }
+                }
+                
+                // 清理状态
+                audioBuffer.clear()
+                totalAudioSamples = 0
+                rawAudioBufferMutex.withLock {
+                    rawAudioBuffer.clear()
+                    totalRawAudioSamples = 0
+                }
+                isInVoiceActivity = false
+                logger.debug("🎯 状态已清理")
+            }
+        }
     }
 }

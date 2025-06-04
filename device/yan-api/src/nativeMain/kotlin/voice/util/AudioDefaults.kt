@@ -54,12 +54,18 @@ object AudioDefaults {
     // === 回声消除控制配置 ===
     const val ENABLE_ECHO_CANCELLATION_SAFE_MODE = true  // 安全模式：禁用AEC3以避免BlockFramer崩溃
     const val ALLOW_AEC3_IN_VOICE_ASSISTANT = false      // 是否允许在语音助手模式下使用AEC3（不推荐）
-    
+
     // === VAD（语音活动检测）参数配置 ===
     const val VAD_THRESHOLD = 0.08f                      // VAD阈值：提高到0.08f减少非人声误判
     const val VAD_DEBOUNCE_FRAMES = 5                     // VAD防抖帧数：提高到5帧增强稳定性
     const val ENABLE_ECHO_CANCELLATION = false           // 回声消除：在CallbackAudioProcessor中默认禁用
-    
+    // === VAD优化参数修改 ===
+    const val minValidRms = 0.008f           // 从0.003提高到0.008
+    const val minValidAmplitude = 1500        // 从1000提高到1500
+    const val minConsecutiveValidFrames = 3   // 从2提高到3，要求更稳定的连续语音
+
+
+
     // === 噪声抑制级别配置 ===
     const val NOISE_SUPPRESSION_LEVEL_VERY_HIGH = com.airobot.webrtcapminterop.kNsVeryHigh  // 非常高的噪声抑制级别
     
@@ -236,8 +242,9 @@ object AudioDefaults {
     const val ENABLE_SPEEX_VAD = true                  // 启用SpeexDSP VAD
     const val ENABLE_SPEEX_DENOISE = true              // 启用SpeexDSP降噪
     const val SPEEX_AGC_LEVEL = 4000.0f               // SpeexDSP AGC目标电平 - 🔧 提高到4000，增强音频增益
-    const val SPEEX_NOISE_SUPPRESS_DB = -10            // SpeexDSP噪声抑制强度(dB) - 🔧 从-15调到-10减少过度抑制
-    
+    // SpeexDSP配置优化
+    const val SPEEX_VAD_VOICE_THRESHOLD = 0.85f  // 从0.75提高到0.85，减少误判
+    const val SPEEX_NOISE_SUPPRESS_DB = -8       // 从-10调到-8，减少对语音的过度抑制
     // SoXR重采样配置
     const val SOXR_QUALITY = 4                         // SoXR重采样质量 (0-6, 4=高质量)
     
@@ -537,8 +544,7 @@ object AudioDefaults {
     
     // 🔧 VAD策略配置 - 完全使用SpeexDSP VAD
     const val USE_SPEEX_VAD_AS_PRIMARY = true          // 使用SpeexDSP VAD作为唯一VAD
-    const val SPEEX_VAD_VOICE_THRESHOLD = 0.75f        // SpeexDSP VAD语音帧比例阈值：提高到0.75减少非人声误判
-    
+
     init {
         when (DEBUG_APM_MODE) {
             0 -> { // 全关
