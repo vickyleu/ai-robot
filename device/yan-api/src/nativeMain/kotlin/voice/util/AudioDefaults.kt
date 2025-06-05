@@ -562,6 +562,11 @@ object AudioDefaults {
     // 🔧 VAD策略配置 - 完全使用SpeexDSP VAD
     const val USE_SPEEX_VAD_AS_PRIMARY = true          // 使用SpeexDSP VAD作为唯一VAD
 
+    // === 能量检测参数（避免环境噪音干扰） ===
+    const val MIN_VALID_AMPLITUDE = 200              // 🔧 提高最小有效振幅：从50提高到200，减少环境噪音干扰
+    const val MIN_VALID_RMS = 0.003                  // 🔧 提高最小有效RMS：从0.0005提高到0.003，确保真正的语音
+    const val MIN_CONSECUTIVE_VALID_FRAMES = 3       // 连续有效帧数阈值：需要连续3帧才认为是语音
+
     init {
         when (DEBUG_APM_MODE) {
             0 -> { // 全关

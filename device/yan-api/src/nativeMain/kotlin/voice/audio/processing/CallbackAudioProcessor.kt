@@ -76,9 +76,9 @@ class CallbackAudioProcessor : PortAudioDevice.AudioDataCallback {
     
     // 音频读取计数器
     private var audioReadCounter = 0
-    private val minValidRms = 0.0005f  // 大幅降低，匹配第三方处理器
-    private val minValidAmplitude = 50 // 大幅降低，匹配第三方处理器  
-    private val minConsecutiveValidFrames = 1 // 降低到1，更敏感
+    private val minValidAmplitude = AudioDefaults.MIN_VALID_AMPLITUDE  // 🔧 使用AudioDefaults配置：200
+    private val minValidRms = AudioDefaults.MIN_VALID_RMS              // 🔧 使用AudioDefaults配置：0.003  
+    private val minConsecutiveValidFrames = AudioDefaults.MIN_CONSECUTIVE_VALID_FRAMES  // 🔧 使用AudioDefaults配置：3帧
     private var consecutiveValidFrameCount = 0 // 🔧 连续有效帧计数器
     
     // 🔧 智能日志打印策略
