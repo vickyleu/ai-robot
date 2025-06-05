@@ -66,15 +66,17 @@ class KeywordDetector(
     // VAD参数 - 使用WebRTC提供的VAD功能
     private val vadDebounceFrames = 5   // 从10降低到5，减少所需的连续帧数
 
-    // 🔧 新增：环境噪音基线检测
+    // 🔧 根据专业指南更新：环境噪音基线自适应检测
     private var environmentNoiseBaseline = 0.0f
     private var noiseCalibrationFrames = 0
     private val maxCalibrationFrames = 50  // 前50帧用于噪音基线校准
 
-    // 音频质量判断参数
-    // 当 calculateRmsEnergy 归一化到 0~1 区间后，正常语音 RMS ≈ 0.03~0.3。
-    // 🔧 调整阈值：既能累积正常语音，又不会过于敏感
-    private val minValidRms = 0.008  // 🔧 从0.003提高到0.008，减少低质量音频的累积
+    // 🔧 根据专业指南新增：双时间常数积分器
+    private var fastNoiseEstimate = 0.0f   // 快速噪声估计
+    private var slowNoiseEstimate = 0.0f   // 慢速噪声估计
+    
+    // 音频质量判断参数 - 🔧 根据专业指南更新
+    private val minValidRms = AudioDefaults.minValidRms  // 🔧 使用配置的专业阈值
     
     // 添加计数器以限制日志
     private var audioReadCounter = 0
@@ -234,9 +236,9 @@ class KeywordDetector(
                     // 🔧 新增：使用动态噪音基线检测
                     val isDynamicSilent = isDynamicSilence(normalizedRms)
                     
-                    // 🔧 关键修复：直接使用VAD结果，不再进行任何额外检测
-                    // 如果CallbackAudioProcessor说是语音，我们就累积；如果说是静音，我们就等待
-                    val hasValidVoice = vadDetected && !isDynamicSilent
+                    // 🔧 关键修复：不要让动态静音检测干扰VAD结果
+                    // 如果CallbackAudioProcessor的VAD说是语音，就直接信任，不要被动态静音覆盖
+                    val hasValidVoice = vadDetected  // 🔧 简化：完全信任VAD结果
                     
                     val currentTime2 = Clock.System.now().toEpochMilliseconds()
                     
@@ -257,20 +259,8 @@ class KeywordDetector(
                     } else {
                         // 检测到静音或能量不足
                         if (isInVoiceActivity) {
-                            // 🔧 如果是真正的静音，直接重置而不启动Job
-                            if (isDynamicSilent) {
-                                logger.debug("检测到真正静音，直接重置语音活动状态")
-                                isInVoiceActivity = false
-                                audioBufferMutex.withLock {
-                                    audioBuffer.clear()
-                                    totalAudioSamples = 0
-                                }
-                                rawAudioBufferMutex.withLock {
-                                    rawAudioBuffer.clear()
-                                    totalRawAudioSamples = 0
-                                }
-                            } else if (silenceDetectionJob == null) {
-                                // 如果不是真正静音，启动延迟静音检测
+                            // 🔧 不再使用激进的动态静音重置，只依赖VAD回调的静音检测
+                            if (silenceDetectionJob == null) {
                                 logger.debug("启动静音检测Job: VAD=$vadDetected, RMS=${"%.4f".format(normalizedRms)}")
                                 
                                 silenceDetectionJob = scope.launch {
@@ -468,27 +458,67 @@ class KeywordDetector(
         logger.info("关键词检测器初始化成功")
         return true
     }
+    /**
+     * 🔧 根据专业指南更新：环境噪音校准（双时间常数积分器）
+     */
     private fun calibrateEnvironmentNoise(rms: Float) {
         if (noiseCalibrationFrames < maxCalibrationFrames) {
+            // 初始校准阶段：建立基线
             environmentNoiseBaseline = (environmentNoiseBaseline * noiseCalibrationFrames + rms) / (noiseCalibrationFrames + 1)
+            fastNoiseEstimate = environmentNoiseBaseline
+            slowNoiseEstimate = environmentNoiseBaseline
             noiseCalibrationFrames++
 
             if (noiseCalibrationFrames == maxCalibrationFrames) {
-                val adjustedThreshold = environmentNoiseBaseline * 3.0f  // 噪音基线的3倍作为阈值
-                logger.info("🎯 环境噪音校准完成: 基线=${environmentNoiseBaseline}, 调整后阈值=${adjustedThreshold}")
+                val safetyMarginLinear = 10.0f.pow(AudioDefaults.NOISE_SAFETY_MARGIN_DB / 20.0f)
+                val adjustedThreshold = environmentNoiseBaseline * safetyMarginLinear
+                logger.info("🎯 环境噪音校准完成: 基线=${environmentNoiseBaseline}, 安全裕度=${AudioDefaults.NOISE_SAFETY_MARGIN_DB}dB, 调整后阈值=${adjustedThreshold}")
             }
+        } else {
+            // 🔧 专业指南：双时间常数积分器自适应更新
+            if (rms < slowNoiseEstimate) {
+                // 当前能量低于噪声估计，快速跟踪下降
+                fastNoiseEstimate = AudioDefaults.NOISE_ADAPTATION_FAST_ALPHA * rms + 
+                                  (1 - AudioDefaults.NOISE_ADAPTATION_FAST_ALPHA) * fastNoiseEstimate
+                slowNoiseEstimate = AudioDefaults.NOISE_ADAPTATION_FAST_ALPHA * rms + 
+                                  (1 - AudioDefaults.NOISE_ADAPTATION_FAST_ALPHA) * slowNoiseEstimate
+            } else {
+                // 当前能量高于噪声估计，慢速跟踪上升（避免语音污染噪声估计）
+                fastNoiseEstimate = AudioDefaults.NOISE_ADAPTATION_SLOW_ALPHA * rms + 
+                                  (1 - AudioDefaults.NOISE_ADAPTATION_SLOW_ALPHA) * fastNoiseEstimate
+                slowNoiseEstimate = AudioDefaults.NOISE_ADAPTATION_SLOW_ALPHA * rms + 
+                                  (1 - AudioDefaults.NOISE_ADAPTATION_SLOW_ALPHA) * slowNoiseEstimate
+            }
+            
+            // 更新噪声基线为慢速估计
+            environmentNoiseBaseline = slowNoiseEstimate
         }
     }
 
-    // 在音频处理回调中使用动态阈值
+    /**
+     * 🔧 根据专业指南更新：动态静音检测（自适应阈值）
+     */
     private fun isDynamicSilence(rms: Float): Boolean {
         if (noiseCalibrationFrames < maxCalibrationFrames) {
             calibrateEnvironmentNoise(rms)
             return true  // 校准期间认为是静音
         }
 
-        val dynamicThreshold = environmentNoiseBaseline * 3.0f
-        return rms < dynamicThreshold
+        // 更新噪声估计
+        calibrateEnvironmentNoise(rms)
+        
+        // 🔧 专业指南：噪声底板 + 安全裕度
+        val safetyMarginLinear = 10.0f.pow(AudioDefaults.NOISE_SAFETY_MARGIN_DB / 20.0f)
+        val dynamicThreshold = environmentNoiseBaseline * safetyMarginLinear
+        
+        val isSilent = rms < dynamicThreshold
+        
+        // 调试日志（降低频率）
+        if (audioReadCounter % 200 == 0) {
+            logger.debug("🎯 自适应静音检测: RMS=${rms}, 基线=${environmentNoiseBaseline}, 阈值=${dynamicThreshold}, 结果=${if(isSilent) "静音" else "有声"}")
+        }
+        
+        return isSilent
     }
     /**
      * 添加关键词
@@ -1251,42 +1281,42 @@ class KeywordDetector(
             return false
         }
         
-        // 1. 检查最大振幅 - 🔧 提高阈值
+        // 1. 检查最大振幅 - 🔧 大幅降低阈值以便调试
         val maxAmp = audio.maxOfOrNull { kotlin.math.abs(it.toInt()) } ?: 0
-        if (maxAmp < 300) { // 🔧 从50提高到300，要求更高的振幅
-            logger.debug("[质量检查] 最大振幅过低: $maxAmp < 300")
+        if (maxAmp < 100) { // 🔧 从300降低到100
+            logger.debug("[质量检查] 最大振幅过低: $maxAmp < 100")
             return false
         }
         
-        // 2. 检查RMS能量 - 🔧 提高阈值
+        // 2. 检查RMS能量 - 🔧 大幅降低阈值以便调试
         val rmsEnergy = kotlin.math.sqrt(audio.map { it.toFloat() * it.toFloat() }.average())
         val normalizedRms = rmsEnergy / 32768.0f
-        if (normalizedRms < 0.008f) { // 🔧 从0.0005f提高到0.008f，要求更高的能量
-            logger.debug("[质量检查] RMS能量过低: ${"%.4f".format(normalizedRms)} < 0.008")
+        if (normalizedRms < 0.002f) { // 🔧 从0.008f降低到0.002f
+            logger.debug("[质量检查] RMS能量过低: ${"%.4f".format(normalizedRms)} < 0.002")
             return false
         }
         
-        // 3. 检查零值比例 - 🔧 更严格的限制
+        // 3. 检查零值比例 - 🔧 放宽限制
         val zeroCount = audio.count { it == 0.toShort() }
         val zeroRatio = zeroCount.toFloat() / audio.size
-        if (zeroRatio > 0.3f) { // 🔧 从0.8降到0.3，不允许太多零值
-            logger.debug("[质量检查] 零值比例过高: ${"%.4f".format(zeroRatio)} > 0.3")
+        if (zeroRatio > 0.5f) { // 🔧 从0.3提高到0.5，更宽松
+            logger.debug("[质量检查] 零值比例过高: ${"%.4f".format(zeroRatio)} > 0.5")
             return false
         }
         
         // 4. 检查音频长度（避免播放过长的音频）
         val durationMs = (audio.size * 1000) / (AudioDefaults.Formats.WEBRTC_APM.sampleRate * AudioDefaults.Formats.WEBRTC_APM.channels)
-        if (durationMs > 3000) { // 🔧 从5秒降到3秒
-            logger.debug("[质量检查] 音频过长: ${durationMs}ms > 3000ms")
+        if (durationMs > 5000) { // 🔧 从3秒提高到5秒
+            logger.debug("[质量检查] 音频过长: ${durationMs}ms > 5000ms")
             return false
         }
         
-        // 5. 🔧 新增：检查音频动态范围
+        // 5. 🔧 降低动态范围要求
         val minAmp = audio.minOfOrNull { it.toInt() } ?: 0
         val maxAmpSigned = audio.maxOfOrNull { it.toInt() } ?: 0
         val dynamicRange = maxAmpSigned - minAmp
-        if (dynamicRange < 200) {
-            logger.debug("[质量检查] 动态范围过小: $dynamicRange < 200")
+        if (dynamicRange < 50) { // 🔧 从200降低到50
+            logger.debug("[质量检查] 动态范围过小: $dynamicRange < 50")
             return false
         }
         
@@ -1312,6 +1342,35 @@ class KeywordDetector(
                 for (chunk in audioBufferCopy) {
                     chunk.copyInto(combinedAudio, offset)
                     offset += chunk.size
+                }
+                
+                // 🔧 添加播放确认功能
+                if (AudioDefaults.ENABLE_PLAYBACK_CONFIRMATION) {
+                    logger.info("🔊 开始播放确认...")
+                    
+                    // 获取原始音频数据
+                    val rawAudioData = rawAudioBufferMutex.withLock {
+                        if (rawAudioBuffer.isNotEmpty()) {
+                            val totalRawSamples = rawAudioBuffer.sumOf { it.size }
+                            val combinedRawAudio = ShortArray(totalRawSamples)
+                            var rawOffset = 0
+                            for (chunk in rawAudioBuffer) {
+                                chunk.copyInto(combinedRawAudio, rawOffset)
+                                rawOffset += chunk.size
+                            }
+                            combinedRawAudio
+                        } else {
+                            null
+                        }
+                    }
+                    
+                    // 执行播放确认
+                    try {
+                        performPlaybackConfirmation(combinedAudio, rawAudioData)
+                        logger.info("🔊 播放确认完成")
+                    } catch (e: Exception) {
+                        logger.error("🔊 播放确认失败: ${e.message}")
+                    }
                 }
                 
                 lastVoskProcessTime = Clock.System.now().toEpochMilliseconds()

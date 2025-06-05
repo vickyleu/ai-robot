@@ -1077,10 +1077,23 @@ class PortAudioDevice private constructor() : AudioDevice {
             return false
         }
 
-        // 如果输入流活跃，警告但继续
-        val inputActive = synchronized(streamStateLock) { inputStreamActive }
-        if (inputActive) {
-            logger.warn("🎯 输入流活跃，可能影响播放质量")
+        // 🔧 修复播放无声音问题：临时暂停输入流，播放完成后恢复
+        var wasInputActive = false
+        var inputStreamToRestore: CPointer<*>? = null
+        
+        synchronized(streamStateLock) {
+            wasInputActive = inputStreamActive
+            if (wasInputActive && inputStreamPtr.value != null) {
+                logger.info("🔧 播放时临时暂停输入流，避免设备冲突")
+                try {
+                    inputStreamToRestore = inputStreamPtr.value
+                    Pa_StopStream(inputStreamPtr.value)
+                    inputStreamActive = false
+                    logger.info("✅ 输入流已临时暂停")
+                } catch (e: Exception) {
+                    logger.warn("暂停输入流失败: ${e.message}")
+                }
+            }
         }
 
         // 确保输出流存在
@@ -1091,19 +1104,23 @@ class PortAudioDevice private constructor() : AudioDevice {
             val outputActive = synchronized(streamStateLock) { outputStreamActive }
             if (outputActive) {
                 logger.warn("🎯 输出流正在打开中，暂时无法播放音频")
+                // 恢复输入流
+                restoreInputStream(wasInputActive, inputStreamToRestore)
                 return false
             } else {
                 logger.info("🎯 输出流不存在，尝试打开新的输出流")
                 val success = runBlocking { openOutputStream() }
                 if (!success) {
                     logger.error("🎯 无法打开输出流，播放失败")
+                    // 恢复输入流
+                    restoreInputStream(wasInputActive, inputStreamToRestore)
                     return false
                 }
                 logger.info("🎯 输出流打开成功")
             }
         }
 
-        return try {
+        val playResult = try {
             playAudioSafely(audioData, length)
         } catch (e: OutOfMemoryError) {
             logger.error("内存不足，清理缓存后重试")
@@ -1113,6 +1130,34 @@ class PortAudioDevice private constructor() : AudioDevice {
         } catch (e: Exception) {
             logger.error("播放失败: ${e.message}")
             false
+        }
+        
+        // 🔧 播放完成后恢复输入流
+        restoreInputStream(wasInputActive, inputStreamToRestore)
+        
+        return playResult
+    }
+    
+    /**
+     * 恢复输入流
+     */
+    private fun restoreInputStream(wasInputActive: Boolean, inputStreamToRestore: CPointer<*>?) {
+        if (wasInputActive && inputStreamToRestore != null) {
+            try {
+                logger.info("🔧 恢复输入流")
+                val startResult = Pa_StartStream(inputStreamToRestore)
+                if (startResult == paNoError) {
+                    synchronized(streamStateLock) {
+                        inputStreamActive = true
+                    }
+                    logger.info("✅ 输入流已恢复")
+                } else {
+                    val errorMsg = Pa_GetErrorText(startResult)?.toKString() ?: "未知错误"
+                    logger.error("恢复输入流失败: $errorMsg")
+                }
+            } catch (e: Exception) {
+                logger.error("恢复输入流异常: ${e.message}")
+            }
         }
     }
 

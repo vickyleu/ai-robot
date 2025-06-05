@@ -30,7 +30,7 @@ object AudioDefaults {
     const val MIN_RMS_ENERGY= 0.01f         // 最小RMS能量阈值，用于静音检测 - 🔧 从0.001提高到0.01，避免误检测
     
     // === 功能控制配置 ===
-    const val ENABLE_PLAYBACK_CONFIRMATION = false   // 🔧 暂时禁用播放确认功能，专注调试VAD问题
+    const val ENABLE_PLAYBACK_CONFIRMATION = false   // 🔧 重新启用播放确认功能，确认音频处理是否正常
     const val ENABLE_APM_DIAGNOSTIC_MODE = false   // 禁用诊断模式：启用APM处理以过滤风噪
     
     // === 日志控制配置 ===
@@ -60,11 +60,30 @@ object AudioDefaults {
     const val VAD_DEBOUNCE_FRAMES = 5                     // VAD防抖帧数：提高到5帧增强稳定性
     const val ENABLE_ECHO_CANCELLATION = false           // 回声消除：在CallbackAudioProcessor中默认禁用
     // === VAD优化参数修改 ===
-    const val minValidRms = 0.008f           // 从0.003提高到0.008
-    const val minValidAmplitude = 1500        // 从1000提高到1500
-    const val minConsecutiveValidFrames = 3   // 从2提高到3，要求更稳定的连续语音
+    const val minValidRms = 0.002f           // 🔧 根据专业指南降低到0.002，适用于安静环境
+    const val minValidAmplitude = 200         // 🔧 根据专业指南降低到200，适用于一般环境
+    const val minConsecutiveValidFrames = 2   // 🔧 从3降低到2，减少连续帧要求
 
-
+    // === SpeexDSP VAD专业配置（根据优化指南） ===
+    const val SPEEX_VAD_PROB_START = 90      // SpeexDSP VAD开始概率阈值：提高到90%，减少误检测
+    const val SPEEX_VAD_PROB_CONTINUE = 75   // SpeexDSP VAD继续概率阈值：提高到75%，减少误检测
+    const val SPEEX_NOISE_SUPPRESS_DB = -15  // 噪声抑制：从-25dB提高到-15dB，减少过度抑制
+    
+    // === VAD加权投票策略参数 ===
+    const val VAD_SPEEX_WEIGHT = 0.7f        // SpeexDSP VAD权重
+    const val VAD_ENERGY_WEIGHT = 0.3f       // 能量检测权重
+    const val VAD_START_THRESHOLD = 0.65f    // 综合开始阈值
+    const val VAD_CONTINUE_THRESHOLD = 0.45f // 综合继续阈值
+    
+    // === 自适应阈值参数 ===
+    const val NOISE_ADAPTATION_FAST_ALPHA = 0.2f    // 快速适应系数
+    const val NOISE_ADAPTATION_SLOW_ALPHA = 0.02f   // 慢速适应系数
+    const val NOISE_SAFETY_MARGIN_DB = 10f          // 噪声安全裕度（dB）
+    
+    // === 时间平滑参数 ===
+    const val VAD_SPEECH_HANGOVER_FRAMES = 5        // 语音滞后帧数
+    const val VAD_MIN_SPEECH_DURATION_MS = 50       // 最小语音持续时间
+    const val VAD_MIN_SILENCE_DURATION_MS = 300     // 最小静音持续时间
 
     // === 噪声抑制级别配置 ===
     const val NOISE_SUPPRESSION_LEVEL_VERY_HIGH = com.airobot.webrtcapminterop.kNsVeryHigh  // 非常高的噪声抑制级别
@@ -238,13 +257,11 @@ object AudioDefaults {
     const val DISABLE_RNNOISE_VAD = true               // 完全禁用RNNoise VAD功能
     
     // SpeexDSP配置
-    const val ENABLE_SPEEX_AGC = true                  // 重新启用SpeexDSP AGC，通过参数调优解决振幅问题
+    const val ENABLE_SPEEX_AGC = true                  // 🔧 重新启用SpeexDSP AGC，但调整参数保持稳定增益
     const val ENABLE_SPEEX_VAD = true                  // 启用SpeexDSP VAD
     const val ENABLE_SPEEX_DENOISE = true              // 启用SpeexDSP降噪
-    const val SPEEX_AGC_LEVEL = 4000.0f               // SpeexDSP AGC目标电平 - 🔧 提高到4000，增强音频增益
-    // SpeexDSP配置优化
-    const val SPEEX_VAD_VOICE_THRESHOLD = 0.85f  // 从0.75提高到0.85，减少误判
-    const val SPEEX_NOISE_SUPPRESS_DB = -8       // 从-10调到-8，减少对语音的过度抑制
+    const val SPEEX_AGC_LEVEL = 8000.0f               // 🔧 提高AGC目标电平到8000，让后面的字保持和第一个字一样的音量
+
     // SoXR重采样配置
     const val SOXR_QUALITY = 4                         // SoXR重采样质量 (0-6, 4=高质量)
     

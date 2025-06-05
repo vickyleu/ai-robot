@@ -76,11 +76,9 @@ class CallbackAudioProcessor : PortAudioDevice.AudioDataCallback {
     
     // 音频读取计数器
     private var audioReadCounter = 0
-    private val minValidRms = 0.008 // 🔧 按推荐从0.003提高到0.008，减少环境噪音误判
-    
-    // 🔧 修复：提高音频质量检测阈值，减少环境噪音误判
-    private val minValidAmplitude = 1500 // 🔧 按推荐从1000提高到1500，减少环境噪音误判
-    private val minConsecutiveValidFrames = 3 // 🔧 按推荐从2提高到3，要求更稳定的连续语音
+    private val minValidRms = 0.0005f  // 大幅降低，匹配第三方处理器
+    private val minValidAmplitude = 50 // 大幅降低，匹配第三方处理器  
+    private val minConsecutiveValidFrames = 1 // 降低到1，更敏感
     private var consecutiveValidFrameCount = 0 // 🔧 连续有效帧计数器
     
     // 🔧 智能日志打印策略
@@ -385,14 +383,48 @@ class CallbackAudioProcessor : PortAudioDevice.AudioDataCallback {
                 // 🔧 修复：只有连续多帧都满足条件才认为是真正的语音
                 val hasConsecutiveValidFrames = consecutiveValidFrameCount >= minConsecutiveValidFrames
 
-                // 🔧 修复：提高VAD检测门槛，减少环境噪音误判
-                val finalVadResult = vadResult && isValidAudio && hasConsecutiveValidFrames &&
-                        processedMaxAmp >= 1500 && // 按推荐提高振幅要求
-                        normalizedRms >= 0.008     // 按推荐提高RMS要求
+                // 🔧 实施专业指南推荐的加权投票策略，替代简单AND逻辑
+                val speexConfidence = if (vadResult) 1.0f else 0.0f
+                val energyConfidence = if (isValidAudio) 1.0f else 0.0f
+                val consecutiveConfidence = if (hasConsecutiveValidFrames) 1.0f else 0.0f
                 
-                // 🔧 VAD调试：显示各组件的检测结果
+                // 🔧 修复：如果使用第三方处理器，完全信任其 VAD 结果
+                val finalVadResult = if (AudioDefaults.USE_THIRD_PARTY_PROCESSOR) {
+                    // 第三方处理器模式：直接使用 SpeexDSP 的 VAD 结果
+                    vadResult
+                } else {
+                    // WebRTC APM 模式：使用加权融合决策
+                    val combinedConfidence = AudioDefaults.VAD_SPEEX_WEIGHT * speexConfidence + 
+                                           AudioDefaults.VAD_ENERGY_WEIGHT * energyConfidence
+                    
+                    // 滞后决策：使用不同的开始和继续阈值
+                    if (lastVadResult) {
+                        // 当前已经是语音状态，使用较低的继续阈值
+                        combinedConfidence >= AudioDefaults.VAD_CONTINUE_THRESHOLD && 
+                        consecutiveConfidence > 0.0f &&
+                        processedMaxAmp >= 200 && // 🔧 根据专业指南降低到200
+                        normalizedRms >= 0.002     // 🔧 根据专业指南降低到0.002
+                    } else {
+                        // 当前是静音状态，使用较高的开始阈值
+                        combinedConfidence >= AudioDefaults.VAD_START_THRESHOLD && 
+                        consecutiveConfidence > 0.0f &&
+                        processedMaxAmp >= 200 && // 🔧 根据专业指南降低到200
+                        normalizedRms >= 0.002     // 🔧 根据专业指南降低到0.002
+                    }
+                }
+                
+                // 🔧 VAD调试：显示加权投票策略的详细结果
                 if (audioReadCounter % 10 == 0) {  // 每10帧显示一次调试信息
-                    logger.debug("VAD调试: SpeexDSP=$vadResult, 能量检测=$isValidAudio(振幅≥$minValidAmplitude=${processedMaxAmp >= minValidAmplitude}, RMS≥$minValidRms=${normalizedRms >= minValidRms}), 连续帧=$hasConsecutiveValidFrames($consecutiveValidFrameCount>=$minConsecutiveValidFrames), 最终=$finalVadResult")
+                    val stateInfo = if (lastVadResult) "继续模式" else "开始模式"
+                    logger.debug("VAD调试[$stateInfo]: SpeexDSP=$vadResult, 能量检测=$isValidAudio(振幅≥$minValidAmplitude=${processedMaxAmp >= minValidAmplitude}, RMS≥$minValidRms=${normalizedRms >= minValidRms}), 连续帧=$hasConsecutiveValidFrames($consecutiveValidFrameCount>=$minConsecutiveValidFrames)")
+                    
+                    if (AudioDefaults.USE_THIRD_PARTY_PROCESSOR) {
+                        logger.debug("  第三方处理器模式: 直接使用SpeexDSP结果=$finalVadResult")
+                    } else {
+                        val thresholdUsed = if (lastVadResult) AudioDefaults.VAD_CONTINUE_THRESHOLD else AudioDefaults.VAD_START_THRESHOLD
+                        val combinedConfidence = AudioDefaults.VAD_SPEEX_WEIGHT * speexConfidence + AudioDefaults.VAD_ENERGY_WEIGHT * energyConfidence
+                        logger.debug("  加权融合: Speex置信度=${speexConfidence}*${AudioDefaults.VAD_SPEEX_WEIGHT} + 能量置信度=${energyConfidence}*${AudioDefaults.VAD_ENERGY_WEIGHT} = ${combinedConfidence} (阈值=${thresholdUsed}), 最终=$finalVadResult")
+                    }
                 }
                 
                 // 🔧 智能日志打印策略：只在检测到语音或状态变化时打印，静音状态不打印
@@ -684,7 +716,7 @@ class CallbackAudioProcessor : PortAudioDevice.AudioDataCallback {
      * 写入原始录音文件
      */
     private fun writeRawRecording(audioData: ShortArray) {
-        try {
+        /*try {
             if (!rawRecordingInitialized) {
                 val filename = "/tmp/raw_recording.raw"
                 rawRecordingFile = fopen(filename, "wb")
@@ -709,7 +741,7 @@ class CallbackAudioProcessor : PortAudioDevice.AudioDataCallback {
             }
         } catch (e: Exception) {
             logger.error("保存原始录音失败: ${e.message}")
-        }
+        }*/
     }
     
     /**

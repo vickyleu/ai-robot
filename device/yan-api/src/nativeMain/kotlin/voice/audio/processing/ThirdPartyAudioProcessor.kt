@@ -227,15 +227,29 @@ class ThirdPartyAudioProcessor {
                 
                 // 配置AGC
                 if (config.enableSpeexAGC) {
-                    // 🔧 重新启用AGC，但使用保守设置
+                    // 🔧 重新启用AGC，但使用AudioDefaults配置并控制响应速度
                     val enableAgc = alloc<IntVar>()
                     enableAgc.value = 1  // 重新启用AGC
                     speex_preprocess_ctl(speexPreprocessor, SPEEX_PREPROCESS_SET_AGC, enableAgc.ptr)
                     
                     val agcLevel = alloc<FloatVar>()
-                    agcLevel.value = 1000.0f  // 🔧 从1500进一步降低到1000，大幅减少对微弱声音的放大
+                    agcLevel.value = AudioDefaults.SPEEX_AGC_LEVEL  // 🔧 使用AudioDefaults中的配置值
                     speex_preprocess_ctl(speexPreprocessor, SPEEX_PREPROCESS_SET_AGC_LEVEL, agcLevel.ptr)
-                    logger.info("✅ SpeexDSP AGC已启用 (超保守电平=1000)")
+                    
+                    // 🔧 控制AGC增益变化速度，减少快速调整
+                    val agcIncrement = alloc<IntVar>()
+                    agcIncrement.value = 2  // 增益增加速度：2dB/秒 (默认12dB/秒，大幅降低)
+                    speex_preprocess_ctl(speexPreprocessor, 26, agcIncrement.ptr)  // SPEEX_PREPROCESS_SET_AGC_INCREMENT
+                    
+                    val agcDecrement = alloc<IntVar>()
+                    agcDecrement.value = -1  // 增益减少速度：-1dB/秒 (默认-40dB/秒，大幅降低)
+                    speex_preprocess_ctl(speexPreprocessor, 28, agcDecrement.ptr)  // SPEEX_PREPROCESS_SET_AGC_DECREMENT
+                    
+                    val agcMaxGain = alloc<IntVar>()
+                    agcMaxGain.value = 12  // 最大增益：12dB (默认30dB，降低以避免过度放大)
+                    speex_preprocess_ctl(speexPreprocessor, 30, agcMaxGain.ptr)  // SPEEX_PREPROCESS_SET_AGC_MAX_GAIN
+                    
+                    logger.info("✅ SpeexDSP AGC已启用 (目标电平=${AudioDefaults.SPEEX_AGC_LEVEL}, 增益速度=+2/-1dB/s, 最大增益=12dB)")
                 } else {
                     val disableAgc = alloc<IntVar>()
                     disableAgc.value = 0
@@ -249,18 +263,24 @@ class ThirdPartyAudioProcessor {
                     val vadResult = speex_preprocess_ctl(speexPreprocessor, SPEEX_PREPROCESS_SET_VAD, enableVad.ptr)
                     logger.info("🔧 VAD启用结果: $vadResult")
                     
-                    // 🔧 降低VAD阈值，容忍正常说话中的短暂停顿
+                    // 🔧 根据专业指南配置正确的VAD阈值
                     val vadProbStart = alloc<IntVar>()
-                    vadProbStart.value = 30  // VAD开始概率阈值：30% (大幅降低，容易开始检测语音)
+                    vadProbStart.value = AudioDefaults.SPEEX_VAD_PROB_START  // VAD开始概率阈值：80%（专业推荐）
                     val startResult = speex_preprocess_ctl(speexPreprocessor, 14, vadProbStart.ptr)  // SPEEX_PREPROCESS_SET_PROB_START
-                    logger.info("🔧 VAD开始阈值设置结果: $startResult (值=30%)")
+                    logger.info("🔧 VAD开始阈值设置结果: $startResult (值=${AudioDefaults.SPEEX_VAD_PROB_START}%)")
                     
                     val vadProbContinue = alloc<IntVar>()
-                    vadProbContinue.value = 20  // VAD继续概率阈值：20% (大幅降低，容易继续检测语音)
+                    vadProbContinue.value = AudioDefaults.SPEEX_VAD_PROB_CONTINUE  // VAD继续概率阈值：65%（专业推荐）
                     val continueResult = speex_preprocess_ctl(speexPreprocessor, 16, vadProbContinue.ptr)  // SPEEX_PREPROCESS_SET_PROB_CONTINUE
-                    logger.info("🔧 VAD继续阈值设置结果: $continueResult (值=20%)")
+                    logger.info("🔧 VAD继续阈值设置结果: $continueResult (值=${AudioDefaults.SPEEX_VAD_PROB_CONTINUE}%)")
                     
-                    logger.info("✅ SpeexDSP VAD已启用 (开始阈值=30%, 继续阈值=20%)")
+                    // 🔧 配置专业推荐的噪声抑制级别
+                    val noiseSuppress = alloc<IntVar>()
+                    noiseSuppress.value = AudioDefaults.SPEEX_NOISE_SUPPRESS_DB  // -25dB专业推荐
+                    val suppressResult = speex_preprocess_ctl(speexPreprocessor, 18, noiseSuppress.ptr)  // SPEEX_PREPROCESS_SET_NOISE_SUPPRESS  
+                    logger.info("🔧 噪声抑制设置结果: $suppressResult (值=${AudioDefaults.SPEEX_NOISE_SUPPRESS_DB}dB)")
+                    
+                    logger.info("✅ SpeexDSP VAD已启用 (专业配置: 开始阈值=${AudioDefaults.SPEEX_VAD_PROB_START}%, 继续阈值=${AudioDefaults.SPEEX_VAD_PROB_CONTINUE}%, 噪声抑制=${AudioDefaults.SPEEX_NOISE_SUPPRESS_DB}dB)")
                 } else {
                     val disableVad = alloc<IntVar>()
                     disableVad.value = 0
@@ -268,6 +288,10 @@ class ThirdPartyAudioProcessor {
                 }
                 
                 logger.info("✅ SpeexDSP初始化成功 (帧大小=${speexFrameSize}样本)")
+                
+                // 🔧 SpeexDSP预热 - 解决第一个字和后续字音量不一致的问题
+                warmupSpeexDSP(speexFrameSize)
+                
                 true
             } catch (e: Exception) {
                 logger.error("SpeexDSP初始化异常: ${e.message}")
@@ -568,20 +592,20 @@ class ThirdPartyAudioProcessor {
                     stats.speexVadFrames += totalVadFrames.toLong()
                     val voiceRatio = voiceFrameCount.toFloat() / totalVadFrames
                     
-                    // 🔧 降低语音判断条件，容忍正常说话中的停顿
-                    // 1. 至少需要2个语音帧（降低要求）
-                    // 2. 语音比例至少30%（大幅降低，容忍停顿）
-                    // 3. 总帧数至少3帧（降低要求）
-                    val minVoiceFrames = 2
-                    val minVoiceRatio = 0.30f
-                    val minTotalFrames = 3
+                    // 🔧 大幅提高语音判断条件，减少误检测
+                    // 1. 至少需要5个语音帧（提高要求）
+                    // 2. 语音比例至少60%（大幅提高，减少误检测）
+                    // 3. 总帧数至少8帧（提高要求）
+                    val minVoiceFrames = 5
+                    val minVoiceRatio = 0.60f
+                    val minTotalFrames = 8
                     
                     stats.lastSpeexVadResult = totalVadFrames >= minTotalFrames && 
                                                voiceFrameCount >= minVoiceFrames && 
                                                voiceRatio >= minVoiceRatio
                     
                     // 🔧 调试：显示SpeexDSP VAD检测详情
-                    if (stats.framesProcessed % 1000 == 0L) {  // 从每100帧减少到每1000帧记录一次
+                    if (stats.framesProcessed % 500 == 0L) {  // 减少日志频率
                         logger.debug("SpeexDSP VAD: 总帧=${totalVadFrames}(≥$minTotalFrames), 语音帧=${voiceFrameCount}(≥$minVoiceFrames), 比例=${"%.3f".format(voiceRatio)}(≥$minVoiceRatio), 最终结果=${stats.lastSpeexVadResult}")
                     }
                     
@@ -663,13 +687,13 @@ class ThirdPartyAudioProcessor {
         
         logger.info("SpeexDSP AGC: ${if (config.enableSpeexAGC) "启用" else "禁用"}")
         if (config.enableSpeexAGC) {
-            logger.info("  - 目标电平: 1000 (超保守设置，大幅降低敏感度)")
+            logger.info("  - 目标电平: ${AudioDefaults.SPEEX_AGC_LEVEL} (超保守设置，大幅降低敏感度)")
         }
         
         logger.info("SpeexDSP VAD: ${if (config.enableSpeexVAD) "启用(主要VAD)" else "禁用"}")
         if (config.enableSpeexVAD) {
             logger.info("  - 功能: 语音活动检测的唯一来源")
-            logger.info("  - 阈值: 开始30%, 继续20%, 语音比例≥50% (严格设置，大幅降低敏感度)")
+            logger.info("  - 阈值: 开始${AudioDefaults.SPEEX_VAD_PROB_START}%, 继续${AudioDefaults.SPEEX_VAD_PROB_CONTINUE}%, 噪声抑制=${AudioDefaults.SPEEX_NOISE_SUPPRESS_DB}dB)")
         }
         
         logger.info("重采样: ${if (needsResampling()) "需要" else "跳过"}")
@@ -787,6 +811,41 @@ class ThirdPartyAudioProcessor {
             logger.info("第三方音频处理器资源清理完成")
         } catch (e: Exception) {
             logger.error("资源清理异常: ${e.message}")
+        }
+    }
+    
+    /**
+     * 🔧 SpeexDSP预热 - 让AGC、降噪等功能预先适应，避免第一个字和后续字音量不一致
+     */
+    private fun warmupSpeexDSP(frameSize: Int) {
+        return memScoped {
+            try {
+                logger.info("🔧 开始SpeexDSP预热，消除启动延迟...")
+                
+                // 创建模拟语音数据：从静音逐渐增加到正常语音音量
+                val warmupFrames = 10  // 预热10帧（约100ms）
+                
+                for (frame in 0 until warmupFrames) {
+                    val warmupFrame = allocArray<ShortVar>(frameSize)
+                    
+                    // 生成渐增的模拟语音信号
+                    val amplitude = (1000 * (frame + 1) / warmupFrames).toShort()  // 逐渐从0增加到1000
+                    
+                    for (i in 0 until frameSize) {
+                        // 生成简单的正弦波模拟语音
+                        val sineValue = (amplitude * kotlin.math.sin(2 * kotlin.math.PI * 800 * i / 16000)).toInt()
+                        warmupFrame[i] = sineValue.coerceIn(-32767, 32767).toShort()
+                    }
+                    
+                    // 让SpeexDSP处理这些预热数据
+                    speex_preprocess_run(speexPreprocessor, warmupFrame)
+                }
+                
+                logger.info("✅ SpeexDSP预热完成，AGC/降噪/VAD已适应")
+                
+            } catch (e: Exception) {
+                logger.error("SpeexDSP预热失败: ${e.message}")
+            }
         }
     }
 } 
