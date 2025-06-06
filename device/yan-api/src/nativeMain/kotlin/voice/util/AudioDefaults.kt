@@ -24,8 +24,8 @@ object AudioDefaults {
     const val PIPER_TTS_CHANNELS = 1              // Piper TTS输出声道数（单声道）
     
     // === 缓冲区配置 ===
-    const val AUDIO_BUFFER_SIZE = 8192            // 音频缓冲区大小 (增大到8192，减少ALSA回调频率)
-    const val CALLBACK_BUFFER_SIZE = 4096         // 回调缓冲区大小 (增大到4096，减少ALSA回调频率)
+    const val AUDIO_BUFFER_SIZE = 1024            // 🔧 进一步减小音频缓冲区：从2048减到1024，提高响应速度
+    const val CALLBACK_BUFFER_SIZE = 512          // 🔧 进一步减小回调缓冲区：从1024减到512，最高响应速度
 
     const val MIN_RMS_ENERGY= 0.01f         // 最小RMS能量阈值，用于静音检测 - 🔧 从0.001提高到0.01，避免误检测
     
@@ -61,12 +61,12 @@ object AudioDefaults {
     const val ENABLE_ECHO_CANCELLATION = false           // 回声消除：在CallbackAudioProcessor中默认禁用
     // === VAD优化参数修改 ===
     const val minValidRms = 0.002f           // 🔧 根据专业指南降低到0.002，适用于安静环境
-    const val minValidAmplitude = 200         // 🔧 根据专业指南降低到200，适用于一般环境
-    const val minConsecutiveValidFrames = 2   // 🔧 从3降低到2，减少连续帧要求
+    const val minValidAmplitude = 500         // 🔧 提高到500，减少低水平环境噪音误检测，与MIN_VALID_AMPLITUDE保持一致
+    const val minConsecutiveValidFrames = 1   // 🔧 降低连续帧要求：从3帧降到1帧，提高识别灵敏度
 
     // === SpeexDSP VAD专业配置（根据优化指南） ===
-    const val SPEEX_VAD_PROB_START = 90      // SpeexDSP VAD开始概率阈值：提高到90%，减少误检测
-    const val SPEEX_VAD_PROB_CONTINUE = 75   // SpeexDSP VAD继续概率阈值：提高到75%，减少误检测
+    const val SPEEX_VAD_PROB_START = 95      // 🔧 大幅提高SpeexDSP VAD开始概率阈值：从80%提高到95%，严格防止环境噪音误检测
+    const val SPEEX_VAD_PROB_CONTINUE = 90   // 🔧 大幅提高SpeexDSP VAD继续概率阈值：从70%提高到90%，严格防止环境噪音误检测
     const val SPEEX_NOISE_SUPPRESS_DB = -15  // 噪声抑制：从-25dB提高到-15dB，减少过度抑制
     
     // === VAD加权投票策略参数 ===
@@ -266,7 +266,7 @@ object AudioDefaults {
     const val SOXR_QUALITY = 4                         // SoXR重采样质量 (0-6, 4=高质量)
     
     // 音频帧配置
-    const val AUDIO_FRAME_SIZE = 8192                  // 音频帧大小 - 匹配实际输入数据大小
+    const val AUDIO_FRAME_SIZE = 1024                  // 🔧 调整音频帧到1024样本：SpeexDSP每64ms更新，平衡响应速度和算法有效性
     
     // 质量监控
     const val ENABLE_QUALITY_MONITORING = true         // 启用音频质量监控
@@ -563,9 +563,15 @@ object AudioDefaults {
     const val USE_SPEEX_VAD_AS_PRIMARY = true          // 使用SpeexDSP VAD作为唯一VAD
 
     // === 能量检测参数（避免环境噪音干扰） ===
-    const val MIN_VALID_AMPLITUDE = 200              // 🔧 提高最小有效振幅：从50提高到200，减少环境噪音干扰
-    const val MIN_VALID_RMS = 0.003                  // 🔧 提高最小有效RMS：从0.0005提高到0.003，确保真正的语音
-    const val MIN_CONSECUTIVE_VALID_FRAMES = 3       // 连续有效帧数阈值：需要连续3帧才认为是语音
+    const val MIN_VALID_AMPLITUDE = 1500             // 🔧 根据日志数据调整：当前误检测振幅274-1257，设置为1500过滤大部分
+    const val MIN_VALID_RMS = 0.015                  // 🔧 根据日志数据调整：当前误检测RMS 0.003-0.013，设置为0.015过滤大部分
+    const val MIN_CONSECUTIVE_VALID_FRAMES = 2       // 🔧 适度提高连续帧要求：从1帧提高到2帧
+
+    // === 语音连续性保护参数 ===
+    const val VOICE_CONTINUITY_WINDOW_MS = 2000L     // 语音连续性保护窗口：2秒内使用降低阈值
+    const val CONTINUITY_AMPLITUDE_THRESHOLD = 200   // 连续性保护期间的低振幅阈值
+    const val CONTINUITY_VAD_PROB_START = 60         // 连续性保护期间的低VAD阈值
+    const val CONTINUITY_VAD_PROB_CONTINUE = 50      // 连续性保护期间的低VAD继续阈值
 
     init {
         when (DEBUG_APM_MODE) {

@@ -26,6 +26,7 @@ import platform.posix.fopen
 import platform.posix.fwrite
 import platform.posix.fflush
 import platform.posix.fclose
+import kotlinx.cinterop.*
 
 /**
  * 回调式音频处理器
@@ -84,6 +85,13 @@ class CallbackAudioProcessor : PortAudioDevice.AudioDataCallback {
     // 🔧 智能日志打印策略
     private var lastVadResult = false  // 记录上一次的VAD结果
     private var silentFrameCount = 0   // 连续静音帧计数器
+    
+    // 🔧 语音连续性保护
+    private var lastVoiceTime = 0L
+    private fun isInContinuityWindow(): Boolean {
+        val currentTime = kotlinx.datetime.Clock.System.now().toEpochMilliseconds()
+        return (currentTime - lastVoiceTime) < AudioDefaults.VOICE_CONTINUITY_WINDOW_MS
+    }
     
     // 回调函数 - 保持与现有代码兼容的命名，增加同步保护
     private val callbackLock = SynchronizedObject()
@@ -367,17 +375,33 @@ class CallbackAudioProcessor : PortAudioDevice.AudioDataCallback {
                     return
                 }
                 
-                // 🔧 修复：更严格的音频质量验证
+                // 🔧 能量检测：使用动态阈值支持语音连续性保护
+                val inContinuityWindow = isInContinuityWindow()
+                val currentAmplitudeThreshold = if (inContinuityWindow) {
+                    AudioDefaults.CONTINUITY_AMPLITUDE_THRESHOLD  // 连续性保护期间使用更低阈值
+                } else {
+                    minValidAmplitude  // 正常情况使用标准阈值
+                }
+                
                 val rms = calculateRms(processedAudio)
                 val normalizedRms = rms // calculateRms已经返回归一化值(0-1范围)
-                val isValidAudio = processedMaxAmp >= minValidAmplitude && normalizedRms >= minValidRms
+                val isValidAudio = processedMaxAmp >= currentAmplitudeThreshold && normalizedRms >= minValidRms
                 
-                // 🔧 修复：简化连续帧检测逻辑
-                if (isValidAudio) {
-                    consecutiveValidFrameCount++
+                // 🔧 修复：连续帧检测应该基于SpeexDSP VAD结果，而不是能量检测
+                if (AudioDefaults.USE_THIRD_PARTY_PROCESSOR) {
+                    // 第三方处理器模式：基于SpeexDSP VAD结果来管理连续帧
+                    if (vadResult) {
+                        consecutiveValidFrameCount++
+                    } else {
+                        consecutiveValidFrameCount = 0  // SpeexDSP检测到静音时重置连续帧
+                    }
                 } else {
-                    // 🔧 简化：直接重置连续帧计数，避免复杂的逐渐减少逻辑
-                    consecutiveValidFrameCount = 0
+                    // WebRTC APM模式：基于能量检测来管理连续帧
+                    if (isValidAudio) {
+                        consecutiveValidFrameCount++
+                    } else {
+                        consecutiveValidFrameCount = 0
+                    }
                 }
                 
                 // 🔧 修复：只有连续多帧都满足条件才认为是真正的语音
@@ -390,8 +414,8 @@ class CallbackAudioProcessor : PortAudioDevice.AudioDataCallback {
                 
                 // 🔧 修复：如果使用第三方处理器，完全信任其 VAD 结果
                 val finalVadResult = if (AudioDefaults.USE_THIRD_PARTY_PROCESSOR) {
-                    // 第三方处理器模式：直接使用 SpeexDSP 的 VAD 结果
-                    vadResult
+                    // 第三方处理器模式：SpeexDSP VAD + 能量检测双重保护，防止环境噪音误检测
+                    vadResult && isValidAudio && hasConsecutiveValidFrames
                 } else {
                     // WebRTC APM 模式：使用加权融合决策
                     val combinedConfidence = AudioDefaults.VAD_SPEEX_WEIGHT * speexConfidence + 
@@ -413,10 +437,16 @@ class CallbackAudioProcessor : PortAudioDevice.AudioDataCallback {
                     }
                 }
                 
+                // 🔧 语音连续性保护：更新最后语音时间
+                if (finalVadResult) {
+                    lastVoiceTime = kotlinx.datetime.Clock.System.now().toEpochMilliseconds()
+                }
+                
                 // 🔧 VAD调试：显示加权投票策略的详细结果
                 if (audioReadCounter % 10 == 0) {  // 每10帧显示一次调试信息
                     val stateInfo = if (lastVadResult) "继续模式" else "开始模式"
-                    logger.debug("VAD调试[$stateInfo]: SpeexDSP=$vadResult, 能量检测=$isValidAudio(振幅≥$minValidAmplitude=${processedMaxAmp >= minValidAmplitude}, RMS≥$minValidRms=${normalizedRms >= minValidRms}), 连续帧=$hasConsecutiveValidFrames($consecutiveValidFrameCount>=$minConsecutiveValidFrames)")
+                    val continuityStatus = if (inContinuityWindow) "保护中" else "正常"
+                    logger.debug("VAD调试[$stateInfo]: SpeexDSP=$vadResult, 能量检测=$isValidAudio(振幅≥$currentAmplitudeThreshold=${processedMaxAmp >= currentAmplitudeThreshold}, RMS≥$minValidRms=${normalizedRms >= minValidRms}), 连续帧=$hasConsecutiveValidFrames($consecutiveValidFrameCount>=$minConsecutiveValidFrames), 连续性=$continuityStatus")
                     
                     if (AudioDefaults.USE_THIRD_PARTY_PROCESSOR) {
                         logger.debug("  第三方处理器模式: 直接使用SpeexDSP结果=$finalVadResult")

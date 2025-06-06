@@ -34,6 +34,7 @@ import voice.util.LogManager
 import kotlin.concurrent.Volatile
 import kotlin.math.abs
 import kotlin.math.sqrt
+import kotlinx.datetime.Clock
 
 
 
@@ -102,7 +103,10 @@ class ThirdPartyAudioProcessor {
         var lastZeroRatio: Float = 0.0f,
         // 🔧 新增：SpeexDSP VAD统计
         var speexVadFrames: Long = 0,
-        var lastSpeexVadResult: Boolean = false
+        var lastSpeexVadResult: Boolean = false,
+        // 🔧 新增：语音连续性保护
+        var lastVoiceTime: Long = 0L,
+        var isInContinuityWindow: Boolean = false
     )
     
     private val stats = ProcessingStats()
@@ -517,6 +521,9 @@ class ThirdPartyAudioProcessor {
                 val speexFrameSize = 160  // SpeexDSP固定帧大小
                 val outputBuffer = allocArray<ShortVar>(input.size)
                 
+                // 🔧 语音连续性保护：在处理前动态调整VAD阈值
+                updateSpeexVadThresholds()
+                
                 // 复制输入数据到输出缓冲区
                 for (i in input.indices) {
                     outputBuffer[i] = input[i]
@@ -587,26 +594,28 @@ class ThirdPartyAudioProcessor {
                     }
                 }
                 
-                // 🔧 修复：使用更严格的VAD逻辑
+                // 🔧 修复：直接使用SpeexDSP VAD结果，不做多条件组合
                 if (config.enableSpeexVAD && totalVadFrames > 0) {
                     stats.speexVadFrames += totalVadFrames.toLong()
-                    val voiceRatio = voiceFrameCount.toFloat() / totalVadFrames
                     
-                    // 🔧 大幅提高语音判断条件，减少误检测
-                    // 1. 至少需要5个语音帧（提高要求）
-                    // 2. 语音比例至少60%（大幅提高，减少误检测）
-                    // 3. 总帧数至少8帧（提高要求）
-                    val minVoiceFrames = 5
-                    val minVoiceRatio = 0.60f
-                    val minTotalFrames = 8
+                    // 🔧 语音连续性保护：检查是否在语音连续性窗口内
+                    val currentTime = Clock.System.now().toEpochMilliseconds()
+                    stats.isInContinuityWindow = (currentTime - stats.lastVoiceTime) < AudioDefaults.VOICE_CONTINUITY_WINDOW_MS
                     
-                    stats.lastSpeexVadResult = totalVadFrames >= minTotalFrames && 
-                                               voiceFrameCount >= minVoiceFrames && 
-                                               voiceRatio >= minVoiceRatio
+                    // ✅ 正确逻辑：直接使用SpeexDSP的判断结果，这是范围判断而不是条件组合
+                    stats.lastSpeexVadResult = hasAnyVoiceFrame  // 只要有任何语音帧就认为是语音
+                    
+                    // 🔧 语音连续性保护：如果检测到语音，更新最后语音时间
+                    if (stats.lastSpeexVadResult) {
+                        stats.lastVoiceTime = currentTime
+                        stats.voiceFramesDetected++
+                    }
                     
                     // 🔧 调试：显示SpeexDSP VAD检测详情
                     if (stats.framesProcessed % 500 == 0L) {  // 减少日志频率
-                        logger.debug("SpeexDSP VAD: 总帧=${totalVadFrames}(≥$minTotalFrames), 语音帧=${voiceFrameCount}(≥$minVoiceFrames), 比例=${"%.3f".format(voiceRatio)}(≥$minVoiceRatio), 最终结果=${stats.lastSpeexVadResult}")
+                        val voiceRatio = if (totalVadFrames > 0) voiceFrameCount.toFloat() / totalVadFrames else 0f
+                        val continuityStatus = if (stats.isInContinuityWindow) "保护中" else "正常"
+                        logger.debug("SpeexDSP VAD: 总帧=${totalVadFrames}, 语音帧=${voiceFrameCount}, 比例=${"%.3f".format(voiceRatio)}, 最终结果=${stats.lastSpeexVadResult}, 连续性=$continuityStatus")
                     }
                     
                     // 🔧 简化：直接使用SpeexDSP VAD结果，不再fallback
@@ -845,6 +854,44 @@ class ThirdPartyAudioProcessor {
                 
             } catch (e: Exception) {
                 logger.error("SpeexDSP预热失败: ${e.message}")
+            }
+        }
+    }
+    
+    /**
+     * 🔧 动态调整SpeexDSP VAD阈值，支持语音连续性保护
+     */
+    private fun updateSpeexVadThresholds() {
+        return memScoped {
+            try {
+                if (speexPreprocessor == null || !config.enableSpeexVAD) return@memScoped
+                
+                // 根据是否在连续性窗口内选择不同的阈值
+                val (startThreshold, continueThreshold) = if (stats.isInContinuityWindow) {
+                    // 语音连续性保护期间：使用更低的阈值
+                    AudioDefaults.CONTINUITY_VAD_PROB_START to AudioDefaults.CONTINUITY_VAD_PROB_CONTINUE
+                } else {
+                    // 正常情况：使用标准阈值
+                    AudioDefaults.SPEEX_VAD_PROB_START to AudioDefaults.SPEEX_VAD_PROB_CONTINUE
+                }
+                
+                // 动态设置VAD阈值
+                val vadProbStart = alloc<IntVar>()
+                vadProbStart.value = startThreshold
+                speex_preprocess_ctl(speexPreprocessor, 14, vadProbStart.ptr)  // SPEEX_PREPROCESS_SET_PROB_START
+                
+                val vadProbContinue = alloc<IntVar>()
+                vadProbContinue.value = continueThreshold
+                speex_preprocess_ctl(speexPreprocessor, 16, vadProbContinue.ptr)  // SPEEX_PREPROCESS_SET_PROB_CONTINUE
+                
+                // 调试日志
+                if (stats.framesProcessed % 1000 == 0L) {
+                    val mode = if (stats.isInContinuityWindow) "连续性保护" else "标准模式"
+                    logger.debug("SpeexDSP阈值调整: $mode, 开始=${startThreshold}%, 继续=${continueThreshold}%")
+                }
+                
+            } catch (e: Exception) {
+                logger.error("动态调整VAD阈值失败: ${e.message}")
             }
         }
     }
