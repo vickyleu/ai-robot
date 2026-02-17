@@ -54,6 +54,8 @@ kotlin {
                         "-Xruntime-logs=gc=info"
                     ))
                 }
+            }.apply {
+                println("compilerOptions.freeCompilerArgs==> ${this.joinToString()}")
             }
         )
         binaries {
